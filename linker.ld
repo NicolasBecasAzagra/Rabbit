@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * MadRust M2b linker script.
+ * Rabbit M2b linker script.
  *
  * The kernel is linked at the higher half, 0xffffffff80000000, but loaded at
  * physical 0x100000. Every loadable section therefore carries an explicit load

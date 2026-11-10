@@ -11,30 +11,30 @@
       "python": "3.12.3"
     },
     "initrd": {
-      "path": "/home/nicolas/madrust/artifacts/agent.cpio",
+      "path": "/home/nicolas/rabbit/artifacts/agent.cpio",
       "sha256": "6414a420ec3789fea8c78ef81d9b3e525e9cc5774c80892c85f6af85fa19b56e"
     },
     "kernels": {
-      "madrust": {
-        "path": "/home/nicolas/.cache/madrust/target/x86_64-madrust/release/madrust-kernel",
+      "rabbit": {
+        "path": "/home/nicolas/.cache/rabbit/target/x86_64-rabbit/release/rabbit-kernel",
         "sha256": "8c0d5ea2e6c2207fd067fe7d57bed5de76a0f81c56d1a9e42e28c6f09d5363ad",
         "kernel_args": "console=ttyS0"
       },
       "mainline": {
-        "path": "/home/nicolas/madrust/artifacts/vmlinux",
+        "path": "/home/nicolas/rabbit/artifacts/vmlinux",
         "sha256": "0d6e448215c98cbbeba85984268828549ea6b8e89009a41e1edf1c0b1b7deebe",
         "kernel_args": "console=ttyS0"
       },
       "mainline-nomitig": {
-        "path": "/home/nicolas/madrust/artifacts/vmlinux",
+        "path": "/home/nicolas/rabbit/artifacts/vmlinux",
         "sha256": "0d6e448215c98cbbeba85984268828549ea6b8e89009a41e1edf1c0b1b7deebe",
         "kernel_args": "mitigations=off"
       }
     },
     "commands": {
-      "madrust": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/.cache/madrust/target/x86_64-madrust/release/madrust-kernel -initrd /home/nicolas/madrust/artifacts/agent.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/home/nicolas/madrust/artifacts/bench-agent/madrust.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
-      "mainline": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/madrust/artifacts/vmlinux -initrd /home/nicolas/madrust/artifacts/agent.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/home/nicolas/madrust/artifacts/bench-agent/mainline.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
-      "mainline-nomitig": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/madrust/artifacts/vmlinux -initrd /home/nicolas/madrust/artifacts/agent.cpio -append 'console=ttyS0 mitigations=off' -display none -monitor none -no-reboot -serial file:/home/nicolas/madrust/artifacts/bench-agent/mainline-nomitig.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
+      "rabbit": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/.cache/rabbit/target/x86_64-rabbit/release/rabbit-kernel -initrd /home/nicolas/rabbit/artifacts/agent.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/home/nicolas/rabbit/artifacts/bench-agent/rabbit.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
+      "mainline": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/rabbit/artifacts/vmlinux -initrd /home/nicolas/rabbit/artifacts/agent.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/home/nicolas/rabbit/artifacts/bench-agent/mainline.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
+      "mainline-nomitig": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M -kernel /home/nicolas/rabbit/artifacts/vmlinux -initrd /home/nicolas/rabbit/artifacts/agent.cpio -append 'console=ttyS0 mitigations=off' -display none -monitor none -no-reboot -serial file:/home/nicolas/rabbit/artifacts/bench-agent/mainline-nomitig.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
     },
     "iterations_expected": {
       "agent-steps": 1,
@@ -46,7 +46,7 @@
   },
   "summary": [
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "syscall",
       "unit": "ns/op",
       "samples": 0,
@@ -57,7 +57,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "mmap",
       "unit": "ns/MiB",
       "samples": 0,
@@ -68,7 +68,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights",
       "unit": "ns/MiB",
       "samples": 0,
@@ -79,7 +79,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -90,7 +90,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge",
       "unit": "ns/MiB",
       "samples": 0,
@@ -101,7 +101,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -112,7 +112,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "futex",
       "unit": "ns/roundtrip",
       "samples": 0,
@@ -123,7 +123,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "threads",
       "unit": "ns/total",
       "samples": 0,
@@ -134,7 +134,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-ttft",
       "unit": "ms",
       "samples": 0,
@@ -145,7 +145,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-tps",
       "unit": "tok/s",
       "samples": 0,
@@ -156,7 +156,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "agent-steps",
       "unit": "steps",
       "samples": 1,
@@ -167,7 +167,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "agent-tokens",
       "unit": "tokens",
       "samples": 1,
@@ -178,7 +178,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "agent-seconds",
       "unit": "s",
       "samples": 1,
@@ -189,7 +189,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "agent-step-ms",
       "unit": "ms/step",
       "samples": 1,
@@ -200,7 +200,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "boot-seconds",
       "unit": "s",
       "samples": 1,
@@ -211,7 +211,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "boot-rss-mb",
       "unit": "MiB",
       "samples": 1,

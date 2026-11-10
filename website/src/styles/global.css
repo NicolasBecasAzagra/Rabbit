@@ -1,11 +1,11 @@
-/* MadRust design system — serial console / lab notebook */
+/* Rabbit design system — serial console / lab notebook */
 /* Mono-first. One accent. Visible grid. No glass, no gradients, no soft shadows. */
 
 @font-face {
   font-family: "Martian Mono Variable";
   src:
-    url("/MadRust/fonts/martian-mono-latin.woff2") format("woff2 supports variations"),
-    url("/MadRust/fonts/martian-mono-latin.woff2") format("woff2-variations");
+    url("/Rabbit/fonts/martian-mono-latin.woff2") format("woff2 supports variations"),
+    url("/Rabbit/fonts/martian-mono-latin.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-stretch: 75% 112.5%;
   font-style: normal;
@@ -16,8 +16,8 @@
 @font-face {
   font-family: "Martian Mono Variable";
   src:
-    url("/MadRust/fonts/martian-mono-latin-ext.woff2") format("woff2 supports variations"),
-    url("/MadRust/fonts/martian-mono-latin-ext.woff2") format("woff2-variations");
+    url("/Rabbit/fonts/martian-mono-latin-ext.woff2") format("woff2 supports variations"),
+    url("/Rabbit/fonts/martian-mono-latin-ext.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-stretch: 75% 112.5%;
   font-style: normal;
@@ -28,8 +28,8 @@
 @font-face {
   font-family: "JetBrains Mono Variable";
   src:
-    url("/MadRust/fonts/jetbrains-mono-latin.woff2") format("woff2 supports variations"),
-    url("/MadRust/fonts/jetbrains-mono-latin.woff2") format("woff2-variations");
+    url("/Rabbit/fonts/jetbrains-mono-latin.woff2") format("woff2 supports variations"),
+    url("/Rabbit/fonts/jetbrains-mono-latin.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;
@@ -39,8 +39,8 @@
 @font-face {
   font-family: "JetBrains Mono Variable";
   src:
-    url("/MadRust/fonts/jetbrains-mono-latin-ext.woff2") format("woff2 supports variations"),
-    url("/MadRust/fonts/jetbrains-mono-latin-ext.woff2") format("woff2-variations");
+    url("/Rabbit/fonts/jetbrains-mono-latin-ext.woff2") format("woff2 supports variations"),
+    url("/Rabbit/fonts/jetbrains-mono-latin-ext.woff2") format("woff2-variations");
   font-weight: 100 800;
   font-style: normal;
   font-display: swap;

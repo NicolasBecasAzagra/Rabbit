@@ -11,24 +11,24 @@
       "python": "3.15.0"
     },
     "initrd": {
-      "path": "/Users/nicolasbecasazagra/madrust/artifacts/real-after.cpio",
+      "path": "/Users/nicolasbecasazagra/rabbit/artifacts/real-after.cpio",
       "sha256": "d3bc30ec899b7c3e964118a380ecfa8dbeb77562843b3b6178f2c1b238649ef8"
     },
     "kernels": {
-      "madrust": {
-        "path": "/Users/nicolasbecasazagra/madrust/artifacts/madrust-kernel-after",
+      "rabbit": {
+        "path": "/Users/nicolasbecasazagra/rabbit/artifacts/rabbit-kernel-after",
         "sha256": "3e5965306b1f087b540657a11e6e60b12bee55df6294bb2ea6a069f979aab543",
         "kernel_args": "console=ttyS0"
       },
-      "madrust-before": {
-        "path": "/Users/nicolasbecasazagra/madrust/artifacts/madrust-kernel-before",
+      "rabbit-before": {
+        "path": "/Users/nicolasbecasazagra/rabbit/artifacts/rabbit-kernel-before",
         "sha256": "6c6abc41e915b0155bf8ccbb873d24211b38d3806851c4708827635398436b6d",
         "kernel_args": "console=ttyS0"
       }
     },
     "commands": {
-      "madrust": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/madrust/artifacts/madrust-kernel-after -initrd /Users/nicolasbecasazagra/madrust/artifacts/real-after.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/tmp/madrust-e2b-final/madrust.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
-      "madrust-before": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/madrust/artifacts/madrust-kernel-before -initrd /Users/nicolasbecasazagra/madrust/artifacts/real-after.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/tmp/madrust-e2b-final/madrust-before.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
+      "rabbit": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/rabbit/artifacts/rabbit-kernel-after -initrd /Users/nicolasbecasazagra/rabbit/artifacts/real-after.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/tmp/rabbit-e2b-final/rabbit.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
+      "rabbit-before": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/rabbit/artifacts/rabbit-kernel-before -initrd /Users/nicolasbecasazagra/rabbit/artifacts/real-after.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/tmp/rabbit-e2b-final/rabbit-before.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
     },
     "iterations_expected": {
       "syscall": 30,
@@ -46,7 +46,7 @@
   },
   "summary": [
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "syscall",
       "unit": "ns/op",
       "samples": 0,
@@ -57,7 +57,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "mmap",
       "unit": "ns/MiB",
       "samples": 0,
@@ -68,7 +68,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights",
       "unit": "ns/MiB",
       "samples": 0,
@@ -79,7 +79,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -90,7 +90,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge",
       "unit": "ns/MiB",
       "samples": 0,
@@ -101,7 +101,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -112,7 +112,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "futex",
       "unit": "ns/roundtrip",
       "samples": 0,
@@ -123,7 +123,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "threads",
       "unit": "ns/total",
       "samples": 0,
@@ -134,7 +134,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-ttft",
       "unit": "ms",
       "samples": 1,
@@ -145,7 +145,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-tps",
       "unit": "tok/s",
       "samples": 1,
@@ -156,7 +156,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "syscall",
       "unit": "ns/op",
       "samples": 0,
@@ -167,7 +167,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "mmap",
       "unit": "ns/MiB",
       "samples": 0,
@@ -178,7 +178,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "weights",
       "unit": "ns/MiB",
       "samples": 0,
@@ -189,7 +189,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "weights-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -200,7 +200,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "weights-huge",
       "unit": "ns/MiB",
       "samples": 0,
@@ -211,7 +211,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "weights-huge-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -222,7 +222,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "futex",
       "unit": "ns/roundtrip",
       "samples": 0,
@@ -233,7 +233,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "threads",
       "unit": "ns/total",
       "samples": 0,
@@ -244,7 +244,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "infer-ttft",
       "unit": "ms",
       "samples": 1,
@@ -255,7 +255,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust-before",
+      "kernel": "rabbit-before",
       "workload": "infer-tps",
       "unit": "tok/s",
       "samples": 1,

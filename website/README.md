@@ -1,12 +1,12 @@
-# MadRust website
+# Rabbit website
 
 ## What this is
 
-The public site of MadRust: a small static website built with [Astro](https://astro.build)
+The public site of Rabbit: a small static website built with [Astro](https://astro.build)
 7 in static-output mode. There is no framework runtime and no client-side
 JavaScript bundle, so every page is plain HTML, CSS and a little inline script.
 
-Hosted on GitHub Pages at <https://nicolasbecasazagra.github.io/MadRust/>.
+Hosted on GitHub Pages at <https://nicolasbecasazagra.github.io/Rabbit/>.
 
 ## Local development
 
@@ -16,15 +16,15 @@ npm install
 npm run dev
 ```
 
-The dev server runs on <http://localhost:4321/MadRust/>. The base path is
-`/MadRust` (same as production), so the home page is not at `/`: use
-`http://localhost:4321/MadRust/` or any route below it.
+The dev server runs on <http://localhost:4321/Rabbit/>. The base path is
+`/Rabbit` (same as production), so the home page is not at `/`: use
+`http://localhost:4321/Rabbit/` or any route below it.
 
 Build and preview the production output:
 
 ```sh
 npm run build     # writes website/dist/
-npm run preview   # serves website/dist/ at http://localhost:4321/MadRust/
+npm run preview   # serves website/dist/ at http://localhost:4321/Rabbit/
 ```
 
 `npm run check` runs `astro check` for type and content errors.
@@ -41,7 +41,7 @@ npm run preview   # serves website/dist/ at http://localhost:4321/MadRust/
   copies under `src/pages/docs/`: they are git-ignored and overwritten on the
   next build. Edit the markdown at the root of the repository.
 - **Internal links go through `src/lib/paths.ts`.** The site is served from the
-  `/MadRust` subpath, configured as `base` in `astro.config.mjs`. Always build
+  `/Rabbit` subpath, configured as `base` in `astro.config.mjs`. Always build
   hrefs with the `url()` helper from that module instead of hard-coding paths,
   otherwise links break in production.
 
@@ -69,7 +69,7 @@ Push to `main`. The GitHub Actions workflow `.github/workflows/pages.yml` (job
 `website/dist` to GitHub Pages. No secrets are configured: the deploy
 authenticates through the workflow's OIDC token.
 
-Result: <https://nicolasbecasazagra.github.io/MadRust/>.
+Result: <https://nicolasbecasazagra.github.io/Rabbit/>.
 
 ### One manual step, once
 
@@ -82,7 +82,7 @@ you, and the deploy fails until it is selected.
 Do these in order:
 
 1. Add `website/public/CNAME` containing the domain (for example
-   `madrust.dev`).
+   `rabbit.dev`).
 2. In `website/astro.config.mjs`, set `base: '/'` and
    `site: 'https://your-domain.com'`.
 3. In GitHub, **Settings → Pages → Custom domain** = `your-domain.com`, then

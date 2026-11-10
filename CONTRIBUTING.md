@@ -1,6 +1,6 @@
-# Contributing to MadRust
+# Contributing to Rabbit
 
-MadRust is a learning-first kernel project with a public audience: the code is
+Rabbit is a learning-first kernel project with a public audience: the code is
 read by other people trying to understand how an operating system works, and
 by maintainers judging whether the project deserves ecosystem attention.
 
@@ -42,8 +42,8 @@ Four gates, all of them run by the continuous integration:
 - `make clippy-host` and `make test`: the clippy and the unit tests of every
   crate that can be built for the host.
 
-Two crates have no host test and cannot have one: `madrust-userland` and
-`madrust-bench` are x86_64 programs with assembly in them, so they only build
+Two crates have no host test and cannot have one: `rabbit-userland` and
+`rabbit-bench` are x86_64 programs with assembly in them, so they only build
 for the target they run on. They are covered by the boot gates instead: the
 kernel boots them, and the continuous integration asserts what they print.
 
@@ -56,7 +56,7 @@ make run        # boot in QEMU, confirm the serial banner
 ```
 
 CI runs the same commands plus a headless QEMU boot test that asserts the
-serial log contains `MadRust: boot OK` and that QEMU exited with status 33
+serial log contains `Rabbit: boot OK` and that QEMU exited with status 33
 (the `isa-debug-exit` device encodes the exit code).
 
 ## Toolchain
@@ -89,7 +89,7 @@ sh bench/native_comparison.sh
 ## Style
 
 `cargo fmt` defaults, plus `clippy::all` as an error. Keep hardware access
-inside `madrust-arch`; keep parsing and pure logic in crates that can be unit
+inside `rabbit-arch`; keep parsing and pure logic in crates that can be unit
 tested on the host. Logic that can be tested on the host must be tested on the
 host.
 

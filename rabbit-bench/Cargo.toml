@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[package]
+name = "rabbit-bench"
+description = "Benchmark workload that runs on Rabbit and on mainline Linux"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+publish = false
+
+# A separate workspace, exactly like the userland program: this is a normal Rust
+# program for the Linux musl target, so it shares neither the kernel target nor
+# the kernel rustflags. The Makefile builds it with rust-lld and the rig puts
+# the static binary into an uncompressed cpio initramfs.
+[workspace]
+
+# The weights workload touches the whole measured region, so a boot with it is
+# slow under emulation. The CI builds the workload with this feature to use a
+# small region and finish in time; the published numbers use the default.
+[features]
+small = []
+
+[[bin]]
+name = "rabbit-bench"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+lto = false

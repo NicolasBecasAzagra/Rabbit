@@ -19,7 +19,7 @@ const grouped = benchmarks.reduce<Record<string, typeof benchmarks>>((acc, b) =>
       <p class="section-eyebrow">Measurements</p>
       <h2 id="benchmarks-measurements" class="text-title">The measurements</h2>
       <p class="text-lead">
-        Twelve metrics across three kernels: MadRust, Linux 7.3.0, and Linux 7.3.0 with mitigations
+        Twelve metrics across three kernels: Rabbit, Linux 7.3.0, and Linux 7.3.0 with mitigations
         disabled.
       </p>
     </header>
@@ -32,7 +32,7 @@ const grouped = benchmarks.reduce<Record<string, typeof benchmarks>>((acc, b) =>
             <div class="table-wrap" tabindex="0" role="region" aria-label={`${groups[group as keyof typeof groups]} benchmark table`}>
               <table>
                 <caption class="sr-only">
-                  {groups[group as keyof typeof groups]} measurements comparing MadRust, Linux 7.3.0, and Linux 7.3.0 without mitigations.
+                  {groups[group as keyof typeof groups]} measurements comparing Rabbit, Linux 7.3.0, and Linux 7.3.0 without mitigations.
                 </caption>
                 <colgroup>
                   <col class="col-metric" />
@@ -43,7 +43,7 @@ const grouped = benchmarks.reduce<Record<string, typeof benchmarks>>((acc, b) =>
                 <thead>
                   <tr>
                     <th scope="col">Metric</th>
-                    <th scope="col">MadRust</th>
+                    <th scope="col">Rabbit</th>
                     <th scope="col">Linux 7.3.0</th>
                     <th scope="col">Linux, no mitigations</th>
                   </tr>
@@ -52,7 +52,7 @@ const grouped = benchmarks.reduce<Record<string, typeof benchmarks>>((acc, b) =>
                   {rows.map((row) => (
                     <tr>
                       <th scope="row">{row.metric}</th>
-                      <td class="value highlight">{row.madrust}</td>
+                      <td class="value highlight">{row.rabbit}</td>
                       <td class="value">{row.mainline}</td>
                       <td class="value">{row.mainlineNoMitigations}</td>
                     </tr>

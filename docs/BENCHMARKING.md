@@ -1,6 +1,6 @@
 # Benchmarking
 
-The point of MadRust is not to claim that it is faster than Linux. It is to
+The point of Rabbit is not to claim that it is faster than Linux. It is to
 publish comparisons that are reproducible and fair, and to let the numbers
 decide.
 
@@ -73,9 +73,9 @@ same initramfs, and reads the measurements from the serial line.
 
 ```sh
 # both kernels
-bench/run.py --madrust target/.../madrust-kernel --mainline /path/to/vmlinux
-# MadRust only, before the mainline image exists
-bench/run.py --madrust-only
+bench/run.py --rabbit target/.../rabbit-kernel --mainline /path/to/vmlinux
+# Rabbit only, before the mainline image exists
+bench/run.py --rabbit-only
 ```
 
 The QEMU configuration is identical for both kernels:
@@ -92,7 +92,7 @@ kernel can describe up to 32 GiB of guest memory, so a larger guest is
 possible, but the number of processors is a property of the kernel and not of
 the rig. The CPU model is fixed on purpose: `-cpu host` changes between
 machines and invalidates the comparison. Mainline needs `console=ttyS0` so
-that its output reaches the same serial line; MadRust ignores the command
+that its output reaches the same serial line; Rabbit ignores the command
 line. The initramfs is an uncompressed `cpio` archive, which both kernels
 accept, so the bytes handed to the two kernels are identical. It carries the
 program and the `/dev/console` and `/dev/null` nodes, because a mainline
@@ -168,12 +168,12 @@ five, because every sample faults 65536 pages.
 
 ### First results
 
-MadRust against Linux 7.3.0, one processor, 512 MiB, thirty iterations per
+Rabbit against Linux 7.3.0, one processor, 512 MiB, thirty iterations per
 workload, under emulation with no hardware acceleration. Both kernels fault
 the measured regions lazily, so the comparison is like for like.
 
 ```text
-workload           MadRust     mainline    mainline (mitigations=off)
+workload           Rabbit     mainline    mainline (mitigations=off)
 syscall            239.5 ns      9827 ns            516 ns
 mmap             2.723 ms/MiB   8.341 ms/MiB     3.226 ms/MiB
 weights            950087 ns/MiB 13.332 ms/MiB    4.156 ms/MiB
@@ -194,14 +194,14 @@ comparison: a default mainline kernel reloads CR3 on every system call to
 isolate the page tables, and under emulation that flush invalidates the
 translator cache, which is why the number is two orders of magnitude away.
 The honest comparison is the third column, where the reference kernel runs
-with the same mitigations disabled that MadRust never implements.
+with the same mitigations disabled that Rabbit never implements.
 
 **What the comparison supports.** With the mitigations disabled on both
-sides, MadRust is about twice as cheap per system call, a fifth as expensive
+sides, Rabbit is about twice as cheap per system call, a fifth as expensive
 per MiB faulted in with 4 KiB pages, a tenth as expensive per MiB faulted in
 with 2 MiB pages, seven times as cheap per futex round trip and four times as
 fast in the thread workload. The tails are further apart still: the slowest
-single fault is 264 microseconds on MadRust against 2.55 milliseconds on the
+single fault is 264 microseconds on Rabbit against 2.55 milliseconds on the
 reference, and with 2 MiB pages 28.2 microseconds per fault against 1.67
 milliseconds.
 
@@ -213,7 +213,7 @@ program never reads.
 **The finding about large pages.** In the reference kernel, large pages are
 not an improvement under emulation: 14.0 ms per MiB with 2 MiB pages against
 13.3 ms with 4 KiB pages. The cost of the big folio, of zeroing it and of the
-compaction bookkeeping eats the benefit of the fewer faults. On MadRust the
+compaction bookkeeping eats the benefit of the fewer faults. On Rabbit the
 same change is an improvement: 950 microseconds per MiB down to 445, and a tail
 two orders of magnitude shorter. The difference is therefore not that one
 kernel has large pages and the other does not. It is what a large page costs
@@ -223,8 +223,8 @@ when it is faulted in.
 and ten samples, so their 99th percentile is barely a percentile. The ratios
 are inflated by the overhead the emulator adds to both kernels, because every
 guest instruction is translated. The clock source differs as well: mainline
-reads the time stamp counter through the vDSO, MadRust through a system call,
-which costs MadRust one system call per measurement point. One processor with
+reads the time stamp counter through the vDSO, Rabbit through a system call,
+which costs Rabbit one system call per measurement point. One processor with
 512 MiB is a small machine, and the fast metrics move by around thirty per
 cent between runs of the same binary on the same host.
 
@@ -243,14 +243,14 @@ moves the cost of loading a model the most, and the rig measures both regimes
 on every kernel:
 
 ```text
-                          MadRust     mainline    mainline (mitigations=off)
+                          Rabbit     mainline    mainline (mitigations=off)
 cost per MiB, 4 KiB          950087 ns 13.332 ms      4.156 ms
 cost per MiB, 2 MiB          445463 ns 14.005 ms      4.332 ms
 slowest fault, 4 KiB         263525 ns 4649782 ns    2554257 ns
 slowest fault, 2 MiB          28234 ns 4799645 ns    1673184 ns
 ```
 
-On MadRust the large pages halve the cost per MiB and shorten the worst
+On Rabbit the large pages halve the cost per MiB and shorten the worst
 fault by more than an order of magnitude, because 512 faults become one and
 the fault that remains is a single large allocation. In the reference kernel
 the same change makes the cost per MiB slightly worse and leaves the tail
@@ -270,7 +270,7 @@ a reference build without transparent huge pages:
     ADV madvise-normal=0 madvise-hugepage=-22
 a reference build with them:
     ADV madvise-normal=0 madvise-hugepage=0
-MadRust:
+Rabbit:
     ADV madvise-normal=0 madvise-hugepage=0
 ```
 
@@ -300,7 +300,7 @@ threads land, so the numbers describe the emulator and the host, not the
 kernel. Three batches of the same measurement:
 
 ```text
-                         MadRust    mainline    mainline (mitigations=off)
+                         Rabbit    mainline    mainline (mitigations=off)
 batch 1, before           21.20 s      23.34 s              9.96 s
 batch 2, after            22.17 s      22.83 s             21.92 s
 joint batch               10.70 s         -                    -
@@ -378,14 +378,14 @@ User level:
 - `unixbench` system index.
 - A kernel build of `tinyconfig` as a large, honest end-to-end workload.
 - Scheduling latency measured in the style of `cyclictest`, reported as
-  scheduling latency only. MadRust is not a real-time kernel and makes no
+  scheduling latency only. Rabbit is not a real-time kernel and makes no
   real-time claims.
 
 ## Where a win is plausible
 
 At most two narrow claims, each with the losing configuration also published:
 
-1. **System call cost in a trusted guest.** MadRust has no KPTI, no
+1. **System call cost in a trusted guest.** Rabbit has no KPTI, no
    retpoline and no L1 flush on entry, in a single-tenant VM where the guest is
    trusted. Expect a measurable gap against default mainline, and a smaller
    gap against `mitigations=off`. Both numbers get published.

@@ -21,7 +21,7 @@ const arg = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 
-const base = arg('url', 'http://localhost:4321/MadRust');
+const base = arg('url', 'http://localhost:4321/Rabbit');
 const width = Number(arg('width', 1200));
 const height = Number(arg('height', 630));
 
@@ -36,7 +36,7 @@ let css = readFileSync(join(root, 'src/styles/global.css'), 'utf8');
 // The stylesheet points at the fonts with the base path of the site, which
 // does not exist in a page rendered from memory. Inline them so the image
 // carries the same typefaces as the site.
-css = css.replace(/url\(["']?\/MadRust\/fonts\/([^"')]+)["']?\)/g, (_match, file) => {
+css = css.replace(/url\(["']?\/Rabbit\/fonts\/([^"')]+)["']?\)/g, (_match, file) => {
   const font = readFileSync(join(root, 'public/fonts', file));
   return `url("data:font/woff2;base64,${font.toString('base64')}")`;
 });

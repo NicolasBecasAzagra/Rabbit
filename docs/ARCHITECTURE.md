@@ -2,7 +2,7 @@
 
 ## Scope
 
-MadRust targets a Linux-ABI-compatible x86_64 kernel: it loads ELF binaries,
+Rabbit targets a Linux-ABI-compatible x86_64 kernel: it loads ELF binaries,
 implements the Linux system call ABI, and runs unmodified distribution
 userland. It is not a general-purpose distribution, it does not replace Linux,
 and it is not production ready. Its purpose is to produce a kernel that other
@@ -117,7 +117,7 @@ runtime written in Rust, measured against the same runtime and the same model
 on mainline Linux, in the same virtual machine, with the same flags. The
 numbers are tokens per second and the time to the first token.
 
-**The runtime** (`madrust-infer`) reads a model in the `safetensors` format,
+**The runtime** (`rabbit-infer`) reads a model in the `safetensors` format,
 maps it through the file system of the initramfs without copying it, and
 generates tokens with a Llama style forward pass: RMSNorm, rotary
 embeddings, grouped query attention, the gated feed forward block, a key
@@ -140,7 +140,7 @@ The plan, in the order it has to happen:
    with 2 MiB pages cuts the number of faults by a factor of 512, and it is
    the single change that matters most for loading a model.
 4. **A scheduler with a better tail.** The threads workload is the one
-   measurement where MadRust loses. Inference servers batch requests, and
+   measurement where Rabbit loses. Inference servers batch requests, and
    batching lives or dies on the latency of the tail, not on the average.
 5. **The runtime.** A forward pass in Rust: the tokenizer, the weights in
    half precision, the layers, the sampler. The prompt is encoded ahead of
@@ -176,18 +176,18 @@ A cargo workspace with one crate per concern:
 
 | Crate | Contents |
 |---|---|
-| `madrust-arch` | x86_64 hardware access: port I/O, control registers, MSRs, the boot trampoline. The only crate allowed to be architecture-specific. |
-| `madrust-bootinfo` | Pure parsing of the boot handover structures (PVH `start_info`, memory map). Host-testable, no hardware access. |
-| `madrust-drivers` | Device drivers: the 16550A UART and the isa-debug-exit device. |
-| `madrust-kernel` | The `no_std` kernel binary: entry, memory management, scheduler, the PIC, the PIT and the syscall layer. |
-| `madrust-elf` | ELF parser. Pure, host-testable. |
-| `madrust-mm` | Physical frame allocator (buddy), kernel heap (slab), virtual memory. |
-| `madrust-sched` | Kernel threads, wait queues, scheduler. |
-| `madrust-userland` | Static test binaries used as kernel test fixtures. |
-| `madrust-initramfs` | Parser for uncompressed `cpio` archives in the `newc` format. Pure, host-testable, no `unsafe`. |
-| `madrust-bench` | The benchmark workload binary: a static Linux program that runs on both kernels. |
-| `madrust-infer` | The inference runtime: the reader of the weights, the decoder, the merge encoder, the grammar of a tool call and the chat prompt. |
-| `madrust-agent` | The agent loop: model, tool call, tool result, and the five tools it can call. |
+| `rabbit-arch` | x86_64 hardware access: port I/O, control registers, MSRs, the boot trampoline. The only crate allowed to be architecture-specific. |
+| `rabbit-bootinfo` | Pure parsing of the boot handover structures (PVH `start_info`, memory map). Host-testable, no hardware access. |
+| `rabbit-drivers` | Device drivers: the 16550A UART and the isa-debug-exit device. |
+| `rabbit-kernel` | The `no_std` kernel binary: entry, memory management, scheduler, the PIC, the PIT and the syscall layer. |
+| `rabbit-elf` | ELF parser. Pure, host-testable. |
+| `rabbit-mm` | Physical frame allocator (buddy), kernel heap (slab), virtual memory. |
+| `rabbit-sched` | Kernel threads, wait queues, scheduler. |
+| `rabbit-userland` | Static test binaries used as kernel test fixtures. |
+| `rabbit-initramfs` | Parser for uncompressed `cpio` archives in the `newc` format. Pure, host-testable, no `unsafe`. |
+| `rabbit-bench` | The benchmark workload binary: a static Linux program that runs on both kernels. |
+| `rabbit-infer` | The inference runtime: the reader of the weights, the decoder, the merge encoder, the grammar of a tool call and the chat prompt. |
+| `rabbit-agent` | The agent loop: model, tool call, tool result, and the five tools it can call. |
 
 Crates are added when the milestone that needs them arrives, not before. A
 crate with one function does not exist yet.
@@ -387,12 +387,12 @@ crate with one function does not exist yet.
   fault runs on its own stack through IST1, so a broken kernel stack does not
   turn a fault into an undiagnosed triple fault.
 - **Interrupt stubs are generated.** `scripts/gen-isrs.sh` regenerates
-  `madrust-kernel/src/isrs.s` from the table of vectors that push an error
+  `rabbit-kernel/src/isrs.s` from the table of vectors that push an error
   code. The file is never edited by hand.
 - **Testability:** hardware sits behind traits (`Serial`, `Clock`, `Interrupt`);
   pure logic lives in crates that run on the host under `cargo test`. The
   on-target test suite runs inside QEMU and asserts over the serial log.
-- **No KPTI, no retpoline, no SMAP enforcement.** MadRust runs in a private
+- **No KPTI, no retpoline, no SMAP enforcement.** Rabbit runs in a private
   single-tenant VM. This is a deliberate benchmark advantage and a deliberate
   security limitation; both are documented, never quietly.
 
@@ -403,7 +403,7 @@ done are implemented and asserted in CI.
 
 | M | Exit criterion | Verification | State |
 |---|---|---|---|
-| M0 | QEMU serial log contains `MadRust: boot OK`, QEMU exits 33 | headless QEMU + serial assertion | done |
+| M0 | QEMU serial log contains `Rabbit: boot OK`, QEMU exits 33 | headless QEMU + serial assertion | done |
 | M1 | Divide by zero prints `DIV0 RIP=...` and continues; 100 PIT ticks print `TICKS 100` | golden serial log | done |
 | M2 | 10,000 allocate/free cycles on target without leaks or double frees; usable RAM matches `-m` | host unit tests + on-target self test | done |
 | M2b | The kernel runs from the higher half and reaches physical memory only through the direct map | the same byte read before and after the switch | done |
@@ -446,7 +446,7 @@ total, roughly 12 hours per week.
 2. Dynamic loader (TLS, relocations) is the hardest single item. Mitigation:
    static musl binaries first (M4), dynamic musl later (M6).
 3. ABI divergence in `errno` values or structure layouts. Mitigation: diff the
-   same binary's behaviour on Linux and MadRust from M4 onwards.
+   same binary's behaviour on Linux and Rabbit from M4 onwards.
 4. Concurrency bugs once SMP arrives. Mitigation: lockdep-lite from M3, one CPU
    until M8.
 5. Burnout. Mitigation: visible weekly exit criteria, stop rules below.
@@ -467,7 +467,7 @@ M0 to M5 are not cut.
 Mainline Linux does not merge code from an external kernel. The realistic
 paths are:
 
-- Publish the reusable pure crates (`madrust-elf`, `madrust-bootinfo`, the
+- Publish the reusable pure crates (`rabbit-elf`, `rabbit-bootinfo`, the
   allocator) as standalone `no_std` libraries usable by other kernel projects.
 - Contribute Rust code and drivers to Rust-for-Linux, which is the upstream
   path for Rust in mainline.

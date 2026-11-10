@@ -1,0 +1,9 @@
+kernel,workload,iteration,value,unit,status,error
+rabbit,infer-ttft,0,5861.622,ms,ok,
+rabbit,infer-tps,0,0.824,tok/s,ok,
+rabbit,boot-seconds,0,21.652,s,ok,
+rabbit,boot-rss-mb,0,549.0,MiB,ok,
+rabbit,infer-quant-ttft,0,16319.968,ms,ok,
+rabbit,infer-quant-tps,0,0.315,tok/s,ok,
+rabbit,boot-quant-seconds,0,58.901,s,ok,
+rabbit,boot-quant-rss-mb,0,271.6,MiB,ok,

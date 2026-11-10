@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# MadRust build entry points. Works on macOS and Linux.
+# Rabbit build entry points. Works on macOS and Linux.
 
 CARGO ?= cargo
 TOOLCHAIN := $(shell sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
 CARGO := $(CARGO) +$(TOOLCHAIN)
 
-TARGET := x86_64-madrust
+TARGET := x86_64-rabbit
 KERNEL_TARGET := $(TARGET).json
 # The build output lives outside the repository by default: the checkout can sit
 # on an exFAT volume, where the linker writes through mmap and the file system
 # can leave large artifacts zeroed. Override TARGET_DIR to put it elsewhere.
-TARGET_DIR ?= $(HOME)/.cache/madrust/target
-KERNEL := $(TARGET_DIR)/$(TARGET)/release/madrust-kernel
+TARGET_DIR ?= $(HOME)/.cache/rabbit/target
+KERNEL := $(TARGET_DIR)/$(TARGET)/release/rabbit-kernel
 HOST_TARGET := $(shell rustc -vV | sed -n 's/^host: //p')
 
 # The bare-metal target has no precompiled core, so it is built from source.
@@ -25,49 +25,49 @@ KERNEL_FLAGS := --target $(KERNEL_TARGET) \
 
 # The kernel binary is `no_std` + `no_main`: it cannot be built as a host test
 # target and is excluded from the host runs.
-HOST_ONLY := --exclude madrust-kernel
+HOST_ONLY := --exclude rabbit-kernel
 
 # The user program is a separate workspace and a normal Rust program built
 # against the standard library of the Linux musl target. That target is
 # precompiled, so no `-Z build-std` is needed and no C toolchain is involved:
 # rust-lld links the static position independent executable. The kernel embeds
-# the copy in madrust-userland/madrust-userland.elf, so it must be built first.
+# the copy in rabbit-userland/rabbit-userland.elf, so it must be built first.
 USER_TARGET := x86_64-unknown-linux-musl
-USERLAND_ELF := madrust-userland/madrust-userland.elf
+USERLAND_ELF := rabbit-userland/rabbit-userland.elf
 USERLAND_RUSTFLAGS := -Z unstable-options -C linker=rust-lld -C linker-flavor=gnu-lld
-USERLAND_FLAGS := --manifest-path madrust-userland/Cargo.toml \
+USERLAND_FLAGS := --manifest-path rabbit-userland/Cargo.toml \
 	--target $(USER_TARGET) \
 	--target-dir $(TARGET_DIR)/userland
 
 # The benchmark workload is a second standard library program, built exactly
 # like the userland one. The rig puts the copy into an uncompressed cpio
 # archive instead of linking it into the kernel.
-BENCH_ELF := madrust-bench/madrust-bench.elf
-BENCH_FLAGS := --manifest-path madrust-bench/Cargo.toml \
+BENCH_ELF := rabbit-bench/rabbit-bench.elf
+BENCH_FLAGS := --manifest-path rabbit-bench/Cargo.toml \
 	--target $(USER_TARGET) \
 	--target-dir $(TARGET_DIR)/bench
 
 # The network client is a third standard library program, built exactly like the
 # workload. The rig packs it into its own initramfs next to the configuration
 # that names the server, so the same bytes run on both kernels.
-NETCLIENT_ELF := madrust-netclient/madrust-netclient.elf
-NETCLIENT_FLAGS := --manifest-path madrust-netclient/Cargo.toml \
+NETCLIENT_ELF := rabbit-netclient/rabbit-netclient.elf
+NETCLIENT_FLAGS := --manifest-path rabbit-netclient/Cargo.toml \
 	--target $(USER_TARGET) \
 	--target-dir $(TARGET_DIR)/netclient
 
 # The stream client is the fourth program of the network measurement: the same
 # shape as the datagram client, over a stream socket instead. It has its own
 # archive per run, because the server of the run answers on its own port.
-NETSTREAM_ELF := madrust-netstream/madrust-netstream.elf
-NETSTREAM_FLAGS := --manifest-path madrust-netstream/Cargo.toml \
+NETSTREAM_ELF := rabbit-netstream/rabbit-netstream.elf
+NETSTREAM_FLAGS := --manifest-path rabbit-netstream/Cargo.toml \
 	--target $(USER_TARGET) \
 	--target-dir $(TARGET_DIR)/netstream
 
 # The inference runtime is a fourth standard library program, built exactly like
 # the workload. Its synthetic model, vocabulary and config are packed into the
 # same kind of initramfs, so the kernel runs it unmodified.
-INFER_DIR := madrust-infer
-INFER_ELF := $(INFER_DIR)/madrust-infer.elf
+INFER_DIR := rabbit-infer
+INFER_ELF := $(INFER_DIR)/rabbit-infer.elf
 INFER_TARGET_DIR := $(TARGET_DIR)/infer
 INFER_FLAGS := --manifest-path $(INFER_DIR)/Cargo.toml \
 	--target $(USER_TARGET) \
@@ -77,8 +77,8 @@ INFER_INITRAMFS := $(INFER_DIR)/initramfs.cpio
 
 # The agent is a fourth standard library program, built like the runtime and
 # packed with the same model so the rig runs the same bytes on both kernels.
-AGENT_DIR := madrust-agent
-AGENT_ELF := $(AGENT_DIR)/madrust-agent.elf
+AGENT_DIR := rabbit-agent
+AGENT_ELF := $(AGENT_DIR)/rabbit-agent.elf
 AGENT_TARGET_DIR := $(TARGET_DIR)/agent
 AGENT_FLAGS := --manifest-path $(AGENT_DIR)/Cargo.toml \
 	--target $(USER_TARGET) \
@@ -103,17 +103,17 @@ AGENT_NET_SELFTEST ?= 1
 
 # The reader of the cpio archive of the initramfs is a crate of its own, like
 # the other programs that are not the kernel.
-INITRAMFS_DIR := madrust-initramfs
+INITRAMFS_DIR := rabbit-initramfs
 
 # The protocols of the network path are a crate of their own too, but they are
 # not a program: the kernel depends on them, so they are built for the kernel
 # target, and their tests run on the host.
-NET_DIR := madrust-net
+NET_DIR := rabbit-net
 
 # The protocol of the agent's HTTP client is a crate of the same kind: pure, no
 # dependency, built for the kernel target and tested on the host. The agent
 # depends on it, so it is built by the agent target too.
-HTTP_DIR := madrust-http
+HTTP_DIR := rabbit-http
 
 QEMU ?= qemu-system-x86_64
 # Number of processors for the multiprocessor boot.
@@ -145,7 +145,7 @@ musl-std:
 
 userland: musl-std
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(USERLAND_FLAGS)
-	cp $(TARGET_DIR)/userland/$(USER_TARGET)/release/madrust-userland $(USERLAND_ELF)
+	cp $(TARGET_DIR)/userland/$(USER_TARGET)/release/rabbit-userland $(USERLAND_ELF)
 
 # Static workload binary for the benchmark rig.
 # The features of the workload. The CI builds it with "small" so that the boot
@@ -154,27 +154,27 @@ BENCH_FEATURES ?=
 
 bench:
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(BENCH_FLAGS) $(if $(BENCH_FEATURES),--features $(BENCH_FEATURES),)
-	cp $(TARGET_DIR)/bench/$(USER_TARGET)/release/madrust-bench $(BENCH_ELF)
+	cp $(TARGET_DIR)/bench/$(USER_TARGET)/release/rabbit-bench $(BENCH_ELF)
 
 # Static network client for the rig and for the gate of the pipeline. The rig
 # packs it with the configuration that names the server, so the archive is built
 # per run and not here.
 netclient: musl-std
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(NETCLIENT_FLAGS)
-	cp $(TARGET_DIR)/netclient/$(USER_TARGET)/release/madrust-netclient $(NETCLIENT_ELF)
+	cp $(TARGET_DIR)/netclient/$(USER_TARGET)/release/rabbit-netclient $(NETCLIENT_ELF)
 
 # Static stream client for the rig and for the gate of the pipeline. The archive
 # is built per run, like the one of the datagram client, because the port of the
 # server belongs to the run.
 netstream: musl-std
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(NETSTREAM_FLAGS)
-	cp $(TARGET_DIR)/netstream/$(USER_TARGET)/release/madrust-netstream $(NETSTREAM_ELF)
+	cp $(TARGET_DIR)/netstream/$(USER_TARGET)/release/rabbit-netstream $(NETSTREAM_ELF)
 
 # The inference runtime, built with the same rust-lld recipe as the workload so
-# the same bytes can run on MadRust and on mainline Linux.
+# the same bytes can run on Rabbit and on mainline Linux.
 infer: musl-std
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(INFER_FLAGS)
-	cp $(INFER_TARGET_DIR)/$(USER_TARGET)/release/madrust-infer $(INFER_ELF)
+	cp $(INFER_TARGET_DIR)/$(USER_TARGET)/release/rabbit-infer $(INFER_ELF)
 
 # The synthetic model is a development tool, built and run on the host. Its
 # output lives outside the repository with the rest of the build products.
@@ -185,7 +185,7 @@ infer: musl-std
 quantize:
 	$(CARGO) run --release --manifest-path $(INFER_DIR)/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host \
-		--bin madrust-infer-quantize -- --bits $(QUANT_BITS) \
+		--bin rabbit-infer-quantize -- --bits $(QUANT_BITS) \
 		--in $(QUANT_IN) --out $(QUANT_OUT)
 
 # The development model. It is written into the directory of the model, and it
@@ -200,7 +200,7 @@ infer-model:
 	else \
 		$(CARGO) run --release --manifest-path $(INFER_DIR)/Cargo.toml \
 			--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host \
-			--bin madrust-infer-gen -- --out $(INFER_MODEL_DIR); \
+			--bin rabbit-infer-gen -- --out $(INFER_MODEL_DIR); \
 	fi
 
 # One uncompressed cpio archive carrying the runtime at /bench and /init, plus
@@ -213,7 +213,7 @@ infer-initramfs: infer infer-model
 # initramfs, so the archive carries the runtime files unchanged.
 agent: musl-std
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(AGENT_FLAGS)
-	cp $(AGENT_TARGET_DIR)/$(USER_TARGET)/release/madrust-agent $(AGENT_ELF)
+	cp $(AGENT_TARGET_DIR)/$(USER_TARGET)/release/rabbit-agent $(AGENT_ELF)
 
 agent-initramfs: agent infer-model
 	EXTRA_DIR=$(INFER_MODEL_DIR) bench/mkinitramfs.sh $(AGENT_INITRAMFS) $(AGENT_ELF)
@@ -283,35 +283,35 @@ test:
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/net-host
 	$(CARGO) test --manifest-path $(HTTP_DIR)/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/http-host
-	$(CARGO) test --manifest-path madrust-netclient/Cargo.toml \
+	$(CARGO) test --manifest-path rabbit-netclient/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/netclient-host
-	$(CARGO) test --manifest-path madrust-netstream/Cargo.toml \
+	$(CARGO) test --manifest-path rabbit-netstream/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/netstream-host
 
 
 fmt:
 	$(CARGO) fmt --all
-	$(CARGO) fmt --manifest-path madrust-userland/Cargo.toml
-	$(CARGO) fmt --manifest-path madrust-bench/Cargo.toml
+	$(CARGO) fmt --manifest-path rabbit-userland/Cargo.toml
+	$(CARGO) fmt --manifest-path rabbit-bench/Cargo.toml
 	$(CARGO) fmt --manifest-path $(INFER_DIR)/Cargo.toml
 	$(CARGO) fmt --manifest-path $(AGENT_DIR)/Cargo.toml
 	$(CARGO) fmt --manifest-path $(INITRAMFS_DIR)/Cargo.toml
 	$(CARGO) fmt --manifest-path $(NET_DIR)/Cargo.toml
 	$(CARGO) fmt --manifest-path $(HTTP_DIR)/Cargo.toml
-	$(CARGO) fmt --manifest-path madrust-netclient/Cargo.toml
-	$(CARGO) fmt --manifest-path madrust-netstream/Cargo.toml
+	$(CARGO) fmt --manifest-path rabbit-netclient/Cargo.toml
+	$(CARGO) fmt --manifest-path rabbit-netstream/Cargo.toml
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
-	$(CARGO) fmt --manifest-path madrust-userland/Cargo.toml -- --check
-	$(CARGO) fmt --manifest-path madrust-bench/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path rabbit-userland/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path rabbit-bench/Cargo.toml -- --check
 	$(CARGO) fmt --manifest-path $(INFER_DIR)/Cargo.toml -- --check
 	$(CARGO) fmt --manifest-path $(AGENT_DIR)/Cargo.toml -- --check
 	$(CARGO) fmt --manifest-path $(INITRAMFS_DIR)/Cargo.toml -- --check
 	$(CARGO) fmt --manifest-path $(NET_DIR)/Cargo.toml -- --check
 	$(CARGO) fmt --manifest-path $(HTTP_DIR)/Cargo.toml -- --check
-	$(CARGO) fmt --manifest-path madrust-netclient/Cargo.toml -- --check
-	$(CARGO) fmt --manifest-path madrust-netstream/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path rabbit-netclient/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path rabbit-netstream/Cargo.toml -- --check
 
 # The kernel build reads the embedded user program, so both lint targets need
 # the userland binary to exist.
@@ -339,9 +339,9 @@ clippy-host:
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/net-host -- -D warnings
 	$(CARGO) clippy --manifest-path $(HTTP_DIR)/Cargo.toml --all-targets \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/http-host -- -D warnings
-	$(CARGO) clippy --manifest-path madrust-netclient/Cargo.toml --all-targets \
+	$(CARGO) clippy --manifest-path rabbit-netclient/Cargo.toml --all-targets \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/netclient-host -- -D warnings
-	$(CARGO) clippy --manifest-path madrust-netstream/Cargo.toml --all-targets \
+	$(CARGO) clippy --manifest-path rabbit-netstream/Cargo.toml --all-targets \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/netstream-host -- -D warnings
 
 

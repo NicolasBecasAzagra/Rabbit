@@ -3,50 +3,50 @@
 version = 4
 
 [[package]]
-name = "madrust-arch"
+name = "rabbit-arch"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-bootinfo"
+name = "rabbit-bootinfo"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-drivers"
+name = "rabbit-drivers"
 version = "0.1.0"
 dependencies = [
- "madrust-arch",
+ "rabbit-arch",
 ]
 
 [[package]]
-name = "madrust-elf"
+name = "rabbit-elf"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-initramfs"
+name = "rabbit-initramfs"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-kernel"
+name = "rabbit-kernel"
 version = "0.1.0"
 dependencies = [
- "madrust-arch",
- "madrust-bootinfo",
- "madrust-drivers",
- "madrust-elf",
- "madrust-initramfs",
- "madrust-mm",
- "madrust-net",
- "madrust-sched",
+ "rabbit-arch",
+ "rabbit-bootinfo",
+ "rabbit-drivers",
+ "rabbit-elf",
+ "rabbit-initramfs",
+ "rabbit-mm",
+ "rabbit-net",
+ "rabbit-sched",
 ]
 
 [[package]]
-name = "madrust-mm"
+name = "rabbit-mm"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-net"
+name = "rabbit-net"
 version = "0.1.0"
 
 [[package]]
-name = "madrust-sched"
+name = "rabbit-sched"
 version = "0.1.0"

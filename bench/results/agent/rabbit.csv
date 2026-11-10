@@ -1,0 +1,7 @@
+kernel,workload,iteration,value,unit,status,error
+rabbit,agent-steps,0,2,steps,ok,
+rabbit,agent-tokens,0,39,tokens,ok,
+rabbit,agent-seconds,0,821.017,s,ok,
+rabbit,agent-step-ms,0,410508.500,ms/step,ok,
+rabbit,boot-seconds,0,1200.828,s,ok,
+rabbit,boot-rss-mb,0,856.9,MiB,ok,

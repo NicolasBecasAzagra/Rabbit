@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "madrust-arch",
-    "madrust-bootinfo",
-    "madrust-drivers",
-    "madrust-elf",
-    "madrust-initramfs",
-    "madrust-kernel",
-    "madrust-mm",
-    "madrust-sched",
+    "rabbit-arch",
+    "rabbit-bootinfo",
+    "rabbit-drivers",
+    "rabbit-elf",
+    "rabbit-initramfs",
+    "rabbit-kernel",
+    "rabbit-mm",
+    "rabbit-sched",
 ]
 # Crates that carry their own workspace must be named here, or the paths that
 # point into them make cargo see two workspace roots in the same tree.
-exclude = ["madrust-net", "madrust-http"]
+exclude = ["rabbit-net", "rabbit-http"]
 
 [workspace.package]
 version = "0.1.0"

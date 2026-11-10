@@ -1,4 +1,4 @@
-# Cargo configuration for the MadRust workspace.
+# Cargo configuration for the Rabbit workspace.
 #
 # The bare-metal target and the `-Z build-std` flags are deliberately NOT set
 # here: they are passed on the command line by the Makefile, so that plain
@@ -8,8 +8,8 @@
 [unstable]
 json-target-spec = true
 
-[target.x86_64-madrust]
+[target.x86_64-rabbit]
 rustflags = ["-C", "link-arg=-Tlinker.ld"]
 
 [alias]
-kbuild = "build --release --target x86_64-madrust.json -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem"
+kbuild = "build --release --target x86_64-rabbit.json -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem"

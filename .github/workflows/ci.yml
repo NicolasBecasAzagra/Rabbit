@@ -79,7 +79,7 @@ jobs:
           # before the exact matches, so the gate does not depend on where
           # the two streams meet.
           tr -d '\r' < serial.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > serial-clean.log
-          grep -q "MadRust: boot OK" serial-clean.log
+          grep -q "Rabbit: boot OK" serial-clean.log
           # The kernel must run from the higher half and reach physical memory
           # through the direct map only.
           grep -q "0xffffffff80000000" serial-clean.log
@@ -89,7 +89,7 @@ jobs:
           grep -q "HEAP OK 10000" serial-clean.log
           # The user program prints through the write system call and exits
           # through exit_group; the kernel reports the status it received.
-          grep -q "Hello from MadRust userland" serial-clean.log
+          grep -q "Hello from Rabbit userland" serial-clean.log
           grep -q "USER OK exit=0" serial-clean.log
           grep -q "SCHED OK" serial-clean.log
           # Interleaving proof: every demo thread must appear in the log.
@@ -208,7 +208,7 @@ jobs:
           printf 'address=10.0.2.2\nport=%s\ncount=1\n' "$port" \
             > "$RUNNER_TEMP/netconf/net.conf"
           EXTRA_DIR="$RUNNER_TEMP/netconf" sh bench/mkinitramfs.sh \
-            "$RUNNER_TEMP/net.cpio" madrust-netclient/madrust-netclient.elf
+            "$RUNNER_TEMP/net.cpio" rabbit-netclient/rabbit-netclient.elf
           set +e
           timeout 60 qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 512M \
             -kernel "$(make -s print-kernel-path)" \
@@ -232,7 +232,7 @@ jobs:
           printf 'address=10.0.2.2\nport=%s\ncount=1\n' "$stream_port" \
             > "$RUNNER_TEMP/netstreamconf/net.conf"
           EXTRA_DIR="$RUNNER_TEMP/netstreamconf" sh bench/mkinitramfs.sh \
-            "$RUNNER_TEMP/netstream.cpio" madrust-netstream/madrust-netstream.elf
+            "$RUNNER_TEMP/netstream.cpio" rabbit-netstream/rabbit-netstream.elf
           set +e
           timeout 60 qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 512M \
             -kernel "$(make -s print-kernel-path)" \
@@ -305,7 +305,7 @@ jobs:
           # read out of the receive queue and the hardware address it carries
           # is the one the datagram is addressed to.
           grep -qE "^\[net\] arp gateway=10\.0\.2\.2 mac=([0-9a-f]{2}:){5}[0-9a-f]{2}$" pci-boot.log
-          grep -qxF "MadRust: boot OK" pci-boot.log
+          grep -qxF "Rabbit: boot OK" pci-boot.log
           # The frames must also leave the guest. The dump is written by the
           # emulator at the boundary of its user mode network, so it holds what
           # arrived there and what the host answered: the address resolution
@@ -400,7 +400,7 @@ jobs:
           # the connection. The server of the host saw the request byte for
           # byte, and the answer is the request it echoed.
           tr -d '\r' < tcp.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > tcp-boot.log
-          grep -qxF "MadRust: boot OK" tcp-boot.log
+          grep -qxF "Rabbit: boot OK" tcp-boot.log
           grep -qE "^\[net\] tcp send 10\.0\.2\.15:[0-9]+ -> 10\.0\.2\.2:$stream_port flags=0x18 seq=[0-9]+ ack=[0-9]+ len=8 data=\"stream-0\"$" tcp-boot.log
           grep -qE "^\[net\] tcp recv 10\.0\.2\.2:$stream_port -> 10\.0\.2\.15:[0-9]+ flags=0x18 seq=[0-9]+ ack=[0-9]+ len=8 data=\"stream-0\"$" tcp-boot.log
           grep -qE "^NET STREAM OK rt=[0-9]+ retries=[0-9]+ answer=stream-0$" tcp-boot.log
@@ -435,7 +435,7 @@ jobs:
           # CI builds it with a small region to finish under emulation.
           make bench BENCH_FEATURES=small
           sh bench/mkinitramfs.sh
-          expected="$(wc -c < madrust-bench/madrust-bench.elf | tr -d ' ')"
+          expected="$(wc -c < rabbit-bench/rabbit-bench.elf | tr -d ' ')"
           set +e
           # The benchmark workload touches 256 MiB five times, so this boot is
           # slower than the bare one under emulation.
@@ -483,7 +483,7 @@ jobs:
           done
           test "$total" -eq "$(grep -c '^RESULT ' initramfs-boot.log)"
           grep -qxF "USER OK exit=0" initramfs-boot.log
-          grep -qxF "MadRust: boot OK" initramfs-boot.log
+          grep -qxF "Rabbit: boot OK" initramfs-boot.log
 
       - name: Boot the inference runtime in the guest
         run: |
@@ -495,7 +495,7 @@ jobs:
           set +e
           timeout 300 qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M \
             -kernel "$(make -s print-kernel-path)" \
-            -initrd madrust-infer/initramfs.cpio \
+            -initrd rabbit-infer/initramfs.cpio \
             -display none -monitor none -no-reboot \
             -serial file:infer.log \
             -device isa-debug-exit,iobase=0xf4,iosize=0x04
@@ -510,7 +510,7 @@ jobs:
           grep -q "^INFER OK" infer-boot.log
           grep -q "^INFER ttft_ms " infer-boot.log
           grep -q "^INFER tok_per_s " infer-boot.log
-          grep -qxF "MadRust: boot OK" infer-boot.log
+          grep -qxF "Rabbit: boot OK" infer-boot.log
 
       - name: Run the agent loop in the guest
         run: |
@@ -522,7 +522,7 @@ jobs:
           set +e
           timeout 600 qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M \
             -kernel "$(make -s print-kernel-path)" \
-            -initrd madrust-agent/initramfs.cpio \
+            -initrd rabbit-agent/initramfs.cpio \
             -display none -monitor none -no-reboot \
             -serial file:agent.log \
             -device isa-debug-exit,iobase=0xf4,iosize=0x04
@@ -538,7 +538,7 @@ jobs:
           # run ends with the summary the rig reads.
           grep -q "^AGENT step=1 tool=" agent-boot.log
           grep -qE "^AGENT steps=[0-9]+ tokens=[0-9]+ seconds=[0-9.]+ tool_calls=[0-9]+$" agent-boot.log
-          grep -qxF "MadRust: boot OK" agent-boot.log
+          grep -qxF "Rabbit: boot OK" agent-boot.log
 
       - name: Run the agent against the network
         run: |
@@ -616,7 +616,7 @@ jobs:
                           "http got %d bytes from %s:%d on port %d: %r"
                           % (len(data), address[0], address[1], http_port, data)
                       )
-                      body = b"madrust-agent http ok\n"
+                      body = b"rabbit-agent http ok\n"
                       connection.sendall(
                           b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
                           b"Content-Length: %d\r\nConnection: close\r\n\r\n"
@@ -653,7 +653,7 @@ jobs:
           set +e
           timeout 600 qemu-system-x86_64 -M q35 -cpu Skylake-Client -m 1024M \
             -kernel "$(make -s print-kernel-path)" \
-            -initrd madrust-agent/initramfs-net.cpio \
+            -initrd rabbit-agent/initramfs-net.cpio \
             -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
             -display none -monitor none -no-reboot \
             -serial file:agent-net.log \
@@ -675,19 +675,19 @@ jobs:
           grep -q "on port $port: b'ping-agent'" agent-net-server.log
           # The deterministic HTTP call: the request line, the Host header and
           # the path are the ones of this run, and the answer arrived whole.
-          grep -qE "^AGENT selftest tool=http_get args=\{\"query\":\"http://10\.0\.2\.2:$http_port/agent\"\} result=status=200 reason=OK bytes=22 headers=content-type:text/plain,content-length:22 content=madrust-agent http ok" agent-net-boot.log
+          grep -qE "^AGENT selftest tool=http_get args=\{\"query\":\"http://10\.0\.2\.2:$http_port/agent\"\} result=status=200 reason=OK bytes=22 headers=content-type:text/plain,content-length:22 content=rabbit-agent http ok" agent-net-boot.log
           # The server of the host read the request the client wrote: the
           # method, the path, the Host header and the agent's own header.
           grep -q "http got" agent-net-server.log
           grep -q "GET /agent HTTP/1.1" agent-net-server.log
           grep -q "Host: 10.0.2.2:$http_port" agent-net-server.log
-          grep -q "user-agent: madrust-agent/0.1" agent-net-server.log
+          grep -q "user-agent: rabbit-agent/0.1" agent-net-server.log
           # The round trip is on the summary of the run, because the tool runs
           # inside the run: the seconds of the agent carry it. The datagram and
           # the request have a key each.
           grep -qE "^AGENT steps=[0-9]+ tokens=[0-9]+ seconds=[0-9.]+ tool_calls=[0-9]+ net_us=[0-9]+ retries=[0-9]+ http_us=[0-9]+ http_retries=[0-9]+$" agent-net-boot.log
           grep -qxF "AGENT DONE" agent-net-boot.log
-          grep -qxF "MadRust: boot OK" agent-net-boot.log
+          grep -qxF "Rabbit: boot OK" agent-net-boot.log
           # A model that chooses the network tool is a second proof, not the
           # proof: the synthetic checkpoint is free to choose something else,
           # and the gate must pass on the deterministic call alone.

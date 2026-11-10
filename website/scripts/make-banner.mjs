@@ -1,6 +1,6 @@
 // Builds the animated banner of the README from the live site.
 //
-//   node scripts/make-banner.mjs --url http://localhost:4321/MadRust/ --out ../docs/boot.gif
+//   node scripts/make-banner.mjs --url http://localhost:4321/Rabbit/ --out ../docs/boot.gif
 //
 // The banner is the boot sequence of the real kernel, with the mark of the
 // project. It is assembled in the browser, where the styles of the site are
@@ -17,7 +17,7 @@ const arg = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 
-const url = arg('url', 'http://localhost:4321/MadRust/');
+const url = arg('url', 'http://localhost:4321/Rabbit/');
 const out = resolve(process.cwd(), arg('out', '../docs/boot.gif'));
 const width = Number(arg('width', 1280));
 const height = Number(arg('height', 480));
@@ -43,7 +43,7 @@ await page.waitForSelector('.hero-terminal .terminal-line', { timeout: 15000 });
 // terminal element the site shows, so the animation is the site's animation.
 await page.evaluate(
   async ({ width, height }) => {
-    const logo = await fetch('/MadRust/logo.svg').then((r) => r.text());
+    const logo = await fetch('/Rabbit/logo.svg').then((r) => r.text());
     const terminal = document.querySelector('.hero-terminal');
     const banner = document.createElement('div');
     banner.id = 'readme-banner';
@@ -58,11 +58,11 @@ await page.evaluate(
     const word = document.createElement('span');
     word.style.cssText =
       'font-family:var(--font-display);font-weight:800;font-variation-settings:"wdth" 75,"wght" 800;font-size:22px;letter-spacing:-0.02em;color:var(--ink)';
-    word.textContent = 'MadRust';
+    word.textContent = 'Rabbit';
     const claim = document.createElement('span');
     claim.style.cssText =
       'font-size:13px;color:var(--ink-secondary);margin-left:8px;letter-spacing:0.02em';
-    claim.textContent = 'An operating system for local AI agents, written in Rust.';
+    claim.textContent = 'A Linux-ABI-compatible operating system kernel written in Rust.';
     const meta = document.createElement('span');
     meta.style.cssText =
       'margin-left:auto;font-size:12px;color:var(--ink-tertiary);text-transform:uppercase;letter-spacing:0.08em';

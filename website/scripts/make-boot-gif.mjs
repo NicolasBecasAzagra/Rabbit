@@ -1,6 +1,6 @@
 // Builds the animated boot log of the README banner from the live site.
 //
-//   node scripts/make-boot-gif.mjs --url http://localhost:4321/MadRust/ \
+//   node scripts/make-boot-gif.mjs --url http://localhost:4321/Rabbit/ \
 //        --selector "[data-boot-log]" --out ../docs/boot.gif \
 //        --width 1280 --height 480 --fps 24 --duration 9
 //
@@ -17,7 +17,7 @@ const arg = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 
-const url = arg('url', 'http://localhost:4321/MadRust/');
+const url = arg('url', 'http://localhost:4321/Rabbit/');
 const selector = arg('selector', '[data-boot-log]');
 const out = resolve(process.cwd(), arg('out', '../docs/boot.gif'));
 const width = Number(arg('width', 1280));

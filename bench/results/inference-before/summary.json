@@ -15,26 +15,26 @@
       "sha256": "5e30a1fc38b6227cd9dda35b53905303b6a2fbcb8a630bbd496575fd1508a710"
     },
     "kernels": {
-      "madrust": {
-        "path": "/Users/nicolasbecasazagra/.cache/madrust/target/x86_64-madrust/release/madrust-kernel",
+      "rabbit": {
+        "path": "/Users/nicolasbecasazagra/.cache/rabbit/target/x86_64-rabbit/release/rabbit-kernel",
         "sha256": "6c6abc41e915b0155bf8ccbb873d24211b38d3806851c4708827635398436b6d",
         "kernel_args": "console=ttyS0"
       },
       "mainline": {
-        "path": "/Users/nicolasbecasazagra/madrust/artifacts/vmlinux",
+        "path": "/Users/nicolasbecasazagra/rabbit/artifacts/vmlinux",
         "sha256": "e64d718d84d099eeea65251168d529519dc1e6139e72f2d20e73901d24e5baa2",
         "kernel_args": "console=ttyS0"
       },
       "mainline-nomitig": {
-        "path": "/Users/nicolasbecasazagra/madrust/artifacts/vmlinux",
+        "path": "/Users/nicolasbecasazagra/rabbit/artifacts/vmlinux",
         "sha256": "e64d718d84d099eeea65251168d529519dc1e6139e72f2d20e73901d24e5baa2",
         "kernel_args": "mitigations=off"
       }
     },
     "commands": {
-      "madrust": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/.cache/madrust/target/x86_64-madrust/release/madrust-kernel -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/MadRust/bench/results/full/madrust.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
-      "mainline": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/madrust/artifacts/vmlinux -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/MadRust/bench/results/full/mainline.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
-      "mainline-nomitig": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/madrust/artifacts/vmlinux -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append 'console=ttyS0 mitigations=off' -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/MadRust/bench/results/full/mainline-nomitig.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
+      "rabbit": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/.cache/rabbit/target/x86_64-rabbit/release/rabbit-kernel -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/Rabbit/bench/results/full/rabbit.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
+      "mainline": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/rabbit/artifacts/vmlinux -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append console=ttyS0 -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/Rabbit/bench/results/full/mainline.log -device isa-debug-exit,iobase=0xf4,iosize=0x04",
+      "mainline-nomitig": "qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 1 -m 1024M -kernel /Users/nicolasbecasazagra/rabbit/artifacts/vmlinux -initrd /private/var/folders/n3/rrkl2dkn4xx292ym7g7rvqqc0000gn/T/opencode/real.cpio -append 'console=ttyS0 mitigations=off' -display none -monitor none -no-reboot -serial file:/Volumes/PortableSSD/Rabbit/bench/results/full/mainline-nomitig.log -device isa-debug-exit,iobase=0xf4,iosize=0x04"
     },
     "iterations_expected": {
       "syscall": 30,
@@ -52,7 +52,7 @@
   },
   "summary": [
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "syscall",
       "unit": "ns/op",
       "samples": 0,
@@ -63,7 +63,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "mmap",
       "unit": "ns/MiB",
       "samples": 0,
@@ -74,7 +74,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights",
       "unit": "ns/MiB",
       "samples": 0,
@@ -85,7 +85,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -96,7 +96,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge",
       "unit": "ns/MiB",
       "samples": 0,
@@ -107,7 +107,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "weights-huge-tail",
       "unit": "ns/page",
       "samples": 0,
@@ -118,7 +118,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "futex",
       "unit": "ns/roundtrip",
       "samples": 0,
@@ -129,7 +129,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "threads",
       "unit": "ns/total",
       "samples": 0,
@@ -140,7 +140,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-ttft",
       "unit": "ms",
       "samples": 1,
@@ -151,7 +151,7 @@
       "stddev": null
     },
     {
-      "kernel": "madrust",
+      "kernel": "rabbit",
       "workload": "infer-tps",
       "unit": "tok/s",
       "samples": 1,

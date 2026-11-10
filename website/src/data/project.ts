@@ -5,14 +5,14 @@
  */
 
 export const meta = {
-  name: 'MadRust',
-  tagline: 'An operating system for local AI agents, written in Rust from the kernel up.',
+  name: 'Rabbit',
+  tagline: 'A Linux-ABI-compatible operating system kernel written in Rust.',
   description:
-    'MadRust is a from-scratch x86_64 kernel that speaks the Linux userspace ABI. On top of it sit an inference runtime with no dependency outside the Rust standard library, and an agent that asks the model what to do and runs the tools.',
-  repo: 'https://github.com/NicolasBecasAzagra/MadRust',
-  repoPath: 'NicolasBecasAzagra/MadRust',
+    'Rabbit is a Linux-ABI-compatible operating system kernel written in Rust.',
+  repo: 'https://github.com/NicolasBecasAzagra/Rabbit',
+  repoPath: 'NicolasBecasAzagra/Rabbit',
   license: 'GPL-2.0-only',
-  licenseUrl: 'https://github.com/NicolasBecasAzagra/MadRust/blob/main/LICENSE',
+  licenseUrl: 'https://github.com/NicolasBecasAzagra/Rabbit/blob/main/LICENSE',
   author: 'Nicolas Becas Azagra',
   toolchain: 'nightly-2026-10-24',
   emu: 'QEMU 8.2.2',
@@ -36,14 +36,14 @@ export const layers: Layer[] = [
     role: 'A kernel that does less',
     body: 'No page table isolation, no LSM, no audit, no cgroups, no hooks. Demand paging, large pages, a scheduler with a short tail and real multiprocessing. Every number is published, including the losses.',
     crates: [
-      'madrust-kernel',
-      'madrust-arch',
-      'madrust-mm',
-      'madrust-sched',
-      'madrust-elf',
-      'madrust-initramfs',
-      'madrust-bootinfo',
-      'madrust-drivers',
+      'rabbit-kernel',
+      'rabbit-arch',
+      'rabbit-mm',
+      'rabbit-sched',
+      'rabbit-elf',
+      'rabbit-initramfs',
+      'rabbit-bootinfo',
+      'rabbit-drivers',
     ],
     differentiator: 'Fewer milliseconds of work per operation, in a private single tenant guest.',
   },
@@ -52,7 +52,7 @@ export const layers: Layer[] = [
     name: 'The runtime',
     role: 'A runtime that serves a model',
     body: 'The weights are mapped from the initramfs without being copied, kept resident, and read by a decoder written from scratch: RMSNorm, rotary embeddings, grouped query attention, the gated feed forward block and a key value cache. It generates the same tokens as the reference implementation, one for one.',
-    crates: ['madrust-infer', 'madrust-initramfs'],
+    crates: ['rabbit-infer', 'rabbit-initramfs'],
     differentiator: 'No dependency outside the Rust standard library, and no copy of the weights.',
   },
   {
@@ -60,7 +60,7 @@ export const layers: Layer[] = [
     name: 'The agent',
     role: 'An agent that acts',
     body: 'The model answers with a tool call, the kernel runs the tool, and the model answers again. The shape of the call is not a request in the prompt but an automaton over bytes: the answer cannot be anything but a well formed call of a declared tool, with the keys that tool needs, each of them once, with the type the tool expects.',
-    crates: ['madrust-agent', 'madrust-http'],
+    crates: ['rabbit-agent', 'rabbit-http'],
     differentiator: 'A grammar that makes a malformed tool call impossible.',
   },
   {
@@ -68,7 +68,7 @@ export const layers: Layer[] = [
     name: 'The network',
     role: 'The fourth layer',
     body: 'The guest enumerates the bus, claims a network device, resolves the address of the gateway, sends a datagram to a server on the host and reads the answer, with the socket calls of the Linux ABI. The agent has a tool that does it, so the loop of the agent reaches the network.',
-    crates: ['madrust-net', 'madrust-netclient', 'madrust-netstream', 'madrust-http'],
+    crates: ['rabbit-net', 'rabbit-netclient', 'rabbit-netstream', 'rabbit-http'],
     differentiator: 'A stack sized for the agent loop, not for the general case.',
   },
 ];
@@ -100,7 +100,7 @@ export const milestones: Milestone[] = [
     name: 'Boot',
     delivers: 'Xen PVH handover, serial output, physical memory map.',
     state: 'done',
-    exit: 'Serial log contains "MadRust: boot OK" and QEMU exits 33.',
+    exit: 'Serial log contains "Rabbit: boot OK" and QEMU exits 33.',
     verification: 'Headless QEMU with a serial assertion.',
   },
   {
@@ -362,7 +362,7 @@ export const deferred = [
 
 export type Benchmark = {
   metric: string;
-  madrust: string;
+  rabbit: string;
   mainline: string;
   mainlineNoMitigations: string;
   group: 'operation' | 'inference' | 'agent';
@@ -372,84 +372,84 @@ export const benchmarks: Benchmark[] = [
   {
     group: 'operation',
     metric: 'System call',
-    madrust: '376 ns',
+    rabbit: '376 ns',
     mainline: '29.3 us',
     mainlineNoMitigations: '1.04 us',
   },
   {
     group: 'operation',
     metric: 'Map and touch memory',
-    madrust: '6.83 ms/MiB',
+    rabbit: '6.83 ms/MiB',
     mainline: '25.8 ms/MiB',
     mainlineNoMitigations: '8.69 ms/MiB',
   },
   {
     group: 'operation',
     metric: 'Fault in memory, 4 KiB pages',
-    madrust: '2.01 ms/MiB',
+    rabbit: '2.01 ms/MiB',
     mainline: '44.6 ms/MiB',
     mainlineNoMitigations: '13.7 ms/MiB',
   },
   {
     group: 'operation',
     metric: 'Fault in memory, 2 MiB pages',
-    madrust: '825 us/MiB',
+    rabbit: '825 us/MiB',
     mainline: '44.9 ms/MiB',
     mainlineNoMitigations: '13.0 ms/MiB',
   },
   {
     group: 'operation',
     metric: 'Futex round trip',
-    madrust: '6.53 us',
+    rabbit: '6.53 us',
     mainline: '407 us',
     mainlineNoMitigations: '97.7 us',
   },
   {
     group: 'operation',
     metric: 'Four threads, spawn to join',
-    madrust: '620 us',
+    rabbit: '620 us',
     mainline: '7.73 ms',
     mainlineNoMitigations: '4.59 ms',
   },
   {
     group: 'operation',
     metric: 'Boot to the first result',
-    madrust: '12.9 s',
+    rabbit: '12.9 s',
     mainline: '206 s',
     mainlineNoMitigations: '63.8 s',
   },
   {
     group: 'operation',
     metric: 'Resident memory of the guest',
-    madrust: '319 MB',
+    rabbit: '319 MB',
     mainline: '476 MB',
     mainlineNoMitigations: '483 MB',
   },
   {
     group: 'inference',
     metric: 'Time to the first token',
-    madrust: '11.25 s',
+    rabbit: '11.25 s',
     mainline: '24.67 s',
     mainlineNoMitigations: '22.82 s',
   },
   {
     group: 'inference',
     metric: 'Tokens per second',
-    madrust: '0.45 tok/s',
+    rabbit: '0.45 tok/s',
     mainline: '0.20 tok/s',
     mainlineNoMitigations: '0.21 tok/s',
   },
   {
     group: 'agent',
     metric: 'Seconds of an agent loop',
-    madrust: '821 s',
+    rabbit: '821 s',
     mainline: '2793 s',
     mainlineNoMitigations: '2570 s',
   },
   {
     group: 'agent',
     metric: 'Resident memory with the model',
-    madrust: '857 MB',
+    rabbit: '857 MB',
     mainline: '1021 MB',
     mainlineNoMitigations: '1023 MB',
   },
@@ -491,7 +491,7 @@ export const faq: { question: string; answer: string }[] = [
   {
     question: 'Is this Linux?',
     answer:
-      'No. MadRust is an x86_64 kernel written from scratch that is compatible with the Linux userspace ABI: the same system calls, the same struct layouts, the same ELF loading rules. It is not a distribution and it does not replace Linux.',
+      'No. Rabbit is an x86_64 kernel written from scratch that is compatible with the Linux userspace ABI: the same system calls, the same struct layouts, the same ELF loading rules. It is not a distribution and it does not replace Linux.',
   },
   {
     question: 'Does it run on my machine?',
@@ -568,22 +568,22 @@ export const build = {
 };
 
 export const repository = [
-  { crate: 'madrust-arch', what: 'x86_64 hardware access, port I/O, boot trampoline' },
-  { crate: 'madrust-bootinfo', what: 'pure parsing of the PVH boot handover structures' },
-  { crate: 'madrust-drivers', what: '16550A UART, isa-debug-exit' },
-  { crate: 'madrust-mm', what: 'paging, the buddy allocator, the heap, the mappings' },
-  { crate: 'madrust-sched', what: 'the scheduler and its policy' },
-  { crate: 'madrust-elf', what: 'the ELF64 reader' },
-  { crate: 'madrust-initramfs', what: 'the reader of the cpio archive of the initramfs' },
-  { crate: 'madrust-kernel', what: 'the no_std kernel binary' },
-  { crate: 'madrust-userland', what: 'the test program that runs unmodified in ring 3' },
-  { crate: 'madrust-bench', what: 'the workload that measures the kernel' },
-  { crate: 'madrust-infer', what: 'the inference runtime, the grammar, the merge encoder' },
-  { crate: 'madrust-agent', what: 'the agent loop: model, tool call, tool result' },
-  { crate: 'madrust-net', what: 'the protocols of the network path' },
-  { crate: 'madrust-netclient', what: 'the client of the network' },
-  { crate: 'madrust-netstream', what: 'the stream of the network' },
-  { crate: 'madrust-http', what: 'the HTTP of the agent' },
+  { crate: 'rabbit-arch', what: 'x86_64 hardware access, port I/O, boot trampoline' },
+  { crate: 'rabbit-bootinfo', what: 'pure parsing of the PVH boot handover structures' },
+  { crate: 'rabbit-drivers', what: '16550A UART, isa-debug-exit' },
+  { crate: 'rabbit-mm', what: 'paging, the buddy allocator, the heap, the mappings' },
+  { crate: 'rabbit-sched', what: 'the scheduler and its policy' },
+  { crate: 'rabbit-elf', what: 'the ELF64 reader' },
+  { crate: 'rabbit-initramfs', what: 'the reader of the cpio archive of the initramfs' },
+  { crate: 'rabbit-kernel', what: 'the no_std kernel binary' },
+  { crate: 'rabbit-userland', what: 'the test program that runs unmodified in ring 3' },
+  { crate: 'rabbit-bench', what: 'the workload that measures the kernel' },
+  { crate: 'rabbit-infer', what: 'the inference runtime, the grammar, the merge encoder' },
+  { crate: 'rabbit-agent', what: 'the agent loop: model, tool call, tool result' },
+  { crate: 'rabbit-net', what: 'the protocols of the network path' },
+  { crate: 'rabbit-netclient', what: 'the client of the network' },
+  { crate: 'rabbit-netstream', what: 'the stream of the network' },
+  { crate: 'rabbit-http', what: 'the HTTP of the agent' },
   { crate: 'bench', what: 'the rig, the workloads, the reference build, the datasets' },
   { crate: 'docs', what: 'architecture, boot protocol, benchmarking, VM setup' },
   { crate: 'scripts', what: 'the generator of the interrupt stubs' },
@@ -645,7 +645,7 @@ export const risks = [
   },
   {
     title: 'ABI divergence in errno values or structure layouts',
-    mitigation: 'Diff the same binary behaviour on Linux and MadRust from M4 onwards.',
+    mitigation: 'Diff the same binary behaviour on Linux and Rabbit from M4 onwards.',
   },
   {
     title: 'Concurrency bugs once SMP arrives',

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Run the MadRust benchmark workload on one or two kernel images.
+"""Run the Rabbit benchmark workload on one or two kernel images.
 
 The rig boots each kernel with identical QEMU flags, the same initramfs and the
 same command line. The workload inside the guest prints one RESULT line per
@@ -102,18 +102,18 @@ NET_PROBE_PORT = 9999
 # The program, the archive it is packed into, and the file the rig writes its
 # endpoint into. The archive is built per run, because the port of the server
 # belongs to the run.
-NETCLIENT_ELF = "madrust-netclient/madrust-netclient.elf"
+NETCLIENT_ELF = "rabbit-netclient/rabbit-netclient.elf"
 NET_INITRAMFS = "bench/initramfs-net.cpio"
 
 # The stream client is a program of its own, with its own archive, because the
 # server of the run answers a stream on a port of its own. Both archives carry
 # the same binary bytes for every kernel of the run.
-NETSTREAM_ELF = "madrust-netstream/madrust-netstream.elf"
+NETSTREAM_ELF = "rabbit-netstream/rabbit-netstream.elf"
 NET_STREAM_INITRAMFS = "bench/initramfs-net-stream.cpio"
 
 # The agent that reaches the network needs the model and the endpoint of the
 # server, so its archive is built per run like the archive of the client.
-AGENT_NET_INITRAMFS = "madrust-agent/initramfs-net.cpio"
+AGENT_NET_INITRAMFS = "rabbit-agent/initramfs-net.cpio"
 
 # Resource the agent asks the HTTP server for. It is a path, not a directory,
 # so the gate of the pipeline can check the request line on the server side.
@@ -253,7 +253,7 @@ def host_metadata() -> dict[str, str]:
     }
 
 
-def default_madrust_image() -> str:
+def default_rabbit_image() -> str:
     root = repo_root()
     result = subprocess.run(
         ["make", "-s", "--no-print-directory", "print-kernel-path"],
@@ -672,7 +672,7 @@ def answer_http(connection, address):
         "http got %d bytes from %s:%d on port %d: %r"
         % (len(data), address[0], address[1], http_port, data)
     )
-    body = b"madrust-agent http ok\n"
+    body = b"rabbit-agent http ok\n"
     connection.sendall(
         b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
         b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(body)
@@ -826,7 +826,7 @@ def ensure_net_initramfs(
     subprocess.run(["make", target], cwd=root, check=True)
     if not binary.is_file():
         raise SystemExit(f"the {target} client was not built: {binary}")
-    with tempfile.TemporaryDirectory(prefix="madrust-net-") as directory:
+    with tempfile.TemporaryDirectory(prefix="rabbit-net-") as directory:
         (Path(directory) / "net.conf").write_text(
             "# written by the rig for this run\n"
             f"address={NET_ADDRESS}\n"
@@ -1278,14 +1278,14 @@ def write_summary(out_dir: Path, table: list[dict[str, Any]], metadata: dict[str
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--madrust", help="MadRust kernel image")
+    parser.add_argument("--rabbit", help="Rabbit kernel image")
     parser.add_argument(
-        "--madrust-variant",
+        "--rabbit-variant",
         action="append",
         metavar="NAME=IMAGE",
         help=(
-            "another MadRust kernel image to measure beside the current one, "
-            "repeatable. The label is 'madrust-NAME', so an older build can be "
+            "another Rabbit kernel image to measure beside the current one, "
+            "repeatable. The label is 'rabbit-NAME', so an older build can be "
             "compared with the new one in a single run."
         ),
     )
@@ -1302,9 +1302,9 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--madrust-only",
+        "--rabbit-only",
         action="store_true",
-        help="run only the MadRust image, before a mainline image exists",
+        help="run only the Rabbit image, before a mainline image exists",
     )
     parser.add_argument("--initrd", help="cpio archive to hand to both kernels")
     parser.add_argument(
@@ -1369,13 +1369,13 @@ def main() -> int:
     args = parser.parse_args()
 
     root = repo_root()
-    madrust_image = Path(args.madrust or default_madrust_image()).resolve()
-    if not madrust_image.is_file():
+    rabbit_image = Path(args.rabbit or default_rabbit_image()).resolve()
+    if not rabbit_image.is_file():
         # The kernel is built here when it is missing, so a host that has only
         # cloned the repository can measure. A checkout that was updated and
         # keeps an old image would measure the wrong kernel, so the build is
         # always run.
-        print("[rig] building the MadRust kernel", file=sys.stderr)
+        print("[rig] building the Rabbit kernel", file=sys.stderr)
         if not command_available("cargo"):
             raise SystemExit(
                 "cargo is needed to build the kernel: "
@@ -1383,26 +1383,26 @@ def main() -> int:
                 "| sh -s -- -y --profile minimal"
             )
         subprocess.run(["make", "build"], cwd=repo_root(), check=True)
-        madrust_image = Path(args.madrust or default_madrust_image()).resolve()
-    if not madrust_image.is_file():
-        raise SystemExit(f"MadRust image not found: {madrust_image}")
+        rabbit_image = Path(args.rabbit or default_rabbit_image()).resolve()
+    if not rabbit_image.is_file():
+        raise SystemExit(f"Rabbit image not found: {rabbit_image}")
     else:
         # Always rebuild, for the same reason as the runtime.
         subprocess.run(["make", "build"], cwd=repo_root(), check=True)
 
-    kernels: list[tuple[str, Path, str]] = [("madrust", madrust_image, "")]
-    for variant in args.madrust_variant or []:
+    kernels: list[tuple[str, Path, str]] = [("rabbit", rabbit_image, "")]
+    for variant in args.rabbit_variant or []:
         name, _, image = variant.partition("=")
         name = name.strip()
         if not name or not image:
-            raise SystemExit(f"invalid --madrust-variant: {variant}")
+            raise SystemExit(f"invalid --rabbit-variant: {variant}")
         variant_image = Path(image).resolve()
         if not variant_image.is_file():
-            raise SystemExit(f"MadRust variant image not found: {variant_image}")
-        kernels.append((f"madrust-{name}", variant_image, ""))
-    if not args.madrust_only:
+            raise SystemExit(f"Rabbit variant image not found: {variant_image}")
+        kernels.append((f"rabbit-{name}", variant_image, ""))
+    if not args.rabbit_only:
         if not args.mainline:
-            raise SystemExit("--mainline is required unless --madrust-only is set")
+            raise SystemExit("--mainline is required unless --rabbit-only is set")
         mainline_image = Path(args.mainline).resolve()
         if not mainline_image.is_file():
             raise SystemExit(

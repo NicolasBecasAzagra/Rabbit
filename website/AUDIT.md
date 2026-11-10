@@ -1,4 +1,4 @@
-# Auditoría de diseño — MadRust (sitio anterior al rediseño)
+# Auditoría de diseño — Rabbit (sitio anterior al rediseño)
 
 Registro de lo que se encontró antes de tocar nada, y de lo que se decidió
 conservar. Las capturas están en `.preview/` (no se versionan).
@@ -18,7 +18,7 @@ conservar. Las capturas están en `.preview/` (no se versionan).
 
 ## 2. Lo que ya funciona y hay que conservar
 
-- El **terminal del hero** con el log real (`[0.000] MadRust: boot OK`, `MM DIRECTMAP OK`, `INFER OK tokens=42`) es contenido, no decoración.
+- El **terminal del hero** con el log real (`[0.000] Rabbit: boot OK`, `MM DIRECTMAP OK`, `INFER OK tokens=42`) es contenido, no decoración.
 - Las **tablas de benchmarks** comparan con Linux 7.3.0 e incluyen las pérdidas; ese tono honesto es valioso.
 - El **escalonado por fases** del roadmap con `Exit:` y `Verification:` es una estructura de información sólida.
 - El **changelog generado desde commits reales** del repositorio evita inventar hitos.

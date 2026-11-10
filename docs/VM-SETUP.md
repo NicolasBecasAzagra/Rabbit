@@ -1,6 +1,6 @@
 # The Linux build host
 
-MadRust builds and boots on the Mac, but some work needs a real Linux host:
+Rabbit builds and boots on the Mac, but some work needs a real Linux host:
 building mainline Linux, building a distribution rootfs, and running the
 benchmark rig.
 
@@ -63,7 +63,7 @@ make -j"$(nproc)"
 ```
 
 The uncompressed `vmlinux` carries the PVH note and boots under QEMU with the
-same `-kernel` flag used for MadRust, which is what the benchmark rig
+same `-kernel` flag used for Rabbit, which is what the benchmark rig
 requires. Keep the `vmlinux` file and the kernel version string.
 
 ### A rootfs
@@ -89,15 +89,15 @@ the Linux host:
 | `kernel-version.txt` | `make kernelversion` output, for the report |
 | `host-info.txt` | `uname -a`, `nproc`, `free -h`, `qemu-system-x86_64 --version`, and whether `/dev/kvm` exists |
 
-## Building and running MadRust from the Linux host
+## Building and running Rabbit from the Linux host
 
 The repository pins the toolchain in `rust-toolchain.toml`, so `cargo` inside
 the checkout installs the right nightly automatically on first use, with the
 `rust-src` and `llvm-tools` components it lists.
 
 ```sh
-git clone https://github.com/NicolasBecasAzagra/MadRust.git
-cd MadRust
+git clone https://github.com/NicolasBecasAzagra/Rabbit.git
+cd Rabbit
 make build
 qemu-system-x86_64 -M q35 -m 512M \
     -kernel "$(make -s print-kernel-path)" \

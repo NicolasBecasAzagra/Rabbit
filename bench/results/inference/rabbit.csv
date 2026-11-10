@@ -1,0 +1,3 @@
+kernel,workload,iteration,value,unit,status,error
+rabbit,infer-ttft,0,22166.722,ms,ok,
+rabbit,infer-tps,0,0.240,tok/s,ok,

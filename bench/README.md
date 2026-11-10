@@ -1,32 +1,32 @@
-# The MadRust benchmark rig
+# The Rabbit benchmark rig
 
-This directory compares MadRust with mainline Linux under identical conditions:
+This directory compares Rabbit with mainline Linux under identical conditions:
 one workload binary, one initramfs, one QEMU configuration, and only the kernel
 image differs. It exists to publish reproducible relative numbers, not to claim
 that either kernel is faster on real hardware.
 
 ## Quick start
 
-Build the kernel and the workload, then run the MadRust side alone:
+Build the kernel and the workload, then run the Rabbit side alone:
 
 ```sh
 make build
 make bench
 bench/mkinitramfs.sh
-bench/run.py --madrust-only
+bench/run.py --rabbit-only
 ```
 
 `run.py` builds the initramfs itself when `bench/initramfs.cpio` is missing. The
-MadRust image defaults to `make -s print-kernel-path`, so the shortest form is:
+Rabbit image defaults to `make -s print-kernel-path`, so the shortest form is:
 
 ```sh
-bench/run.py --madrust-only
+bench/run.py --rabbit-only
 ```
 
 When the mainline image exists, pass both kernels:
 
 ```sh
-bench/run.py --madrust target/.../madrust-kernel --mainline /path/to/bzImage
+bench/run.py --rabbit target/.../rabbit-kernel --mainline /path/to/bzImage
 ```
 
 The reference image has to carry the Xen PVH note, or QEMU refuses a 64-bit
@@ -36,7 +36,7 @@ The methodology requires the mitigation configuration of the reference kernel
 to be published next to the default one, so add it as a variant:
 
 ```sh
-bench/run.py --madrust target/.../madrust-kernel \
+bench/run.py --rabbit target/.../rabbit-kernel \
              --mainline artifacts/vmlinux \
              --mainline-variant "nomitig=mitigations=off"
 ```
@@ -51,9 +51,9 @@ implements them.
 Every run writes into `bench/results/` by default (or `--out DIR`):
 
 ```text
-madrust.csv        one row per sample of the MadRust run
-madrust.log        the serial log of the MadRust run
-madrust.qemu.log   what the emulator said, kept for the runs that fail
+rabbit.csv        one row per sample of the Rabbit run
+rabbit.log        the serial log of the Rabbit run
+rabbit.qemu.log   what the emulator said, kept for the runs that fail
 mainline.csv       the same for mainline, when it was run
 mainline.log
 summary.csv        median, p99 and standard deviation per workload
@@ -66,13 +66,13 @@ The rig also measures the runtime and the agent, with an initramfs that
 carries the checkpoint:
 
 ```sh
-bench/fetch-model.sh ~/madrust/artifacts/model-instruct
+bench/fetch-model.sh ~/rabbit/artifacts/model-instruct
 make agent
-EXTRA_DIR=~/madrust/artifacts/model-instruct \
-    bench/mkinitramfs.sh ~/madrust/artifacts/agent.cpio madrust-agent/madrust-agent.elf
-bench/run.py --madrust target/.../madrust-kernel \
+EXTRA_DIR=~/rabbit/artifacts/model-instruct \
+    bench/mkinitramfs.sh ~/rabbit/artifacts/agent.cpio rabbit-agent/rabbit-agent.elf
+bench/run.py --rabbit target/.../rabbit-kernel \
              --mainline artifacts/vmlinux \
-             --initrd ~/madrust/artifacts/agent.cpio --memory 1024M \
+             --initrd ~/rabbit/artifacts/agent.cpio --memory 1024M \
              --only agent-steps,agent-tokens,agent-seconds,agent-step-ms
 ```
 
@@ -88,21 +88,21 @@ The runtime carries a quantized checkpoint of the same model. The tool writes
 it, and the rig boots it next to the floating point one:
 
 ```sh
-cargo run --release --manifest-path madrust-infer/Cargo.toml \
-    --bin madrust-infer-quantize -- \
-    --in ~/madrust/artifacts/model --out ~/madrust/artifacts/model-q4
+cargo run --release --manifest-path rabbit-infer/Cargo.toml \
+    --bin rabbit-infer-quantize -- \
+    --in ~/rabbit/artifacts/model --out ~/rabbit/artifacts/model-q4
 
 # One archive per checkpoint: the runtime opens /model.safetensors under the
 # root, so the quantized archive replaces the weights and keeps the rest.
 make infer
-EXTRA_DIR=~/madrust/artifacts/model \
-    bench/mkinitramfs.sh ~/madrust/artifacts/float.cpio madrust-infer/madrust-infer.elf
-EXTRA_DIR=~/madrust/artifacts/model-q4 \
-    bench/mkinitramfs.sh ~/madrust/artifacts/quant.cpio madrust-infer/madrust-infer.elf
+EXTRA_DIR=~/rabbit/artifacts/model \
+    bench/mkinitramfs.sh ~/rabbit/artifacts/float.cpio rabbit-infer/rabbit-infer.elf
+EXTRA_DIR=~/rabbit/artifacts/model-q4 \
+    bench/mkinitramfs.sh ~/rabbit/artifacts/quant.cpio rabbit-infer/rabbit-infer.elf
 
-bench/run.py --madrust-only \
-    --initrd ~/madrust/artifacts/float.cpio \
-    --initrd-quant ~/madrust/artifacts/quant.cpio \
+bench/run.py --rabbit-only \
+    --initrd ~/rabbit/artifacts/float.cpio \
+    --initrd-quant ~/rabbit/artifacts/quant.cpio \
     --only infer-ttft,infer-tps --memory 1200M
 ```
 
@@ -147,20 +147,20 @@ Both kernels always run with the same flags:
 
 - `-cpu Skylake-Client` is fixed. `-cpu host` changes between machines and
   invalidates the comparison.
-- One vCPU and 512 MiB match what the MadRust scheduler and frame allocator
+- One vCPU and 512 MiB match what the Rabbit scheduler and frame allocator
   support today, and keep the comparison honest: the kernel is a uniprocessor,
   so a multi-vCPU mainline run would measure a different machine.
-- `-append "console=ttyS0"` is needed by mainline; MadRust ignores the command
+- `-append "console=ttyS0"` is needed by mainline; Rabbit ignores the command
   line.
 - The initramfs is an uncompressed `cpio` `newc` archive. Mainline accepts it
-  directly and MadRust parses the same bytes, so no decompressor is involved.
+  directly and Rabbit parses the same bytes, so no decompressor is involved.
 - `--accel` selects `tcg` (default), `kvm` or `hvf`. Both kernels use the same
   accelerator in a run, and `summary.json` records which one it was.
 
 ## The workload
 
-`madrust-bench` is a static Rust binary for `x86_64-unknown-linux-musl`. It is
-packed twice into the archive, at `/bench` (the name MadRust prefers) and at
+`rabbit-bench` is a static Rust binary for `x86_64-unknown-linux-musl`. It is
+packed twice into the archive, at `/bench` (the name Rabbit prefers) and at
 `/init` (the name mainline runs as PID 1). The bytes are identical, so neither
 kernel needs a special path. The archive also carries `/dev/console` and
 `/dev/null`: mainline opens the console before it execs `/init`, and a kernel
@@ -171,7 +171,7 @@ numbers in the finished `newc` archive, because creating a device node needs
 root on both macOS and Linux.
 
 There is one measurement more, and it is not made by that binary: the round
-trip over the network. The program of `madrust-netclient/` opens a socket of
+trip over the network. The program of `rabbit-netclient/` opens a socket of
 the ABI, sends a datagram to a server on the host and waits for the answer,
 and the rig records the time it took. The server binds a port the kernel of
 the host chooses, so two runs never collide, and the port reaches the guest
@@ -189,7 +189,7 @@ NET FAIL stage=warmup retries=646163 error=no answer
 ```
 
 The same exchange over a stream is the row `net-stream`. Its program is
-`madrust-netstream/`: the same shape of binary and the same archive layout, one
+`rabbit-netstream/`: the same shape of binary and the same archive layout, one
 stream socket of the ABI instead of a datagram socket, and one request per
 sample. The server of the host answers on a stream with the bytes it received,
 so the line of the program reports what it compared:
@@ -226,7 +226,7 @@ the answer of the kernel to the advice, so a kernel without large pages says
 so instead of being measured on something else.
 
 `weights` stands in for faulting model weights in, which is the kernel cost that
-dominates loading a model. MadRust has no file system yet, so the honest proxy
+dominates loading a model. Rabbit has no file system yet, so the honest proxy
 is the anonymous equivalent: a 256 MiB region mapped with `MAP_FIXED` at a fixed
 address, with one byte read and written in every 4 KiB page. It is a proxy, not
 a file-backed load, and the numbers have to be read as such. The region takes
@@ -240,7 +240,7 @@ tail a server has to keep inside its latency budget. Every `weights` sample
 prints both lines.
 
 Threads are created with a direct `clone` system call, not `std::thread`, so
-the binary runs on both kernels: MadRust implements the sharing flags the
+the binary runs on both kernels: Rabbit implements the sharing flags the
 workload passes, and mainline implements all of them.
 
 Every workload prints a line even when the kernel refuses a call. A failure
@@ -265,12 +265,12 @@ TCG.
 
 ## Reading the CSV
 
-`madrust.csv` and `mainline.csv` have one row per sample:
+`rabbit.csv` and `mainline.csv` have one row per sample:
 
 ```text
 kernel,workload,iteration,value,unit,status,error
-madrust,syscall,0,421,ns/op,ok,
-madrust,mmap,0,18234,ns/MiB,ok,
+rabbit,syscall,0,421,ns/op,ok,
+rabbit,mmap,0,18234,ns/MiB,ok,
 ```
 
 - `value` is empty for `error` and `missing` rows.

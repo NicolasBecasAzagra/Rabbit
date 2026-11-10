@@ -6,7 +6,7 @@
 # The image has to carry the Xen PVH note, because QEMU loads a 64-bit ELF
 # kernel through that path: without the note, QEMU refuses the image with
 # "Error loading uncompressed kernel without PVH ELF Note". With the note,
-# mainline and MadRust are started by the same handover, with the same
+# mainline and Rabbit are started by the same handover, with the same
 # command line, which is what makes the comparison fair.
 #
 # Usage: bench/prepare-mainline.sh [OUTPUT_DIRECTORY]

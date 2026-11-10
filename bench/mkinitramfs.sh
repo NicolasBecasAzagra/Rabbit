@@ -4,12 +4,12 @@
 # Build the benchmark initramfs: one uncompressed cpio `newc` archive with the
 # workload binary at /bench and at /init.
 #
-# MadRust prefers /bench; mainline Linux runs /init as PID 1. Both names carry
+# Rabbit prefers /bench; mainline Linux runs /init as PID 1. Both names carry
 # the same bytes, so the archive works on either kernel without a flag.
 #
 # Usage: bench/mkinitramfs.sh [OUTPUT] [BINARY]
 #   OUTPUT  archive to write, default bench/initramfs.cpio
-#   BINARY  workload to pack, default madrust-bench/madrust-bench.elf
+#   BINARY  workload to pack, default rabbit-bench/rabbit-bench.elf
 #
 # EXTRA_DIR, when set, adds every regular file in that directory to the archive
 # root. The inference runtime uses it for /model.safetensors, /vocab.json and
@@ -26,7 +26,7 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output=${1:-"$repo/bench/initramfs.cpio"}
-binary=${2:-"$repo/madrust-bench/madrust-bench.elf"}
+binary=${2:-"$repo/rabbit-bench/rabbit-bench.elf"}
 
 # The archive is written from inside the temporary directory, so a relative
 # output path has to be anchored before the subshell changes directory.
@@ -42,8 +42,8 @@ if [ ! -f "$binary" ]; then
     # built and not a different one.
     target=bench
     case ${binary##*/} in
-        madrust-netclient.elf) target=netclient ;;
-        madrust-netstream.elf) target=netstream ;;
+        rabbit-netclient.elf) target=netclient ;;
+        rabbit-netstream.elf) target=netstream ;;
     esac
     make -C "$repo" --no-print-directory "$target"
 fi
@@ -53,7 +53,7 @@ if [ ! -f "$binary" ]; then
     exit 1
 fi
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/madrust-initramfs.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/rabbit-initramfs.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 cp "$binary" "$work/bench"
@@ -108,7 +108,7 @@ def normalised(name):
     return name
 
 # Rewrite the archive so the data of every regular file starts on a page
-# boundary. MadRust maps a file without copying it, so the page table entry has
+# boundary. Rabbit maps a file without copying it, so the page table entry has
 # to point at the page that already holds the bytes; a `newc` archive only
 # aligns file data to four bytes. A hidden regular file with enough zero bytes
 # shifts the next header, so the padding costs a few KiB and nothing has to

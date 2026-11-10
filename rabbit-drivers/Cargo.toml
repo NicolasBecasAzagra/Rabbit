@@ -1,0 +1,10 @@
+[package]
+name = "rabbit-drivers"
+description = "Serial and debug-exit drivers for Rabbit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+rabbit-arch = { path = "../rabbit-arch" }

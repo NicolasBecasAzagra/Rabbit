@@ -1,6 +1,6 @@
 # The quantized checkpoint
 
-`madrust-infer` reads two checkpoints: the `bfloat16` one a training stack
+`rabbit-infer` reads two checkpoints: the `bfloat16` one a training stack
 writes, and a quantized one that the runtime itself produces. This document is
 the format of the second. Another implementation can read the same file from
 it.
@@ -82,14 +82,14 @@ the width in `__metadata__`. The values are strings, as the format requires:
 
 ```json
 "__metadata__": {
-  "format": "madrust-q4b32",
+  "format": "rabbit-q4b32",
   "block": "32",
   "scale": "f16"
 }
 ```
 
-`format` is `madrust-q4b32` when every quantized tensor is `Q4B32`, and
-`madrust-q8b32` when every quantized tensor is `Q8B32`. One file carries one
+`format` is `rabbit-q4b32` when every quantized tensor is `Q4B32`, and
+`rabbit-q8b32` when every quantized tensor is `Q8B32`. One file carries one
 width. Every two dimensional tensor has the `dtype` of that width, and its
 `data_offsets` cover exactly
 
@@ -134,17 +134,17 @@ buffer per tensor. The k-th weight of a block is read at `2 + k` (eight bit) or
 the matrix once. `src/matvec.rs` has a test per width that compares the product
 of a known matrix with a known vector against the value a reference
 implementation gives for the same dequantized matrix, and the benchmark binary
-`madrust-infer-matmul` measures the same loops without a model.
+`rabbit-infer-matmul` measures the same loops without a model.
 
 ## Producing and checking a checkpoint
 
 ```sh
 # Build the tool on the host and quantize the checkpoint in place.
-cargo run --release --manifest-path madrust-infer/Cargo.toml \
-    --bin madrust-infer-quantize -- \
+cargo run --release --manifest-path rabbit-infer/Cargo.toml \
+    --bin rabbit-infer-quantize -- \
     --bits 4 \
-    --in "$HOME/madrust/artifacts/model" \
-    --out "$HOME/madrust/artifacts/model-q4"
+    --in "$HOME/rabbit/artifacts/model" \
+    --out "$HOME/rabbit/artifacts/model-q4"
 
 # The runtime reads the output directory as it is: the tool copies
 # config.json, vocab.json and merges.txt next to the weights. `--bits 8`
@@ -160,7 +160,7 @@ QUANT model=.../model-q4/model.safetensors bytes=75745552 source_bytes=269060544
 QUANT ratio=0.282 digest=96e71116453f4b7f7b6a930299e8192e28682dda7dfc2af248c7952afdeab874
 ```
 
-`madrust-infer-compare` decodes the published prompt with both checkpoints and
+`rabbit-infer-compare` decodes the published prompt with both checkpoints and
 prints the tokens of each and the largest and mean absolute difference of the
 logits. The guest passes no arguments, so it opens `/model.safetensors` and
 `/model-q4.safetensors` under the initramfs root; a host run can pass the three
@@ -183,7 +183,7 @@ exits non-zero when the token lists differ.
 
 The continuous integration does not need the download: `make test` runs the
 gate in `src/gate.rs` on Linux. It writes a checkpoint with the shape of the
-development model of `madrust-infer-gen`, quantizes it with the same code the
+development model of `rabbit-infer-gen`, quantizes it with the same code the
 tool runs, decodes the published prompt with both checkpoints and requires the
 same tokens and a logits difference below `1e-3`.
 
@@ -232,7 +232,7 @@ not a second implementation.
 The resident memory of the guest and the token rate of both widths are in the
 rows the rig publishes: `bench/results/quantization/` holds the floating point
 and `Q8B32` runs of both kernels, and `bench/results/quantization-q4/` holds
-the floating point and `Q4B32` runs of MadRust. The block kernels are scalar,
+the floating point and `Q4B32` runs of Rabbit. The block kernels are scalar,
 so on a host where `bfloat16` runs on AVX2 the checkpoint is slower per token
 even though it streams fewer bytes: the format buys memory, and the rig rows
 say so next to the rate. The guest resident memory of the quantized boot is

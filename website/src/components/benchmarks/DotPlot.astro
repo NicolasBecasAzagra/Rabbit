@@ -9,7 +9,7 @@ export interface Props {
 const { openTable = true } = Astro.props;
 
 const seriesNames = {
-  madrust: 'MadRust',
+  rabbit: 'Rabbit',
   mainline: 'Linux 7.3.0',
   mainlineNoMitigations: 'Linux, mitigations off',
 } as const;
@@ -18,7 +18,7 @@ type SeriesKey = keyof typeof seriesNames;
 
 type Row = {
   metric: string;
-  madrust: string;
+  rabbit: string;
   mainline: string;
   mainlineNoMitigations: string;
   group: 'operation' | 'inference' | 'agent';
@@ -48,7 +48,7 @@ function formatRatio(n: number): string {
 }
 
 function ratioText(row: Row): string {
-  const a = parseValue(row.madrust);
+  const a = parseValue(row.rabbit);
   const b = parseValue(row.mainline);
   if (!a.isTime && a.unit !== 'MB' && a.unit !== 'tok/s') return '';
   let ratio: number;
@@ -70,7 +70,7 @@ function ratioText(row: Row): string {
 
 const processed = benchmarks.map((row) => {
   const parsed = {
-    madrust: parseValue(row.madrust),
+    rabbit: parseValue(row.rabbit),
     mainline: parseValue(row.mainline),
     mainlineNoMitigations: parseValue(row.mainlineNoMitigations),
   };
@@ -79,18 +79,18 @@ const processed = benchmarks.map((row) => {
 
 const operationRows = processed.filter(
   ({ parsed }) =>
-    parsed.madrust.isTime &&
-    toSeconds(parsed.madrust.value, parsed.madrust.unit) <= 0.1 &&
-    parsed.madrust.unit !== 's'
+    parsed.rabbit.isTime &&
+    toSeconds(parsed.rabbit.value, parsed.rabbit.unit) <= 0.1 &&
+    parsed.rabbit.unit !== 's'
 );
 
 const endToEndRows = processed.filter(
   ({ parsed }) =>
-    parsed.madrust.isTime &&
-    (toSeconds(parsed.madrust.value, parsed.madrust.unit) > 0.1 || parsed.madrust.unit === 's')
+    parsed.rabbit.isTime &&
+    (toSeconds(parsed.rabbit.value, parsed.rabbit.unit) > 0.1 || parsed.rabbit.unit === 's')
 );
 
-const otherRows = processed.filter(({ parsed }) => !parsed.madrust.isTime);
+const otherRows = processed.filter(({ parsed }) => !parsed.rabbit.isTime);
 
 const opMin = 1e-7; // 100 ns
 const opMax = 1e-1; // 100 ms
@@ -129,7 +129,7 @@ const rowLabelX = 210;
 const chartLeft = 240;
 const chartRight = 640;
 const valueColX: Record<SeriesKey, number> = {
-  madrust: 660,
+  rabbit: 660,
   mainline: 790,
   mainlineNoMitigations: 920,
 };
@@ -142,13 +142,13 @@ const eeRowHeight = 48;
 const eeBottom = eeTop + endToEndRows.length * eeRowHeight + 40;
 const svgHeight = eeBottom + 24;
 
-const ariaDescription = `Benchmark comparison between MadRust and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
+const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
 ---
 
 <section class="dotplot-section" aria-labelledby="benchmarks-chart-title">
   <div class="wrapper">
     <header class="section-header">
-      <h2 id="benchmarks-chart-title" class="text-title">MadRust is faster at every measured time, and uses less memory</h2>
+      <h2 id="benchmarks-chart-title" class="text-title">Rabbit is faster at every measured time, and uses less memory</h2>
       <p class="text-lead">
         Lower is faster on the same QEMU rig. The raw table below contains every measurement,
         including the losses.
@@ -157,7 +157,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
 
     <figure class="dotplot-figure">
       <figcaption id="dotplot-title" class="sr-only">
-        Benchmark dot plot: MadRust versus mainline Linux on a logarithmic scale
+        Benchmark dot plot: Rabbit versus mainline Linux on a logarithmic scale
       </figcaption>
       <p id="dotplot-desc" class="sr-only">{ariaDescription}</p>
 
@@ -177,7 +177,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
           {/* Operations panel */}
           <g class="panel">
             <text class="panel-title" x={chartLeft} y={24}>Kernel operations (log time, 100 ns – 100 ms)</text>
-            <text class="column-header" x={valueColX.madrust} y={44} text-anchor="start">MadRust</text>
+            <text class="column-header" x={valueColX.rabbit} y={44} text-anchor="start">Rabbit</text>
             <text class="column-header" x={valueColX.mainline} y={44} text-anchor="start">Linux 7.3.0</text>
             <text class="column-header" x={valueColX.mainlineNoMitigations} y={44} text-anchor="start">Linux, mitigations off</text>
 
@@ -203,7 +203,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
                   {ratio && (
                     <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
                   )}
-                  {(['madrust', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
+                  {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
                     const valueSeconds = toSeconds(p.value, p.unit);
@@ -221,7 +221,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
                           stroke-width="1"
                           stroke-dasharray="2,2"
                         />
-                        {key === 'madrust' && (
+                        {key === 'rabbit' && (
                           <circle cx={x} cy={y} r="4" fill="var(--accent)" />
                         )}
                         {key === 'mainline' && (
@@ -242,7 +242,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
           {/* End-to-end panel */}
           <g class="panel">
             <text class="panel-title" x={chartLeft} y={opBottom + 24}>End-to-end (log time, 1 s – 10000 s)</text>
-            <text class="column-header" x={valueColX.madrust} y={opBottom + 44} text-anchor="start">MadRust</text>
+            <text class="column-header" x={valueColX.rabbit} y={opBottom + 44} text-anchor="start">Rabbit</text>
             <text class="column-header" x={valueColX.mainline} y={opBottom + 44} text-anchor="start">Linux 7.3.0</text>
             <text class="column-header" x={valueColX.mainlineNoMitigations} y={opBottom + 44} text-anchor="start">Linux, mitigations off</text>
 
@@ -266,7 +266,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
                   {ratio && (
                     <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
                   )}
-                  {(['madrust', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
+                  {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
                     const valueSeconds = toSeconds(p.value, p.unit);
@@ -284,7 +284,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
                           stroke-width="1"
                           stroke-dasharray="2,2"
                         />
-                        {key === 'madrust' && (
+                        {key === 'rabbit' && (
                           <circle cx={x} cy={y} r="4" fill="var(--accent)" />
                         )}
                         {key === 'mainline' && (
@@ -311,7 +311,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
             <div class="other-row other-header" aria-hidden="true">
               <span class="other-metric">Metric</span>
               <span class="other-values">
-                <span class="series-madrust">MadRust</span>
+                <span class="series-rabbit">Rabbit</span>
                 <span class="series-mainline">Linux 7.3.0</span>
                 <span class="series-nomit">Linux, mitigations off</span>
               </span>
@@ -321,7 +321,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
               <div class="other-row">
                 <span class="other-metric">{row.metric}</span>
                 <span class="other-values">
-                  <span class="series-madrust">{row.madrust}</span>
+                  <span class="series-rabbit">{row.rabbit}</span>
                   <span class="series-mainline">{row.mainline}</span>
                   <span class="series-nomit">{row.mainlineNoMitigations}</span>
                 </span>
@@ -335,7 +335,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
       <div class="legend">
         <span class="legend-item">
           <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--accent)" /></svg>
-          MadRust
+          Rabbit
         </span>
         <span class="legend-item">
           <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" /></svg>
@@ -359,7 +359,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
             <thead>
               <tr>
                 <th scope="col">Metric</th>
-                <th scope="col">MadRust</th>
+                <th scope="col">Rabbit</th>
                 <th scope="col">Linux 7.3.0</th>
                 <th scope="col">Linux, mitigations off</th>
               </tr>
@@ -368,7 +368,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
               {benchmarks.map((row) => (
                 <tr>
                   <th scope="row">{row.metric}</th>
-                  <td class="tabular">{row.madrust}</td>
+                  <td class="tabular">{row.rabbit}</td>
                   <td class="tabular">{row.mainline}</td>
                   <td class="tabular">{row.mainlineNoMitigations}</td>
                 </tr>
@@ -489,12 +489,12 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
     font-variant-numeric: tabular-nums;
   }
 
-  .series-madrust .value-label {
+  .series-rabbit .value-label {
     fill: var(--accent);
   }
 
   @media (prefers-color-scheme: dark) {
-    .series-madrust .value-label {
+    .series-rabbit .value-label {
       fill: var(--accent-on-dark);
     }
   }
@@ -557,7 +557,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
     font-variant-numeric: tabular-nums;
   }
 
-  .series-madrust {
+  .series-rabbit {
     color: var(--accent);
   }
 
@@ -570,7 +570,7 @@ const ariaDescription = `Benchmark comparison between MadRust and mainline Linux
   }
 
   @media (prefers-color-scheme: dark) {
-    .series-madrust {
+    .series-rabbit {
       color: var(--accent-on-dark);
     }
   }

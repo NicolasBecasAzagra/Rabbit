@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Generate the reference tokens for the MadRust inference runtime.
+"""Generate the reference tokens for the Rabbit inference runtime.
 
 This is the oracle. It runs the reference implementation of the model on an
 ordinary Linux host and writes the token ids the reference produces, so the

@@ -1,0 +1,9 @@
+[package]
+name = "rabbit-arch"
+description = "x86_64 hardware access primitives for Rabbit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

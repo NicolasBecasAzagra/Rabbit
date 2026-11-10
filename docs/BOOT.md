@@ -1,6 +1,6 @@
 # Boot protocol
 
-MadRust boots through the Xen PVH handover. This document records what the
+Rabbit boots through the Xen PVH handover. This document records what the
 bootloader guarantees, what the kernel must do, and how to debug it.
 
 ## Why PVH
@@ -44,7 +44,7 @@ The note is emitted by the linker script in the `.note.Xen` output section so
 the descriptor always matches the real entry address. Verify it with:
 
 ```sh
-llvm-readelf -n target/x86_64-madrust/release/madrust-kernel
+llvm-readelf -n target/x86_64-rabbit/release/rabbit-kernel
 ```
 
 ## CPU state at the 32-bit entry
@@ -170,7 +170,7 @@ The kernel loads a user program and enters ring 3 with it:
 The boot path is deterministic and asserted by CI:
 
 ```text
-MadRust: x86_64 kernel, M4b (SMP)
+Rabbit: x86_64 kernel, M4b (SMP)
 [mm] kernel virtual: 0xffffffff80000000
 [mm] direct map: 0xffff888000000000
 MM DIRECTMAP OK
@@ -180,7 +180,7 @@ MM DIRECTMAP OK
 [mem] RAM 0x00000000100000 - 0x00001ffdf000 (523132 KiB)
 [mem] total usable RAM: 536341504 bytes (511 MiB)
 MEM managed frames: 131039
-Hello from MadRust userland
+Hello from Rabbit userland
 USER OK exit=0
 MEM free frames: 130679
 MEM OK
@@ -196,9 +196,9 @@ T3 0
 ... the three threads take turns, one line per time slice ...
 SCHED OK
 EXCEPTION 0 DIV0 RIP=0x...
-MadRust: exception survived
+Rabbit: exception survived
 TICKS 100
-MadRust: boot OK
+Rabbit: boot OK
 ```
 
 The `DIV0` line comes from a deliberate fault injection that proves the
@@ -209,7 +209,7 @@ returns to the interrupted code. QEMU then exits with status 33 through the
 ## Debugging
 
 ```sh
-qemu-system-x86_64 -M q35 -m 512M -kernel target/x86_64-madrust/release/madrust-kernel \
+qemu-system-x86_64 -M q35 -m 512M -kernel target/x86_64-rabbit/release/rabbit-kernel \
     -display none -monitor none -no-reboot -serial stdio -s -S
 ```
 
@@ -217,12 +217,12 @@ The CPU stays stopped until a debugger attaches on port 1234.
 
 ```sh
 # macOS
-lldb target/x86_64-madrust/release/madrust-kernel
+lldb target/x86_64-rabbit/release/rabbit-kernel
 # (lldb) gdb-remote 1234
 # (lldb) breakpoint set -n _start
 
 # Linux
-gdb target/x86_64-madrust/release/madrust-kernel -ex 'target remote :1234'
+gdb target/x86_64-rabbit/release/rabbit-kernel -ex 'target remote :1234'
 ```
 
 `isa-debug-exit` gives the boot test a deterministic exit code: the device
@@ -233,4 +233,4 @@ gdb target/x86_64-madrust/release/madrust-kernel -ex 'target remote :1234'
 
 The Linux `bzImage` boot protocol is not implemented. It is only needed to
 boot on real hardware or through a boot manager; under QEMU the PVH handover
-covers both MadRust and mainline Linux with identical flags.
+covers both Rabbit and mainline Linux with identical flags.

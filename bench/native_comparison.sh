@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# Compare the MadRust runtime against the reference implementations of local
+# Compare the Rabbit runtime against the reference implementations of local
 # inference, natively, on the same machine, with the same weights.
 #
 # This is the comparison a user would make: not our kernel against another
@@ -27,9 +27,9 @@
 
 set -eu
 
-MODEL_DIR=${1:-"$HOME/madrust/artifacts/model"}
+MODEL_DIR=${1:-"$HOME/rabbit/artifacts/model"}
 OUT=${2:-"$MODEL_DIR/native_comparison.json"}
-WORK=${WORK:-"$HOME/madrust/native"}
+WORK=${WORK:-"$HOME/rabbit/native"}
 PROMPT="The capital of France is"
 TOKENS=${TOKENS:-32}
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -87,8 +87,8 @@ cmake --build "$WORK/llama.cpp/build" --config Release -j "$(nproc 2>/dev/null |
     --target llama-cli >/dev/null
 LLAMA="$WORK/llama.cpp/build/bin/llama-cli"
 
-echo "== the MadRust runtime, natively =="
-RUNTIME="$REPO/madrust-infer/madrust-infer.elf"
+echo "== the Rabbit runtime, natively =="
+RUNTIME="$REPO/rabbit-infer/rabbit-infer.elf"
 # The runtime is always rebuilt: a checkout that was updated has a binary that
 # is older than the source, and a stale binary measures the wrong thing
 # without saying so.
@@ -104,7 +104,7 @@ RUNTIME_LOG="$WORK/runtime.log"
 # Without the privilege the pin fails and the run continues without the
 # guarantee, which the log says.
 ulimit -l unlimited 2>/dev/null || true
-MADRUST_INFER_ROOT="$MODEL_DIR" "$RUNTIME" "$TOKENS" > "$RUNTIME_LOG" 2>&1 || true
+RABBIT_INFER_ROOT="$MODEL_DIR" "$RUNTIME" "$TOKENS" > "$RUNTIME_LOG" 2>&1 || true
 if grep -qE '^INFER (tok_per_s|ttft_ms)' "$RUNTIME_LOG"; then
     grep -E '^INFER (tok_per_s|ttft_ms|tokens|pinned)' "$RUNTIME_LOG"
 else
@@ -168,7 +168,7 @@ except Exception:
 
 data = {
     "tokens": int(tokens),
-    "madrust": {
+    "rabbit": {
         "tokens_per_second": one(r"INFER tok_per_s ([0-9.]+)", runtime),
         "time_to_first_token_ms": one(r"INFER ttft_ms ([0-9.]+)", runtime),
     },

@@ -3,7 +3,7 @@
   "model": "HuggingFaceTB/SmolLM2-135M",
   "revision": "93efa2f097d58c2a74874c7e644dbc9b0cee75a2",
   "tokens": 32,
-  "madrust": {
+  "rabbit": {
     "tokens_per_second": 23.577,
     "time_to_first_token_ms": 285.593,
     "pinned_bytes": 269058048,

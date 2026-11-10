@@ -1,5 +1,5 @@
 // Screenshot pipeline for the review of the redesign.
-//   node scripts/shots.mjs [--url http://localhost:4321/MadRust/] [--tag hero] [--pages /,/roadmap]
+//   node scripts/shots.mjs [--url http://localhost:4321/Rabbit/] [--tag hero] [--pages /,/roadmap]
 // Writes website/.preview/<tag>-<route>-<width>-<scheme>.png
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
@@ -11,7 +11,7 @@ const arg = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 
-const base = arg('url', 'http://localhost:4321/MadRust');
+const base = arg('url', 'http://localhost:4321/Rabbit');
 const tag = arg('tag', 'shot');
 const outDir = resolve(process.cwd(), '.preview');
 const routes = arg('pages', '/').split(',');

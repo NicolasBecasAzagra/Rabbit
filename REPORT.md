@@ -1,50 +1,50 @@
-# MadRust: a Linux-ABI kernel in Rust, measured against mainline
+# Rabbit: a Linux-ABI kernel in Rust, measured against mainline
 
-**Repository**: <https://github.com/NicolasBecasAzagra/MadRust>
+**Repository**: <https://github.com/NicolasBecasAzagra/Rabbit>
 **Status**: milestones M0 to M4c, M8, M9, E1, E2, E2b, E3a, E3b, E4, E5 and E6 are implemented and
 asserted in CI. The measurement below was produced by the rig in this
 repository, from the raw rows in `bench/results/`.
 
 ## Abstract
 
-MadRust is an x86_64 operating system kernel written entirely in Rust that
+Rabbit is an x86_64 operating system kernel written entirely in Rust that
 speaks the Linux userspace ABI. It boots a real language model, a 135 million
 parameter Llama-architecture model, and generates the same tokens as the
-reference implementation of that model, token for token, on MadRust and on
+reference implementation of that model, token for token, on Rabbit and on
 mainline Linux, from the same binary and the same initramfs.
 
 The point of the project is not to be "a faster Linux". It is to measure what
 a kernel costs an inference server, with a method that can be checked, and to
 publish the losses as carefully as the wins. Three findings came out of it:
 
-1. **With the mitigations disabled on both sides, MadRust is about two to ten
+1. **With the mitigations disabled on both sides, Rabbit is about two to ten
    times cheaper per operation** than mainline: 2.2 times per system call,
    4.4 times per megabyte faulted in with 4 KiB pages, 9.7 times with 2 MiB
    pages, 7.5 times per futex round trip. The difference is not the
    arithmetic of the program, which is the same binary on both sides, but the
    work the kernel does per operation.
-2. **Large pages are an improvement on MadRust and not on the reference
+2. **Large pages are an improvement on Rabbit and not on the reference
    kernel**: mapping the weights with 2 MiB pages halves the cost per MiB and
-   shortens the worst fault by more than an order of magnitude on MadRust,
+   shortens the worst fault by more than an order of magnitude on Rabbit,
    while the reference kernel gets slightly slower. The difference is not that
    one kernel has large pages and the other does not, it is what a large page
    costs when it is faulted in.
 3. **The measurement that mattered most was the one we lost.** The first
-   inference measurement showed MadRust twice as slow as the reference kernel,
-   and the cause was specific: MadRust mapped a file with 4 KiB pages, so
+   inference measurement showed Rabbit twice as slow as the reference kernel,
+   and the cause was specific: Rabbit mapped a file with 4 KiB pages, so
    streaming 269 MB of weights took 65536 faults instead of 134. Fixing that
    took the faults to 791. The loss and its cause are published in
    `docs/BENCHMARKING.md` alongside the win.
 
 ## What is in the box
 
-- **A kernel** (`madrust-kernel`): boots through the Xen PVH handover, runs
+- **A kernel** (`rabbit-kernel`): boots through the Xen PVH handover, runs
   from the higher half with a direct map of physical memory, manages physical
   memory with a buddy allocator whose metadata is carved out of the memory it
   describes, faults user pages in on demand, backs anonymous and file
   mappings with 2 MiB pages, serves 59 Linux system calls, exposes the
   initramfs as a read only file system, and runs preemptive kernel threads.
-- **A runtime** (`madrust-infer`): reads a model in the `safetensors` format,
+- **A runtime** (`rabbit-infer`): reads a model in the `safetensors` format,
   maps it through the initramfs without copying it, and generates tokens with
   a Llama-style forward pass: RMSNorm, rotary embeddings, grouped query
   attention, the gated feed forward block, a key value cache and greedy
@@ -52,7 +52,7 @@ publish the losses as carefully as the wins. Three findings came out of it:
   a prompt built at run time reaches the model as the token ids it was
   trained with, and a byte level grammar that forces the answer to be a well
   formed tool call. No dependency outside the Rust standard library.
-- **An agent** (`madrust-agent`): a loop of model, tool call, tool result and
+- **An agent** (`rabbit-agent`): a loop of model, tool call, tool result and
   model, over five tools (`read_file`, `list_dir`, `write_file`, `compute` and
   `done`). The model chooses the tool and the arguments, the kernel decides
   how much of that costs.
@@ -98,7 +98,7 @@ under emulation.
 
 Medians, in the unit of the workload, on the native host:
 
-| Workload | MadRust | mainline | mainline, mitigations off | MadRust against mainline with mitigations off |
+| Workload | Rabbit | mainline | mainline, mitigations off | Rabbit against mainline with mitigations off |
 |---|---|---|---|---|
 | system call | 376.5 ns | 29.35 us | 1.04 us | **2.8x cheaper** |
 | map and touch memory | 6.83 ms/MiB | 25.80 ms/MiB | 8.69 ms/MiB | **1.3x cheaper** |
@@ -113,7 +113,7 @@ Medians, in the unit of the workload, on the native host:
 
 The same rig on the cross check host:
 
-| Workload | MadRust | mainline | mainline, mitigations off | MadRust against mainline with mitigations off |
+| Workload | Rabbit | mainline | mainline, mitigations off | Rabbit against mainline with mitigations off |
 |---|---|---|---|---|
 | system call | 239.5 ns | 9827.5 ns | 516.0 ns | **2.2x cheaper** |
 | map and touch memory | 2.72 ms/MiB | 8.34 ms/MiB | 3.23 ms/MiB | **1.2x cheaper** |
@@ -145,7 +145,7 @@ Where the difference comes from, in the order the size of the effect:
   when the program touches them, so a program that reads one byte of a 256 MiB
   mapping does not pay for the rest of it. This single change made the
   thread workload seven times faster and is the reason the thread row is a
-  win at all: before it, MadRust was slower there.
+  win at all: before it, Rabbit was slower there.
 - **A simpler futex path.** Eight waiters in a flat table, no robust list,
   no requeue.
 - **Large pages for anonymous and for file mappings**, with the cost of the
@@ -157,8 +157,8 @@ On the native host:
 
 | | 4 KiB pages | 2 MiB pages |
 |---|---|---|
-| MadRust, cost per MiB | 2.01 ms | 824.8 us |
-| MadRust, slowest fault | 1.74 ms | 189.1 us |
+| Rabbit, cost per MiB | 2.01 ms | 824.8 us |
+| Rabbit, slowest fault | 1.74 ms | 189.1 us |
 | mainline with mitigations off, cost per MiB | 13.73 ms | 12.98 ms |
 | mainline with mitigations off, slowest fault | 38.89 ms | 23.33 ms |
 
@@ -166,8 +166,8 @@ And on the cross check host:
 
 | | 4 KiB pages | 2 MiB pages |
 |---|---|---|
-| MadRust, cost per MiB | 950.1 us | 445.5 us |
-| MadRust, slowest fault | 263.5 us | 28.2 us |
+| Rabbit, cost per MiB | 950.1 us | 445.5 us |
+| Rabbit, slowest fault | 263.5 us | 28.2 us |
 | mainline with mitigations off, cost per MiB | 4.16 ms | 4.33 ms |
 | mainline with mitigations off, slowest fault | 2.55 ms | 1.67 ms |
 
@@ -175,13 +175,13 @@ The raw rows of the first measurement of the large pages are in
 `bench/results/e2/`.
 
 The reference kernel gets slightly slower per MiB when it uses large pages,
-and its worst fault does not improve. On MadRust the same change halves the
+and its worst fault does not improve. On Rabbit the same change halves the
 cost per MiB and shortens the worst fault by a factor of nine. Both kernels
 have large pages; they do not cost the same to fault in.
 
 The reason is what happens when a large page arrives: the folio has to be
 allocated, zeroed and accounted for, and the compaction machinery around it
-is not free. MadRust allocates a 2 MiB block from its own buddy allocator,
+is not free. Rabbit allocates a 2 MiB block from its own buddy allocator,
 zeroes it and maps it.
 
 For a file mapping, the data of the file is not aligned to 2 MiB in physical
@@ -200,7 +200,7 @@ tokens**, so what is compared is the arithmetic.
 
 | Natively, one host, one checkpoint | tokens per second | time to the first token |
 |---|---|---|
-| MadRust runtime, Rust, no dispatcher and no autograd | **23.6** | **286 ms** |
+| Rabbit runtime, Rust, no dispatcher and no autograd | **23.6** | **286 ms** |
 | Reference implementation, eager, float32 | 10.9 | (2.93 s for 32 tokens) |
 
 A specialised forward pass written in Rust, with blocked matrix multiplication
@@ -239,7 +239,7 @@ the threads land. Three batches of the same measurement are published in
 `bench/results/inference-joint/`:
 
 ```text
-                         MadRust    mainline    mainline (mitigations=off)
+                         Rabbit    mainline    mainline (mitigations=off)
 batch 1, before           21.20 s      23.34 s              9.96 s
 batch 2, after            22.17 s      22.83 s             21.92 s
 joint batch               10.70 s         -                    -
@@ -252,7 +252,7 @@ no ratio can be published from those batches.
 
 **After the arithmetic and the residency were added, the gap is larger than
 the variance.** In the batch that is committed, the time to the first token on
-MadRust was 10.70 seconds and the rate 0.52 tokens per second, against 21.9
+Rabbit was 10.70 seconds and the rate 0.52 tokens per second, against 21.9
 and 22.8 seconds for the reference kernel in the batches above. A gap of more than three times
 survives a variance of two, so this one can be stated. What it measures is a
 kernel that faults the weights in large pages, keeps them resident, and runs
@@ -288,7 +288,7 @@ the keys that tool needs, each of them once, with the type the tool expects.
 The task is to read `/vocab.json` from the initramfs and report its size. On
 the native host, one processor, 1024 MiB, the same initramfs for both kernels:
 
-| | MadRust | mainline | mainline, mitigations off |
+| | Rabbit | mainline | mainline, mitigations off |
 |---|---|---|---|
 | Steps of the loop | 2 | 2 | 2 |
 | Tokens the model generated | 39 | 39 | 39 |
@@ -297,7 +297,7 @@ the native host, one processor, 1024 MiB, the same initramfs for both kernels:
 | Boot to the last result | **1200.8 s** | 2807.6 s | 2584.3 s |
 | Resident memory of the guest | **857 MB** | 1021 MB | 1023 MB |
 
-The loop is three times faster on MadRust than on the reference kernel with the
+The loop is three times faster on Rabbit than on the reference kernel with the
 same binary and the same checkpoint, and the guest needs 164 megabytes less.
 The raw rows are in `bench/results/agent/`. The rows of the runtime on the
 same host are in `bench/results/inference-native/`, and the rows of the
@@ -352,14 +352,14 @@ as a win.
 
 The memory of the guest falls with the format and the speed does not
 improve: the block kernels are scalar while the floating point path is
-vectorised, so the tokens per second go from 1.51 to 0.65 on MadRust and
+vectorised, so the tokens per second go from 1.51 to 0.65 on Rabbit and
 from 1.25 to 0.20 on the reference kernel. The format buys memory, and the
 rows say so.
 
 ## Losses
 
 - **The thread workload was a loss and then became a win.** With eager
-  allocation of the mappings, MadRust was 1.5 times slower than the reference
+  allocation of the mappings, Rabbit was 1.5 times slower than the reference
   kernel there. Demand paging made it four times faster. The loss was
   published at the time, in `bench/results/demand-paging/`.
 - **One boot of the reference kernel did not finish** in an earlier run and
@@ -382,9 +382,9 @@ rows say so.
   two for the inference timings, and it is larger than the difference
   between the kernels there.
 - **The clock source differs.** The reference kernel reads the time stamp
-  counter through the vDSO, MadRust through a system call, which costs
-  MadRust one system call per measurement point. The measurements that
-  timestamp every sample are biased against MadRust.
+  counter through the vDSO, Rabbit through a system call, which costs
+  Rabbit one system call per measurement point. The measurements that
+  timestamp every sample are biased against Rabbit.
 - **One processor, 512 MiB.** A server that batches requests is not that.
 - **The runtime is deliberately naive.** It is a matmul in plain Rust with
   no BLAS and no vectorisation, so that the comparison is about the kernel.
@@ -405,22 +405,22 @@ make run-infer                # boots with the inference runtime
 bench/prepare-mainline.sh     # on a Linux host: the reference image
 bench/mkinitramfs.sh
 python3 bench/run.py \
-    --madrust "$(make -s print-kernel-path)" \
-    --mainline ~/madrust/artifacts/vmlinux \
+    --rabbit "$(make -s print-kernel-path)" \
+    --mainline ~/rabbit/artifacts/vmlinux \
     --mainline-variant "nomitig=mitigations=off" \
     --out bench/results
 
 # the checkpoint, verified
-bench/fetch-model.sh ~/madrust/artifacts/model-instruct
+bench/fetch-model.sh ~/rabbit/artifacts/model-instruct
 
 # the agent
 make agent
-EXTRA_DIR=~/madrust/artifacts/model-instruct \
-    bench/mkinitramfs.sh ~/madrust/artifacts/agent.cpio madrust-agent/madrust-agent.elf
+EXTRA_DIR=~/rabbit/artifacts/model-instruct \
+    bench/mkinitramfs.sh ~/rabbit/artifacts/agent.cpio rabbit-agent/rabbit-agent.elf
 python3 bench/run.py \
-    --madrust "$(make -s print-kernel-path)" \
-    --mainline ~/madrust/artifacts/vmlinux \
-    --initrd ~/madrust/artifacts/agent.cpio --memory 1024M \
+    --rabbit "$(make -s print-kernel-path)" \
+    --mainline ~/rabbit/artifacts/vmlinux \
+    --initrd ~/rabbit/artifacts/agent.cpio --memory 1024M \
     --only agent-steps,agent-tokens,agent-seconds,agent-step-ms \
     --out bench/results/agent
 
