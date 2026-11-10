@@ -143,7 +143,7 @@ const cloneCommand = `git clone ${meta.repo}.git`;
 
 <style>
   .page-hero {
-    padding-block-start: calc(4rem + var(--space-2xl));
+    padding-block-start: calc(4rem + var(--space-3xl));
     padding-block-end: var(--space-xl);
   }
 
@@ -157,12 +157,10 @@ const cloneCommand = `git clone ${meta.repo}.git`;
 
   .section-title {
     font-family: var(--font-display);
-    font-size: var(--text-headline);
+    font-size: var(--text-lg);
     line-height: var(--leading-snug);
-    font-weight: var(--font-bold);
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
+    font-weight: var(--font-medium);
     letter-spacing: -0.02em;
-    text-transform: uppercase;
     margin-block-end: var(--space-md);
   }
 
@@ -174,7 +172,7 @@ const cloneCommand = `git clone ${meta.repo}.git`;
   .debug-section,
   .repo-section {
     padding-block: var(--space-xl);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .toolchain-section .text-body,
@@ -199,14 +197,15 @@ const cloneCommand = `git clone ${meta.repo}.git`;
   .dense-table td {
     padding: 0 var(--space-md);
     height: var(--row-height);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--hairline);
     text-align: left;
     vertical-align: middle;
   }
 
   .dense-table thead th {
-    color: var(--text-tertiary);
-    font-weight: 500;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-weight: var(--font-medium);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-size: var(--text-xs);
@@ -215,12 +214,12 @@ const cloneCommand = `git clone ${meta.repo}.git`;
   .dense-table th[scope='row'],
   .dense-table td:first-child {
     font-family: var(--font-mono);
-    color: var(--text);
+    color: var(--ink);
     white-space: nowrap;
   }
 
   .dense-table td {
-    color: var(--text-secondary);
+    color: var(--ink-secondary);
   }
 
   .command-list {
@@ -233,14 +232,15 @@ const cloneCommand = `git clone ${meta.repo}.git`;
   }
 
   .cta-section {
-    padding-block: var(--space-2xl);
+    padding-block: var(--space-3xl);
   }
 
   .cta-inner {
     max-width: var(--measure);
     padding: var(--space-lg);
-    border: 1px solid var(--border);
-    background: var(--paper-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    background: var(--surface);
   }
 
   .cta-inner h2 {
@@ -260,8 +260,9 @@ const cloneCommand = `git clone ${meta.repo}.git`;
   code {
     font-family: var(--font-mono);
     font-size: 0.9em;
-    background: var(--paper-sunk);
+    background: var(--surface-2);
     padding: 0.1em 0.25em;
+    border-radius: var(--radius-sm);
   }
 
   @media (max-width: 760px) {

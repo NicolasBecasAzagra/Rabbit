@@ -65,8 +65,9 @@ function formatDate(iso: string): string {
 <style>
   .empty-state {
     padding: var(--space-xl);
-    border: 1px solid var(--border);
-    background: var(--paper-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    background: var(--surface);
   }
 
   .empty-state .text-headline {
@@ -84,15 +85,13 @@ function formatDate(iso: string): string {
   }
 
   .month-heading {
-    font-family: var(--font-display);
+    font-family: var(--font-body);
     font-size: var(--text-base);
-    font-weight: var(--font-bold);
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.02em;
+    color: var(--ink);
     padding-bottom: var(--space-sm);
-    border-bottom: 1px solid var(--border-strong);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .commit-list {
@@ -108,29 +107,23 @@ function formatDate(iso: string): string {
     gap: var(--space-sm);
     min-height: var(--row-height);
     padding: 0 var(--space-sm);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--hairline);
     font-family: var(--font-mono);
     font-size: var(--text-sm);
   }
 
   .commit-item:hover {
-    background: var(--paper-elevated);
+    background: var(--surface);
   }
 
   .commit-hash {
-    color: var(--text-tertiary);
+    color: var(--muted);
     text-decoration: none;
     font-family: var(--font-mono);
   }
 
   .commit-hash:hover {
     color: var(--accent);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .commit-hash:hover {
-      color: var(--accent-on-dark);
-    }
   }
 
   .commit-hash code {
@@ -140,41 +133,41 @@ function formatDate(iso: string): string {
   }
 
   .commit-type {
-    color: var(--text-secondary);
+    color: var(--ink-secondary);
     text-transform: lowercase;
   }
 
   .commit-type::before {
     content: '[';
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .commit-type::after {
     content: ']';
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .commit-scope {
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .commit-scope::before {
     content: '(';
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .commit-scope::after {
     content: ')';
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .commit-subject {
-    color: var(--text);
+    color: var(--ink);
     line-height: var(--leading-normal);
   }
 
   .commit-date {
-    color: var(--text-tertiary);
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

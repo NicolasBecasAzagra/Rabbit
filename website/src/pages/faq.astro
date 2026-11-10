@@ -22,8 +22,8 @@ import { url } from '../lib/paths';
       <FaqList items={faq} />
 
       <p class="faq-more">
-        If an answer is not here, it is probably in the
-        <a href={url('/docs')}>documentation</a> or in the
+        If an answer is not here, it is probably in the{' '}
+        <a href={url('/docs')}>documentation</a>{' '}or in the{' '}
         <a href={meta.repo}>repository</a>.
       </p>
     </div>
@@ -33,7 +33,7 @@ import { url } from '../lib/paths';
 
 <style>
   .faq-page {
-    padding-block: calc(4rem + var(--space-2xl)) var(--space-xl);
+    padding-block: calc(4rem + var(--space-3xl)) var(--space-xl);
   }
 
   .page-header {
@@ -47,16 +47,6 @@ import { url } from '../lib/paths';
 
   .faq-more {
     margin-block-start: var(--space-xl);
-    color: var(--text-secondary);
-  }
-
-  .faq-more a {
-    color: var(--accent);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .faq-more a {
-      color: var(--accent-on-dark);
-    }
+    color: var(--ink-secondary);
   }
 </style>

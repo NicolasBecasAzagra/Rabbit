@@ -27,9 +27,9 @@ import { nextSteps } from '../../data/project';
 
 <style>
   .next-section {
-    padding-block: var(--space-2xl);
-    background: var(--paper-elevated);
-    border-block: 1px solid var(--border);
+    padding-block: var(--space-3xl);
+    background: var(--surface);
+    border-block: 1px solid var(--hairline);
   }
 
   .section-header {
@@ -53,18 +53,18 @@ import { nextSteps } from '../../data/project';
     grid-template-columns: 2.5rem 1fr;
     gap: var(--space-md);
     padding: var(--space-md);
-    border-bottom: 1px solid var(--border);
-    background: var(--paper);
+    border-bottom: 1px solid var(--hairline);
+    background: var(--canvas);
   }
 
   .next-item:first-child {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--hairline);
   }
 
   .next-number {
     font-family: var(--font-mono);
     font-size: var(--text-sm);
-    color: var(--text-tertiary);
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
 
@@ -79,20 +79,19 @@ import { nextSteps } from '../../data/project';
   .next-meta h3 {
     font-family: var(--font-display);
     font-size: var(--text-md);
-    font-weight: 700;
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.01em;
+    color: var(--ink);
     text-wrap: balance;
   }
 
   .next-id {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
-    color: var(--text-tertiary);
-    background: var(--paper-sunk);
+    color: var(--muted);
+    background: var(--surface-2);
     padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
   }
 
   .text-body {

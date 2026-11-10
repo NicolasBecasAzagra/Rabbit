@@ -1,12 +1,5 @@
 ---
 import { layers } from '../data/project';
-
-const layerMap = new Map(layers.map((l) => [l.id, l]));
-
-const kernel = layerMap.get('kernel')!;
-const runtime = layerMap.get('runtime')!;
-const agent = layerMap.get('agent')!;
-const network = layerMap.get('network')!;
 ---
 
 <section class="layers-section" aria-labelledby="layers-title">
@@ -18,101 +11,37 @@ const network = layerMap.get('network')!;
       </p>
     </header>
 
-    <figure class="layers-figure">
-      <figcaption id="layers-fig-title" class="sr-only">Architecture diagram</figcaption>
-      <p id="layers-fig-desc" class="sr-only">
-        The kernel supports the runtime. The runtime serves the model to the agent. The agent calls
-        tools. The network layer lets the agent reach the host and external APIs.
-      </p>
-
-      <div class="diagram-scroll" tabindex="0" role="region" aria-label="Architecture diagram, scrollable on small screens">
-        <svg
-          class="layers-svg"
-          viewBox="0 0 840 520"
-          role="img"
-          aria-labelledby="layers-fig-title layers-fig-desc"
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {/* Kernel box */}
-          <g class="layer-box kernel">
-            <rect x="260" y="360" width="320" height="80" rx="0" />
-            <text x="270" y="386" class="layer-name">{kernel.name}</text>
-            <text x="270" y="408" class="layer-role">{kernel.role}</text>
-          </g>
-
-          {/* Runtime box */}
-          <g class="layer-box runtime">
-            <rect x="260" y="200" width="320" height="80" rx="0" />
-            <text x="270" y="226" class="layer-name">{runtime.name}</text>
-            <text x="270" y="248" class="layer-role">{runtime.role}</text>
-          </g>
-
-          {/* Agent box */}
-          <g class="layer-box agent">
-            <rect x="260" y="40" width="320" height="80" rx="0" />
-            <text x="270" y="66" class="layer-name">{agent.name}</text>
-            <text x="270" y="88" class="layer-role">{agent.role}</text>
-          </g>
-
-          {/* Connection lines */}
-          <line x1="420" y1="120" x2="420" y2="200" class="connector" />
-          <line x1="420" y1="280" x2="420" y2="360" class="connector" />
-
-          {/* Network pillar */}
-          <g class="layer-box network">
-            <rect x="640" y="40" width="160" height="400" rx="0" />
-            <text x="720" y="66" text-anchor="middle" class="layer-name">{network.name}</text>
-            <text x="720" y="88" text-anchor="middle" class="layer-role">{network.role}</text>
-          </g>
-
-          <line x1="580" y1="90" x2="640" y2="90" class="connector" />
-          <line x1="580" y1="400" x2="640" y2="400" class="connector" />
-
-          {/* Crate annotations */}
-          <g class="crates">
-            <text x="240" y="80" text-anchor="end" class="crate-label">rabbit-agent</text>
-            <text x="240" y="98" text-anchor="end" class="crate-label">rabbit-http</text>
-
-            <text x="240" y="240" text-anchor="end" class="crate-label">rabbit-infer</text>
-            <text x="240" y="258" text-anchor="end" class="crate-label">rabbit-initramfs</text>
-
-            <text x="240" y="420" text-anchor="end" class="crate-label">rabbit-kernel</text>
-            <text x="240" y="438" text-anchor="end" class="crate-label">rabbit-mm · rabbit-sched</text>
-            <text x="240" y="456" text-anchor="end" class="crate-label">rabbit-elf · rabbit-drivers</text>
-
-            <text x="810" y="420" text-anchor="end" class="crate-label">rabbit-net</text>
-            <text x="810" y="438" text-anchor="end" class="crate-label">rabbit-netclient</text>
-            <text x="810" y="456" text-anchor="end" class="crate-label">rabbit-netstream · rabbit-http</text>
-          </g>
-        </svg>
+    <div class="layers-table" role="table" aria-label="Architecture layers">
+      <div class="layers-row layers-header" role="row">
+        <span role="columnheader">Layer</span>
+        <span role="columnheader">What it does</span>
+        <span role="columnheader">What it adds</span>
       </div>
-
-      <div class="layers-text">
-        {
-          layers.map((layer) => (
-            <div class="layer-detail">
-              <h3>{layer.name}</h3>
-              <p class="text-body">{layer.body}</p>
-              <p class="layer-crates">
-                Crates:{' '}
-                {layer.crates.map((crate, i) => (
-                  <>
-                    <code>{crate}</code>
-                    {i < layer.crates.length - 1 && ', '}
-                  </>
-                ))}
-              </p>
+      {
+        layers.map((layer, index) => (
+          <div class="layers-row" role="row">
+            <div class="layer-label" role="cell">
+              <span class="layer-index" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+              <span class="layer-name">{layer.name}</span>
+              <span class="layer-role">{layer.role}</span>
+              <span class="layer-crates">{layer.crates.join(' · ')}</span>
             </div>
-          ))
-        }
-      </div>
-    </figure>
+            <p class="layer-body" role="cell">
+              {layer.body}
+            </p>
+            <p class="layer-differentiator" role="cell">
+              {layer.differentiator}
+            </p>
+          </div>
+        ))
+      }
+    </div>
   </div>
 </section>
 
 <style>
   .layers-section {
-    padding-block: var(--space-2xl);
+    padding-block: var(--space-3xl);
   }
 
   .section-header {
@@ -124,112 +53,136 @@ const network = layerMap.get('network')!;
     margin-block-end: var(--space-sm);
   }
 
-  .layers-figure {
-    margin: 0;
+  .layers-table {
+    display: grid;
+    grid-template-columns: 260px 1fr 280px;
+    gap: 0;
+    border-top: 1px solid var(--hairline);
   }
 
-  .diagram-scroll {
-    overflow-x: auto;
-    padding-block-end: var(--space-sm);
+  .layers-row {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--hairline);
   }
 
-  .layers-svg {
-    min-width: 700px;
-    width: 100%;
-    height: auto;
-    max-width: 840px;
-    margin-inline: auto;
-  }
-
-  .layers-svg rect {
-    fill: var(--paper-elevated);
-    stroke: var(--border-strong);
-    stroke-width: 1;
-  }
-
-  .layers-svg text {
-    font-family: var(--font-body);
-    font-size: 13px;
-    fill: var(--text-secondary);
-  }
-
-  .layers-svg .layer-name {
-    font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 700;
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
+  .layers-header {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: var(--font-medium);
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    fill: var(--text);
   }
 
-  .layers-svg .layer-role {
-    font-size: 13px;
-    fill: var(--text-secondary);
+  .layers-header span {
+    padding: var(--space-sm) var(--space-md);
   }
 
-  .layers-svg .connector {
-    stroke: var(--accent);
-    stroke-width: 1.5;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .layers-svg .connector {
-      stroke: var(--accent-on-dark);
-    }
-  }
-
-  .layers-svg .crate-label {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    fill: var(--text-tertiary);
-  }
-
-  .layers-text {
+  .layer-label {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--space-md);
-    margin-block-start: var(--space-xl);
-  }
-
-  .layer-detail {
+    gap: var(--space-xs);
     padding: var(--space-md);
-    border: 1px solid var(--border);
-    background: var(--paper-elevated);
+    border-inline-start: 2px solid var(--accent);
   }
 
-  .layer-detail h3 {
+  .layer-index {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--accent);
+    font-weight: var(--font-medium);
+  }
+
+  .layer-name {
     font-family: var(--font-display);
     font-size: var(--text-md);
-    font-weight: 700;
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text);
-    margin-block-end: var(--space-xs);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.01em;
+    color: var(--ink);
   }
 
-  .layer-detail .text-body {
-    margin-block-end: var(--space-sm);
+  .layer-role {
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    color: var(--muted);
   }
 
   .layer-crates {
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
-    color: var(--text-tertiary);
-  }
-
-  .layer-crates code {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
-    color: var(--text-secondary);
-    background: var(--paper-sunk);
-    padding: 0.1rem 0.25rem;
+    color: var(--ink-secondary);
+    line-height: var(--leading-normal);
+  }
+
+  .layer-body,
+  .layer-differentiator {
+    margin: 0;
+    padding: var(--space-md);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+  }
+
+  .layer-differentiator {
+    color: var(--ink);
+  }
+
+  @media (max-width: 900px) {
+    .layers-table {
+      grid-template-columns: 220px 1fr;
+    }
+
+    .layers-row {
+      grid-template-columns: 220px 1fr;
+    }
+
+    .layers-header span:nth-child(3) {
+      display: none;
+    }
+
+    .layer-differentiator {
+      grid-column: 2;
+      padding-block-start: 0;
+      border-bottom: 1px solid var(--hairline);
+    }
   }
 
   @media (max-width: 760px) {
-    .layers-text {
-      grid-template-columns: 1fr;
+    .layers-table {
+      display: block;
+      border-top: 0;
+    }
+
+    .layers-row {
+      display: block;
+      border-bottom: 0;
+    }
+
+    .layers-header {
+      display: none;
+    }
+
+    .layer-label,
+    .layer-body,
+    .layer-differentiator {
+      padding: var(--space-sm) 0;
+    }
+
+    .layer-label {
+      border-inline-start: 0;
+      border-top: 1px solid var(--hairline);
+      padding-top: var(--space-md);
+    }
+
+    .layer-body {
+      padding-top: 0;
+    }
+
+    .layer-differentiator {
+      border-bottom: 0;
+      padding-bottom: var(--space-md);
     }
   }
 </style>

@@ -43,9 +43,9 @@ import { risks, stopRules } from '../../data/project';
 
 <style>
   .risks-section {
-    padding-block: var(--space-2xl);
-    background: var(--paper-elevated);
-    border-block: 1px solid var(--border);
+    padding-block: var(--space-3xl);
+    background: var(--surface);
+    border-block: 1px solid var(--hairline);
   }
 
   .section-header {
@@ -65,19 +65,17 @@ import { risks, stopRules } from '../../data/project';
   }
 
   .column-title {
-    font-family: var(--font-display);
+    font-family: var(--font-body);
     font-size: var(--text-base);
-    font-weight: 700;
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    font-weight: var(--font-medium);
+    letter-spacing: -0.02em;
     margin-block-end: var(--space-md);
-    color: var(--text);
+    color: var(--ink);
     text-wrap: balance;
   }
 
   .column-intro {
-    color: var(--text-secondary);
+    color: var(--ink-secondary);
     margin-block-end: var(--space-md);
     max-width: var(--measure);
   }
@@ -93,15 +91,17 @@ import { risks, stopRules } from '../../data/project';
   .risk-item,
   .stop-list li {
     padding: var(--space-md);
-    border: 1px solid var(--border);
-    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    background: var(--canvas);
   }
 
   .risk-item h4 {
-    font-family: var(--font-body);
+    font-family: var(--font-display);
     font-size: var(--text-base);
-    font-weight: 600;
-    color: var(--text);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.01em;
+    color: var(--ink);
     margin-block-end: var(--space-xs);
   }
 
@@ -123,13 +123,7 @@ import { risks, stopRules } from '../../data/project';
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--accent);
-    font-weight: 500;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .stop-list li::before {
-      color: var(--accent-on-dark);
-    }
+    font-weight: var(--font-medium);
   }
 
   @media (max-width: 760px) {

@@ -127,7 +127,7 @@ const activeNextId = phases
 
 <style>
   .milestones-section {
-    padding-block: var(--space-2xl);
+    padding-block: var(--space-3xl);
   }
 
   .section-header {
@@ -155,44 +155,36 @@ const activeNextId = phases
   .phase-title {
     position: sticky;
     top: 5rem;
-    font-family: var(--font-display);
+    font-family: var(--font-body);
     font-size: var(--text-base);
-    font-weight: 700;
-    font-variation-settings: "wdth" var(--display-wdth), "wght" var(--display-wght);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.02em;
+    color: var(--ink);
     padding-block-start: var(--space-sm);
   }
 
   .phase-deferred .phase-title {
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .milestone-list {
     list-style: none;
     padding: 0;
     margin: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--hairline);
   }
 
   .milestone-item {
-    border-bottom: 1px solid var(--border);
-    background: var(--paper);
+    border-bottom: 1px solid var(--hairline);
+    background: var(--canvas);
   }
 
   .milestone-item.state-next {
-    background: var(--paper-elevated);
+    background: var(--surface);
   }
 
   .milestone-item.is-active-next {
     border-inline-start: 3px solid var(--accent);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .milestone-item.is-active-next {
-      border-inline-start-color: var(--accent-on-dark);
-    }
   }
 
   .milestone-details summary {
@@ -218,31 +210,33 @@ const activeNextId = phases
   }
 
   .milestone-details summary:hover {
-    background: var(--paper-sunk);
+    background: var(--surface-2);
   }
 
   .milestone-details summary:active {
-    background: var(--border-subtle);
+    background: var(--surface-2);
   }
 
   .milestone-id {
     font-family: var(--font-mono);
-    color: var(--text-tertiary);
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
 
   .milestone-name {
-    color: var(--text);
+    color: var(--ink);
   }
 
   .milestone-state {
     display: inline-flex;
     align-items: center;
     gap: var(--space-xs);
+    font-family: var(--font-mono);
     font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-tertiary);
+    font-weight: var(--font-medium);
+    color: var(--muted);
   }
 
   .state-icon {
@@ -254,7 +248,7 @@ const activeNextId = phases
   }
 
   .milestone-item.state-done .state-icon {
-    color: var(--text-secondary);
+    color: var(--ink-secondary);
   }
 
   .milestone-item.state-next .state-icon {
@@ -263,21 +257,13 @@ const activeNextId = phases
 
   .milestone-item.is-active-next .milestone-state {
     color: var(--accent);
-    font-weight: 500;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .milestone-item.state-next .state-icon,
-    .milestone-item.is-active-next .milestone-state {
-      color: var(--accent-on-dark);
-    }
   }
 
   .milestone-body {
     padding: 0 var(--space-md) var(--space-md) calc(3rem + var(--space-md) + var(--space-sm));
     font-family: var(--font-body);
     font-size: var(--text-sm);
-    color: var(--text-secondary);
+    color: var(--ink-secondary);
   }
 
   .milestone-body .delivers {
@@ -290,7 +276,7 @@ const activeNextId = phases
   }
 
   .criterion span {
-    color: var(--text-tertiary);
+    color: var(--muted);
   }
 
   .section-footer {

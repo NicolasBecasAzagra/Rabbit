@@ -24,11 +24,11 @@ const { items } = Astro.props;
 
 <style>
   .faq-list {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--hairline);
   }
 
   .faq-item {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .faq-item summary {
@@ -36,10 +36,11 @@ const { items } = Astro.props;
     align-items: baseline;
     gap: var(--space-sm);
     padding: var(--space-md) 0;
-    font-family: var(--font-mono);
+    font-family: var(--font-body);
     font-size: var(--text-base);
+    font-weight: var(--font-medium);
     line-height: var(--leading-normal);
-    color: var(--text);
+    color: var(--ink);
     cursor: pointer;
     list-style: none;
     border-radius: var(--radius-sm);
@@ -62,25 +63,13 @@ const { items } = Astro.props;
     color: var(--accent-hover);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .faq-item summary:hover .faq-question {
-      color: var(--accent-on-dark);
-    }
-  }
-
   .faq-marker {
     flex: none;
     color: var(--accent);
-    font-weight: 500;
+    font-weight: var(--font-medium);
     width: 1rem;
     text-align: center;
     transition: transform var(--transition-fast);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .faq-marker {
-      color: var(--accent-on-dark);
-    }
   }
 
   .faq-item[open] .faq-marker {
@@ -102,8 +91,8 @@ const { items } = Astro.props;
     margin: 0;
     font-family: var(--font-body);
     font-size: var(--text-base);
-    line-height: var(--leading-relaxed);
-    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
   }
 </style>
 

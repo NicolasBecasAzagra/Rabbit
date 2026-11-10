@@ -20,22 +20,18 @@ import { url } from '../lib/paths';
 
 <style>
   .cta-section {
-    padding-block: var(--space-2xl);
-  }
-
-  .cta-rule {
-    height: 1px;
-    background: var(--border-strong);
-    margin-block-end: var(--space-xl);
+    padding-block: var(--space-3xl);
+    border-top: 1px solid var(--hairline);
   }
 
   .cta-claim {
     max-width: var(--measure);
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-size: var(--text-xl);
     line-height: var(--leading-snug);
-    font-weight: 500;
-    color: var(--text);
+    font-weight: var(--font-medium);
+    letter-spacing: -0.02em;
+    color: var(--ink);
     margin-block-end: var(--space-lg);
     text-wrap: balance;
   }
@@ -48,18 +44,19 @@ import { url } from '../lib/paths';
 
   .cta-links a {
     font-family: var(--font-body);
-    font-size: var(--text-base);
-    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--ink-secondary);
     text-decoration: none;
-    padding: var(--space-sm) 0;
-    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--hairline);
     border-radius: var(--radius-sm);
     transition: color var(--transition-fast), border-color var(--transition-fast);
   }
 
   .cta-links a:hover {
-    color: var(--accent);
-    border-color: var(--accent);
+    color: var(--ink);
+    border-color: var(--ink);
   }
 
   .cta-links a:focus-visible {
@@ -68,18 +65,7 @@ import { url } from '../lib/paths';
   }
 
   .cta-links a:active {
-    color: var(--accent-hover);
-    border-color: var(--accent-hover);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .cta-links a:hover {
-      color: var(--accent-on-dark);
-      border-color: var(--accent-on-dark);
-    }
-    .cta-links a:active {
-      color: var(--accent-on-dark-hover);
-      border-color: var(--accent-on-dark-hover);
-    }
+    color: var(--accent);
+    border-color: var(--accent);
   }
 </style>
