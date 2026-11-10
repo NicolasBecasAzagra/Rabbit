@@ -1,12 +1,12 @@
-# MadRust
+# Rabbit
 
-![MadRust: the boot sequence of the kernel](docs/boot.gif)
+![Rabbit, an operating system for local AI agents](docs/banner.svg)
 
-[![CI](https://github.com/NicolasBecasAzagra/MadRust/actions/workflows/ci.yml/badge.svg)](https://github.com/NicolasBecasAzagra/MadRust/actions/workflows/ci.yml)
+[![CI](https://github.com/NicolasBecasAzagra/Rabbit/actions/workflows/ci.yml/badge.svg)](https://github.com/NicolasBecasAzagra/Rabbit/actions/workflows/ci.yml)
 
 **An operating system for local AI agents, written in Rust from the kernel up.**
 
-MadRust is a from-scratch x86_64 kernel that speaks the Linux userspace ABI:
+Rabbit is a from-scratch x86_64 kernel that speaks the Linux userspace ABI:
 the same system calls, the same `struct` layouts, the same ELF loading rules.
 On top of that kernel sit two programs that are not toys: an inference runtime
 that serves a real language model with no dependency outside the Rust standard
@@ -15,15 +15,7 @@ library, and an agent that asks the model what to do and runs the tools.
 The goal is a machine that serves models to agents, faster and with less
 memory than the incumbent, and that shows its numbers.
 
-```text
-        the agent            the runtime              the kernel
-   model, tool, result   weights, forward pass,     paging, scheduling,
-   over seven tools      bytes, a byte grammar      memory, processes
-        |                        |                        |
-        +------------------------+------------------------+
-                                 |
-                     Linux ABI, unmodified programs
-```
+![The three layers of Rabbit](docs/architecture.svg)
 
 ## What we are building
 
@@ -34,7 +26,7 @@ APIs over HTTP, it reads and writes files, and it runs commands. It expects a
 model that fits, and it expects the answers to come back in milliseconds. A
 product that only does the third of that is a demonstration.
 
-MadRust is that machine, built in three layers, each one measurable against
+Rabbit is that machine, built in three layers, each one measurable against
 mainline Linux on the same machine, with the same binary and the same
 checkpoint.
 
@@ -56,7 +48,7 @@ checkpoint.
 
 ## What it does today
 
-| | MadRust | mainline | mainline, mitigations off |
+| | Rabbit | mainline | mainline, mitigations off |
 |---|---|---|---|
 | system call | **376 ns** | 29.3 us | 1.04 us |
 | map and touch memory | **6.83 ms/MiB** | 25.8 ms/MiB | 8.69 ms/MiB |
@@ -82,6 +74,8 @@ sides. Every number of the table comes from a committed dataset:
 | the model | `bench/results/inference-native/` |
 | the agent | `bench/results/agent/` |
 | the network | `bench/results/net/` |
+
+![Selected Rabbit benchmark measurements](docs/stats.svg)
 
 The network is the fourth layer: the guest enumerates the bus, claims a
 network device, resolves the address of the gateway, sends a datagram to a
@@ -183,11 +177,11 @@ Debugging: add `-s -S` to QEMU (gdbstub on port 1234, CPU halted), then attach
 ### The comparison against mainline
 
 ```sh
-bench/prepare-mainline.sh ~/madrust/artifacts   # the reference image, on a Linux host
-bench/fetch-model.sh ~/madrust/artifacts/model-instruct   # the checkpoint, verified
+bench/prepare-mainline.sh ~/rabbit/artifacts   # the reference image, on a Linux host
+bench/fetch-model.sh ~/rabbit/artifacts/model-instruct   # the checkpoint, verified
 python3 bench/run.py \
-    --madrust "$(make -s print-kernel-path)" \
-    --mainline ~/madrust/artifacts/vmlinux \
+    --rabbit "$(make -s print-kernel-path)" \
+    --mainline ~/rabbit/artifacts/vmlinux \
     --mainline-variant "nomitig=mitigations=off" \
     --out bench/results
 ```
@@ -196,11 +190,11 @@ python3 bench/run.py \
 
 ```sh
 make agent agent-initramfs
-EXTRA_DIR=~/madrust/artifacts/model-instruct \
-    bench/mkinitramfs.sh ~/madrust/artifacts/agent.cpio madrust-agent/madrust-agent.elf
-python3 bench/run.py --madrust "$(make -s print-kernel-path)" \
-    --mainline ~/madrust/artifacts/vmlinux \
-    --initrd ~/madrust/artifacts/agent.cpio --memory 1024M \
+EXTRA_DIR=~/rabbit/artifacts/model-instruct \
+    bench/mkinitramfs.sh ~/rabbit/artifacts/agent.cpio rabbit-agent/rabbit-agent.elf
+python3 bench/run.py --rabbit "$(make -s print-kernel-path)" \
+    --mainline ~/rabbit/artifacts/vmlinux \
+    --initrd ~/rabbit/artifacts/agent.cpio --memory 1024M \
     --only agent-steps,agent-tokens,agent-seconds,agent-step-ms
 ```
 
@@ -210,21 +204,21 @@ The full Linux VM setup (for building mainline Linux and a distro rootfs) is in
 ## Repository layout
 
 ```text
-madrust-arch/       x86_64 hardware access, port I/O, boot trampoline
-madrust-bootinfo/   pure parsing of the PVH boot handover structures
-madrust-drivers/    16550A UART, isa-debug-exit
-madrust-mm/         paging, the buddy allocator, the heap, the mappings
-madrust-sched/      the scheduler and its policy
-madrust-elf/        the ELF64 reader
-madrust-initramfs/  the reader of the cpio archive of the initramfs
-madrust-kernel/     the no_std kernel binary
-madrust-userland/   the test program that runs unmodified in ring 3
-madrust-bench/      the workload that measures the kernel
-madrust-infer/      the inference runtime, the grammar, the merge encoder
-madrust-agent/      the agent loop: model, tool call, tool result
-bench/              the rig, the workloads, the reference build, the datasets
-docs/               architecture, boot protocol, benchmarking, VM setup
-scripts/            the generator of the interrupt stubs
+rabbit-arch/       x86_64 hardware access, port I/O, boot trampoline
+rabbit-bootinfo/   pure parsing of the PVH boot handover structures
+rabbit-drivers/    16550A UART, isa-debug-exit
+rabbit-mm/         paging, the buddy allocator, the heap, the mappings
+rabbit-sched/      the scheduler and its policy
+rabbit-elf/        the ELF64 reader
+rabbit-initramfs/  the reader of the cpio archive of the initramfs
+rabbit-kernel/     the no_std kernel binary
+rabbit-userland/   the test program that runs unmodified in ring 3
+rabbit-bench/      the workload that measures the kernel
+rabbit-infer/      the inference runtime, the grammar, the merge encoder
+rabbit-agent/      the agent loop: model, tool call, tool result
+bench/             the rig, the workloads, the reference build, the datasets
+docs/              architecture, boot protocol, benchmarking, VM setup
+scripts/           the generator of the interrupt stubs
 ```
 
 Dependencies policy: kernel crates may only use MIT, BSD or ISC licensed code.
@@ -234,7 +228,7 @@ are forbidden in the kernel.
 ## What this project is not
 
 Being "better than Linux at everything" is not a goal, and it is not a
-measurable one. MadRust publishes a narrow, defensible claim instead:
+measurable one. Rabbit publishes a narrow, defensible claim instead:
 
 - Same userspace, same QEMU version, same machine model, same rootfs, same
   benchmark scripts, raw results committed to the repository.
@@ -248,7 +242,7 @@ The methodology is specified in [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 
 ## Boot protocol
 
-MadRust boots through the Xen PVH handover (`XEN_ELFNOTE_PHYS32_ENTRY`), which
+Rabbit boots through the Xen PVH handover (`XEN_ELFNOTE_PHYS32_ENTRY`), which
 QEMU supports natively for 64-bit ELF kernels. Multiboot2 is not an option:
 QEMU's Multiboot loader rejects 64-bit images. The same path also boots
 mainline Linux (`vmlinux` with a PVH note), which is what makes the benchmark
@@ -256,7 +250,7 @@ comparison fair. Details in [docs/BOOT.md](docs/BOOT.md).
 
 ## How this was built
 
-MadRust was written with the assistance of an AI agent, and this is stated
+Rabbit was written with the assistance of an AI agent, and this is stated
 here on purpose rather than left for someone to discover.
 
 - The design decisions, the milestone criteria and the verification belong to

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img">
+  <title>The three layers of Rabbit</title>
+  <desc>Three stacked layers — the agent, the runtime, and the kernel — running over the Linux ABI. A token travels down through the layers and the result travels back up.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    text { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .bg { fill: #f7f5f0; }
+    .border { fill: none; stroke: rgba(26,26,26,0.12); stroke-width: 1; }
+    .ink { fill: #1a1a1a; }
+    .secondary { fill: #6b6560; }
+    .accent { fill: #ac3c0d; }
+    .layer { fill: #f0ede6; stroke: rgba(26,26,26,0.12); stroke-width: 1; }
+    .base { fill: #e8e4db; stroke: rgba(26,26,26,0.12); stroke-width: 1; }
+    .connector { fill: none; stroke: rgba(26,26,26,0.18); stroke-width: 2; stroke-dasharray: 6 6; }
+    .title { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+    .body { font-size: 14px; font-weight: 400; }
+    .base-label { font-size: 16px; font-weight: 700; }
+    .packet { fill: #ac3c0d; }
+    @keyframes shuttle {
+      0% { transform: translateY(0); opacity: 1; }
+      40% { transform: translateY(224px); opacity: 1; }
+      50% { transform: translateY(224px); opacity: 1; }
+      90% { transform: translateY(0); opacity: 1; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
+    .mover { animation: shuttle 8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d0d0d; }
+      .border { stroke: rgba(232,230,225,0.10); }
+      .ink { fill: #e8e6e1; }
+      .secondary { fill: #a8a29e; }
+      .accent { fill: #e07b4d; }
+      .layer { fill: #141414; stroke: rgba(232,230,225,0.10); }
+      .base { fill: #1a1a1a; stroke: rgba(232,230,225,0.10); }
+      .connector { stroke: rgba(232,230,225,0.14); }
+      .packet { fill: #e07b4d; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mover { animation: none; opacity: 0; }
+    }
+  </style>
+  <rect class="bg" width="1280" height="360" rx="28"/>
+  <rect class="border" width="1278" height="358" x="1" y="1" rx="27"/>
+  <line class="connector" x1="640" y1="104" x2="640" y2="148"/>
+  <line class="connector" x1="640" y1="176" x2="640" y2="220"/>
+  <line class="connector" x1="640" y1="248" x2="640" y2="264"/>
+  <rect class="layer" x="190" y="40" width="900" height="64" rx="14"/>
+  <text class="ink title" x="640" y="67" text-anchor="middle">the agent</text>
+  <text class="secondary body" x="640" y="89" text-anchor="middle">model, tool, result over seven tools</text>
+  <rect class="layer" x="190" y="112" width="900" height="64" rx="14"/>
+  <text class="ink title" x="640" y="139" text-anchor="middle">the runtime</text>
+  <text class="secondary body" x="640" y="161" text-anchor="middle">weights, forward pass, bytes, a byte grammar</text>
+  <rect class="layer" x="190" y="184" width="900" height="64" rx="14"/>
+  <text class="ink title" x="640" y="211" text-anchor="middle">the kernel</text>
+  <text class="secondary body" x="640" y="233" text-anchor="middle">paging, scheduling, memory, processes</text>
+  <rect class="base" x="60" y="264" width="1160" height="56" rx="14"/>
+  <text class="ink base-label" x="640" y="297" text-anchor="middle">Linux ABI, unmodified programs</text>
+  <circle class="packet mover" cx="640" cy="72" r="9"/>
+</svg>

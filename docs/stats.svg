@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img">
+  <title>Rabbit benchmark highlights</title>
+  <desc>Selected measurements from the benchmark table: 376 ns for a system call, 12.9 s to boot to the first result, 0.45 tokens per second, 857 MB resident memory with the model, 821 seconds for an agent loop, and 6.83 ms per MiB to map and touch memory.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    text { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+    .bg { fill: #f7f5f0; }
+    .border { fill: none; stroke: rgba(26,26,26,0.12); stroke-width: 1; }
+    .number { fill: #ac3c0d; font-size: 46px; font-weight: 700; letter-spacing: -0.03em; }
+    .label { fill: #6b6560; font-size: 14px; font-weight: 400; }
+    @keyframes rise {
+      0%,100% { opacity: 0; transform: translateY(18px); }
+      12%,80% { opacity: 1; transform: translateY(0); }
+    }
+    .stat { animation: rise 7s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+    .s1 { animation-delay: 0s; }
+    .s2 { animation-delay: 0.35s; }
+    .s3 { animation-delay: 0.7s; }
+    .s4 { animation-delay: 1.05s; }
+    .s5 { animation-delay: 1.4s; }
+    .s6 { animation-delay: 1.75s; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d0d0d; }
+      .border { stroke: rgba(232,230,225,0.10); }
+      .number { fill: #e07b4d; }
+      .label { fill: #a8a29e; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .stat { animation: none; opacity: 1; transform: none; }
+    }
+  </style>
+  <rect class="bg" width="1280" height="360" rx="28"/>
+  <rect class="border" width="1278" height="358" x="1" y="1" rx="27"/>
+  <g class="stat s1">
+    <text class="number" x="240" y="100" text-anchor="middle">376 ns</text>
+    <text class="label" x="240" y="128" text-anchor="middle">system call</text>
+  </g>
+  <g class="stat s2">
+    <text class="number" x="640" y="100" text-anchor="middle">12.9 s</text>
+    <text class="label" x="640" y="128" text-anchor="middle">boot to the first result</text>
+  </g>
+  <g class="stat s3">
+    <text class="number" x="1040" y="100" text-anchor="middle">0.45</text>
+    <text class="label" x="1040" y="128" text-anchor="middle">tokens per second</text>
+  </g>
+  <g class="stat s4">
+    <text class="number" x="240" y="244" text-anchor="middle">857 MB</text>
+    <text class="label" x="240" y="272" text-anchor="middle">resident memory with the model</text>
+  </g>
+  <g class="stat s5">
+    <text class="number" x="640" y="244" text-anchor="middle">821 s</text>
+    <text class="label" x="640" y="272" text-anchor="middle">seconds of an agent loop</text>
+  </g>
+  <g class="stat s6">
+    <text class="number" x="1040" y="244" text-anchor="middle">6.83 ms/MiB</text>
+    <text class="label" x="1040" y="272" text-anchor="middle">map and touch memory</text>
+  </g>
+</svg>
