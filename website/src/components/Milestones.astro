@@ -205,14 +205,24 @@ const activeNextId = phases
     list-style: none;
     font-family: var(--font-body);
     font-size: var(--text-sm);
+    border-radius: var(--radius-sm);
   }
 
   .milestone-details summary::-webkit-details-marker {
     display: none;
   }
 
+  .milestone-details summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+  }
+
   .milestone-details summary:hover {
     background: var(--paper-sunk);
+  }
+
+  .milestone-details summary:active {
+    background: var(--border-subtle);
   }
 
   .milestone-id {

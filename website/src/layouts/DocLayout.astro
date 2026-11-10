@@ -178,6 +178,7 @@ const repoFileUrl = source ? `${meta.repo}/blob/main/${source}` : null;
     text-transform: uppercase;
     margin-block-end: var(--space-sm);
     color: var(--text);
+    text-wrap: balance;
   }
 
   .doc-description {
@@ -211,6 +212,7 @@ const repoFileUrl = source ? `${meta.repo}/blob/main/${source}` : null;
     color: var(--text);
     margin-block: var(--space-xl) var(--space-sm);
     scroll-margin-top: 5rem;
+    text-wrap: balance;
   }
 
   .doc-body :global(h3) {
@@ -224,6 +226,7 @@ const repoFileUrl = source ? `${meta.repo}/blob/main/${source}` : null;
     color: var(--text);
     margin-block: var(--space-lg) var(--space-sm);
     scroll-margin-top: 5rem;
+    text-wrap: balance;
   }
 
   .doc-body :global(p) {
@@ -269,12 +272,14 @@ const repoFileUrl = source ? `${meta.repo}/blob/main/${source}` : null;
   }
 
   .doc-body :global(table) {
+    display: block;
     width: 100%;
     min-width: 560px;
     border-collapse: collapse;
     margin-block-end: var(--space-md);
     font-size: var(--text-sm);
     border-block: 1px solid var(--border-strong);
+    overflow-x: auto;
   }
 
   .doc-body :global(th),

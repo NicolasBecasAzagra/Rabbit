@@ -7,32 +7,36 @@ const primaryDocs = docs.filter((doc) => primarySlugs.has(doc.slug));
 const regularDocs = docs.filter((doc) => !primarySlugs.has(doc.slug));
 ---
 
-<div class="docs-list" role="list">
+<ul class="docs-list">
   {
     primaryDocs.map((doc) => (
-      <a class="docs-item docs-item-primary" href={url(`/docs/${doc.slug}`)} role="listitem">
-        <span class="docs-marker" aria-hidden="true">→</span>
-        <span class="docs-main">
-          <span class="docs-title">{doc.title}</span>
-          <span class="docs-summary">{doc.summary}</span>
-        </span>
-        <span class="docs-source">Read</span>
-      </a>
+      <li>
+        <a class="docs-item docs-item-primary" href={url(`/docs/${doc.slug}`)}>
+          <span class="docs-marker" aria-hidden="true">→</span>
+          <span class="docs-main">
+            <span class="docs-title">{doc.title}</span>
+            <span class="docs-summary">{doc.summary}</span>
+          </span>
+          <span class="docs-source">Read</span>
+        </a>
+      </li>
     ))
   }
 
   {
     regularDocs.map((doc) => (
-      <a class="docs-item" href={url(`/docs/${doc.slug}`)} role="listitem">
-        <span class="docs-main">
-          <span class="docs-title">{doc.title}</span>
-          <span class="docs-summary">{doc.summary}</span>
-        </span>
-        <span class="docs-source">View source</span>
-      </a>
+      <li>
+        <a class="docs-item" href={url(`/docs/${doc.slug}`)}>
+          <span class="docs-main">
+            <span class="docs-title">{doc.title}</span>
+            <span class="docs-summary">{doc.summary}</span>
+          </span>
+          <span class="docs-source">View source</span>
+        </a>
+      </li>
     ))
   }
-</div>
+</ul>
 
 <section class="pipeline" aria-labelledby="pipeline-title">
   <h2 id="pipeline-title">How these pages stay in sync</h2>
@@ -47,6 +51,12 @@ const regularDocs = docs.filter((doc) => !primarySlugs.has(doc.slug));
   .docs-list {
     border-top: 1px solid var(--border);
     margin-block-end: var(--space-xl);
+    list-style: none;
+    padding: 0;
+  }
+
+  .docs-list li {
+    margin: 0;
   }
 
   .docs-item {
@@ -54,14 +64,32 @@ const regularDocs = docs.filter((doc) => !primarySlugs.has(doc.slug));
     grid-template-columns: 1fr auto;
     align-items: baseline;
     gap: var(--space-md);
-    padding: var(--space-md) 0;
+    padding: var(--space-md);
+    margin-inline: calc(var(--space-md) * -1);
     border-bottom: 1px solid var(--border);
     color: inherit;
     text-decoration: none;
+    border-radius: var(--radius-sm);
+    transition: background-color var(--transition-fast);
   }
 
   .docs-item:hover {
     background: var(--paper-elevated);
+  }
+
+  .docs-item:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+  }
+
+  .docs-item:active .docs-title {
+    color: var(--accent-hover);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .docs-item:active .docs-title {
+      color: var(--accent-on-dark-hover);
+    }
   }
 
   .docs-item-primary {

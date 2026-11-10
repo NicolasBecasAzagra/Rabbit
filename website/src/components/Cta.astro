@@ -37,6 +37,7 @@ import { url } from '../lib/paths';
     font-weight: 500;
     color: var(--text);
     margin-block-end: var(--space-lg);
+    text-wrap: balance;
   }
 
   .cta-links {
@@ -52,6 +53,8 @@ import { url } from '../lib/paths';
     text-decoration: none;
     padding: var(--space-sm) 0;
     border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: color var(--transition-fast), border-color var(--transition-fast);
   }
 
   .cta-links a:hover {
@@ -59,10 +62,24 @@ import { url } from '../lib/paths';
     border-color: var(--accent);
   }
 
+  .cta-links a:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+  }
+
+  .cta-links a:active {
+    color: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
   @media (prefers-color-scheme: dark) {
     .cta-links a:hover {
       color: var(--accent-on-dark);
       border-color: var(--accent-on-dark);
+    }
+    .cta-links a:active {
+      color: var(--accent-on-dark-hover);
+      border-color: var(--accent-on-dark-hover);
     }
   }
 </style>

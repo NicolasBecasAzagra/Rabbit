@@ -631,6 +631,27 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     background: var(--paper-sunk);
   }
 
+  .raw-table summary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+  }
+
+  .raw-table .table-wrap {
+    overflow-x: auto;
+    padding-block-end: var(--space-sm);
+    /* same CSS-only scroll affordance as .dotplot-scroll */
+    background:
+      linear-gradient(to right, var(--paper) 40%, transparent) left center / 32px 100% no-repeat local,
+      linear-gradient(to left, var(--paper) 40%, transparent) right center / 32px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, var(--rule-strong, rgba(0, 0, 0, 0.14)), transparent) left center / 14px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, var(--rule-strong, rgba(0, 0, 0, 0.14)), transparent) right center / 14px 100% no-repeat scroll;
+  }
+
+  .raw-table .table-wrap:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--ring);
+  }
+
   .raw-table table {
     width: 100%;
     min-width: 640px;

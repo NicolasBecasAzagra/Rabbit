@@ -4,8 +4,8 @@
   "description": "A Linux-ABI-compatible operating system kernel written in Rust.",
   "start_url": "/Rabbit/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0a0a0a",
+  "background_color": "#f7f5f0",
+  "theme_color": "#f7f5f0",
   "icons": [
     {
       "src": "/Rabbit/favicon.svg",
@@ -13,9 +13,19 @@
       "type": "image/svg+xml"
     },
     {
-      "src": "/Rabbit/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "/Rabbit/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/Rabbit/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/Rabbit/favicon-16.png",
+      "sizes": "16x16",
+      "type": "image/png"
     }
   ]
 }

@@ -2,6 +2,7 @@
 import { url } from '../lib/paths';
 import { meta } from '../data/project';
 
+const pathname = Astro.url.pathname.replace(/\/$/, '') || url('');
 const links = [
   { label: 'Roadmap', href: url('/roadmap') },
   { label: 'Benchmarks', href: url('/benchmarks') },
@@ -15,38 +16,74 @@ const links = [
 <header class="site-header">
   <div class="wrapper header-inner">
     <a class="wordmark" href={url('/')} aria-label={`${meta.name} home`}>
-      <svg class="wordmark-icon" viewBox="0 0 32 28" width="24" height="21" aria-hidden="true" fill="currentColor">
-        <g transform="translate(0,28) scale(0.0667,-0.0667)" fill="currentColor" stroke="none">
-          <path d="M226 351 c-4 -5 -13 -8 -21 -4 -19 7 -19 -16 0 -41 17 -23 20 -40 5
--31 -6 4 -7 -1 -3 -11 4 -11 8 -13 11 -6 2 7 9 9 15 5 6 -4 8 -1 5 8 -20 54
--20 59 6 59 92 0 128 -123 55 -192 -23 -22 -38 -42 -35 -46 4 -3 11 0 15 7 5
-7 14 10 20 7 6 -4 11 0 11 9 0 9 5 13 10 10 6 -3 10 1 10 9 0 9 5 16 10 16 6
-0 10 7 10 15 0 8 3 15 8 15 4 0 7 18 7 40 0 22 -3 40 -7 40 -5 0 -8 7 -8 15 0
-8 -4 15 -10 15 -5 0 -10 5 -10 11 0 16 -29 41 -40 34 -5 -3 -10 -1 -10 5 0 7
--6 10 -14 7 -7 -3 -18 -1 -24 5 -6 6 -12 6 -16 -1z"/>
-          <path d="M130 345 c0 -3 2 -5 5 -5 3 0 5 2 5 5 0 3 -2 5 -5 5 -3 0 -5 -2 -5
--5z"/>
-          <path d="M170 315 c13 -14 26 -25 28 -25 3 0 -5 11 -18 25 -13 14 -26 25 -28
-25 -3 0 5 -11 18 -25z"/>
-          <path d="M130 315 c0 -3 2 -5 5 -5 3 0 5 2 5 5 0 3 -2 5 -5 5 -3 0 -5 -2 -5
--5z"/>
-          <path d="M140 295 c0 -3 2 -5 5 -5 3 0 5 2 5 5 0 3 -2 5 -5 5 -3 0 -5 -2 -5
--5z"/>
-          <path d="M120 277 c0 -9 -3 -17 -8 -17 -4 0 -7 -18 -7 -40 0 -22 3 -40 7 -40
-5 0 8 -7 8 -15 0 -8 5 -15 10 -15 6 0 10 -7 10 -16 0 -8 4 -12 10 -9 6 3 10
--1 10 -9 0 -10 6 -13 15 -10 8 4 15 1 15 -6 0 -7 8 -9 20 -5 13 4 20 2 20 -7
-0 -10 3 -9 10 2 17 27 11 47 -15 52 -20 4 -23 3 -14 -8 8 -9 8 -14 1 -14 -6 0
--19 10 -29 23 -10 13 -26 26 -36 30 -15 6 -18 16 -16 57 2 27 0 53 -4 56 -4 4
--7 0 -7 -9z"/>
-          <path d="M185 250 c3 -5 8 -10 11 -10 2 0 4 5 4 10 0 6 -5 10 -11 10 -5 0 -7
--4 -4 -10z"/>
-          <path d="M240 240 c0 -5 5 -10 12 -10 7 0 25 -12 41 -27 l30 -28 -18 28 c-23
-37 -65 60 -65 37z"/>
-          <path d="M182 203 c-11 -20 -5 -43 10 -43 6 0 7 8 4 17 -4 9 -2 20 5 23 8 5 8
-10 1 14 -6 4 -15 -1 -20 -11z"/>
-          <path d="M225 210 c-7 -11 44 -34 53 -25 6 5 -27 34 -40 35 -4 0 -10 -5 -13
--10z"/>
-          <path d="M210 179 c0 -12 25 -22 41 -17 6 2 0 9 -15 16 -16 7 -26 8 -26 1z"/>
+      <svg class="wordmark-icon" viewBox="104 97 313 313" width="24" height="24" aria-hidden="true" fill="currentColor">
+        <g transform="translate(0,469) scale(0.1,-0.1)" fill="currentColor" stroke="none">
+          <path d="M2527 4023 c-2 -4 -13 -39 -23 -76 -21 -76 -27 -82 -99 -91 l-50 -7
+-38 72 -38 71 -36 -7 c-20 -3 -52 -12 -72 -18 l-36 -12 -5 -83 -5 -84 -59 -25
+-59 -25 -57 57 c-59 59 -81 65 -110 31 -9 -11 7 -27 77 -77 48 -35 90 -66 93
+-69 3 -3 45 -37 93 -74 48 -38 101 -85 118 -105 27 -31 272 -491 300 -562 12
+-31 40 -39 130 -39 70 0 69 -5 25 113 -19 51 -64 175 -101 277 -73 203 -85
+226 -144 285 -53 52 -54 50 42 63 410 58 854 -144 1098 -500 293 -428 284
+-952 -26 -1387 -113 -159 -369 -341 -578 -411 l-80 -27 -22 -64 c-65 -192 -63
+-178 -31 -172 23 5 96 -93 96 -128 0 -12 9 -12 61 5 24 8 56 17 72 20 27 6 27
+7 27 89 l0 83 53 22 c69 29 63 30 127 -33 l55 -55 68 41 c59 35 68 44 62 63
+-43 134 -42 139 22 183 l46 31 36 -20 c20 -11 51 -29 69 -40 l34 -21 55 55 55
+55 -23 39 c-13 22 -30 49 -37 59 -6 11 -15 26 -18 32 -5 10 20 51 66 105 3 4
+37 -1 75 -12 85 -24 85 -25 124 43 41 71 40 75 -23 135 l-54 51 22 56 21 55
+82 0 81 0 21 62 c28 82 27 91 -11 112 -105 55 -105 56 -98 120 7 67 3 62 84
+85 80 22 76 19 83 70 13 94 -32 141 -135 141 -24 0 -30 16 -34 89 l-3 45 68
+39 c75 43 74 40 48 122 l-19 60 -81 3 -82 3 -25 56 -25 57 59 60 59 61 -23 40
+c-13 22 -30 52 -39 68 -8 15 -17 27 -19 27 -1 0 -29 -9 -61 -20 -85 -29 -95
+-27 -136 29 l-37 49 39 64 c49 79 49 73 -15 137 l-53 53 -69 -42 c-75 -45 -77
+-45 -142 8 l-33 28 21 78 c11 43 19 80 18 81 -16 14 -119 75 -126 75 -6 0 -34
+-25 -64 -56 l-54 -56 -60 25 -59 25 -5 84 -5 83 -40 13 c-90 30 -104 25 -148
+-51 -38 -65 -41 -69 -70 -63 -16 3 -39 6 -51 6 -37 0 -48 16 -65 91 l-17 74
+-76 3 c-42 2 -78 -1 -81 -5z"/>
+          <path d="M1366 3944 c-40 -103 33 -374 166 -624 28 -52 57 -106 64 -120 97
+-182 146 -228 414 -392 l105 -64 82 -124 c89 -135 106 -149 190 -157 92 -10
+164 48 183 146 l10 52 -102 197 c-56 108 -145 282 -199 387 -113 221 -107 213
+-269 340 -221 172 -433 306 -559 351 -78 28 -77 28 -85 8z m324 -287 c91 -66
+248 -194 318 -261 28 -26 66 -85 109 -166 36 -69 81 -152 98 -185 18 -33 60
+-114 95 -180 73 -140 76 -145 102 -145 61 0 91 -104 43 -150 -65 -61 -178 10
+-145 90 9 23 7 34 -16 76 -14 27 -58 110 -97 184 -81 157 -92 172 -74 105 49
+-177 49 -179 -31 -128 -33 21 -106 67 -162 103 -100 62 -164 135 -213 240 -4
+8 -18 33 -32 55 -68 110 -150 292 -186 414 -29 100 -18 97 191 -52z"/>
+          <path d="M1258 3258 c-52 -80 -53 -79 8 -139 58 -58 61 -65 40 -112 -8 -18
+-16 -40 -20 -49 -4 -15 -18 -18 -90 -18 l-84 0 -17 -69 c-19 -80 -19 -83 38
+-111 87 -44 90 -48 75 -115 -12 -53 -16 -60 -43 -67 -17 -4 -51 -13 -77 -19
+l-48 -12 0 -78 0 -78 38 -10 c20 -6 55 -15 78 -21 40 -10 41 -11 51 -67 13
+-68 11 -71 -68 -113 -60 -32 -67 -56 -37 -145 l13 -40 84 -5 83 -5 19 -45 c25
+-62 25 -62 -31 -118 -58 -58 -59 -64 -25 -125 39 -70 44 -71 123 -49 78 22 76
+23 120 -37 l32 -44 -22 -36 c-11 -20 -30 -51 -41 -69 l-20 -34 57 -56 c48 -49
+59 -55 74 -45 9 7 40 25 68 41 l52 29 51 -39 c28 -21 51 -41 51 -44 0 -3 -10
+-37 -21 -76 -25 -81 -26 -78 62 -127 l55 -31 54 55 c61 61 67 63 130 32 l45
+-22 3 -82 3 -81 68 -21 c38 -12 72 -21 75 -21 3 0 21 29 41 65 45 79 37 75
+113 68 57 -5 63 -8 68 -32 3 -14 13 -50 22 -78 l16 -53 77 0 c90 0 82 -8 113
+112 14 51 39 132 55 180 35 98 37 124 16 193 l-14 49 49 82 c28 45 50 85 50
+88 0 3 -106 6 -235 6 l-234 0 -47 81 -46 80 -69 -113 -68 -113 22 -17 c12 -9
+56 -36 97 -59 153 -85 177 -104 184 -144 12 -60 23 -64 -189 60 -55 32 -121
+69 -147 83 -26 15 -53 39 -62 56 -18 35 -16 31 -146 249 -52 87 -105 175 -117
+195 -25 43 -28 43 -108 -6 -47 -29 -70 -36 -109 -37 l-50 0 -34 85 c-132 333
+-114 701 49 996 l28 51 -30 44 c-16 24 -29 47 -29 51 0 29 -67 113 -88 110
+-18 -3 -98 17 -138 34 -6 2 -26 -19 -46 -48z"/>
+          <path d="M2580 2825 c0 -3 16 -38 36 -77 31 -62 35 -78 30 -119 l-6 -47 82
+-26 c46 -14 121 -30 168 -35 102 -10 116 -17 155 -84 17 -29 96 -118 178 -199
+110 -111 147 -154 147 -172 0 -25 23 -54 68 -83 55 -37 -54 -193 -135 -193 -4
+0 -15 -7 -24 -16 -16 -15 -27 -15 -97 -4 -100 15 -95 11 -120 103 l-21 77 62
+78 c33 42 69 86 79 96 25 27 27 24 -57 105 l-75 73 -64 -6 c-101 -11 -172 32
+-195 120 -12 44 -15 46 -119 79 l-53 17 -48 -49 c-85 -87 -141 -98 -276 -56
+-58 18 -66 26 -120 110 -49 78 -40 81 -104 -35 -50 -89 -54 -102 -52 -154 1
+-57 1 -57 -37 -80 -34 -19 -132 -149 -132 -174 0 -4 24 -48 54 -98 82 -138 87
+-146 150 -255 32 -55 61 -101 65 -101 8 1 141 225 141 239 0 6 -10 28 -23 49
+-13 20 -40 66 -59 102 -20 36 -44 79 -54 97 -22 38 -34 29 111 98 66 31 136
+65 156 75 42 21 32 29 119 -90 96 -131 90 -128 311 -145 48 -4 91 -10 97 -14
+10 -6 57 -160 82 -269 15 -64 3 -58 148 -78 l122 -16 107 70 108 70 45 113
+c46 115 51 155 23 191 -5 7 -42 56 -81 108 -40 52 -90 118 -112 145 -22 28
+-56 77 -76 111 -89 152 -100 161 -312 252 -147 63 -208 85 -264 92 -83 11
+-128 12 -128 5z"/>
+          <path d="M2302 2154 l-93 -46 37 -66 c21 -37 46 -83 57 -102 89 -162 140 -238
+160 -244 30 -8 477 -8 477 0 0 22 -65 251 -74 260 -9 10 -206 34 -271 34 -21
+0 -63 44 -134 138 -30 40 -57 72 -60 71 -4 0 -48 -21 -99 -45z"/>
         </g>
       </svg>
       <span class="wordmark-text">{meta.name}</span>
@@ -55,11 +92,14 @@ const links = [
     <nav class="site-nav" aria-label="Primary">
       <ul class="nav-list">
         {
-          links.map((link) => (
-            <li>
-              <a href={link.href}>{link.label}</a>
-            </li>
-          ))
+          links.map((link) => {
+            const isCurrent = pathname === link.href || (link.href !== url('/') && pathname.startsWith(link.href));
+            return (
+              <li>
+                <a href={link.href} aria-current={isCurrent ? 'page' : undefined}>{link.label}</a>
+              </li>
+            );
+          })
         }
       </ul>
     </nav>
@@ -71,18 +111,21 @@ const links = [
 
     <details class="mobile-menu">
       <summary class="menu-toggle" aria-label="Menu">
-        <span></span>
-        <span></span>
+        <span aria-hidden="true"></span>
+        <span aria-hidden="true"></span>
       </summary>
       <div class="mobile-menu-panel">
         <div class="wrapper">
           <ul class="mobile-nav-list">
             {
-              links.map((link) => (
-                <li>
-                  <a href={link.href}>{link.label}</a>
-                </li>
-              ))
+              links.map((link) => {
+                const isCurrent = pathname === link.href || (link.href !== url('/') && pathname.startsWith(link.href));
+                return (
+                  <li>
+                    <a href={link.href} aria-current={isCurrent ? 'page' : undefined}>{link.label}</a>
+                  </li>
+                );
+              })
             }
           </ul>
           <div class="mobile-actions">
@@ -135,8 +178,16 @@ const links = [
     color: var(--text);
   }
 
+  .wordmark:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+    border-radius: var(--radius-sm);
+  }
+
   .wordmark-icon {
     flex: none;
+    width: 24px;
+    height: 24px;
     color: var(--text-secondary);
   }
 
@@ -168,6 +219,15 @@ const links = [
     background: var(--paper-sunk);
   }
 
+  .nav-list a[aria-current="page"] {
+    color: var(--text);
+    background: var(--paper-sunk);
+  }
+
+  .nav-list a:active {
+    background: var(--border-subtle);
+  }
+
   .header-actions {
     display: flex;
     align-items: center;
@@ -193,6 +253,22 @@ const links = [
     background: transparent;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+
+  .menu-toggle:hover {
+    background: var(--paper-sunk);
+  }
+
+  .menu-toggle:active {
+    background: var(--border-subtle);
+  }
+
+  .menu-toggle:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
   }
 
   .menu-toggle span {
@@ -237,13 +313,22 @@ const links = [
   .mobile-nav-list a {
     display: block;
     padding: var(--space-sm) 0;
-    color: var(--text);
+    color: var(--text-secondary);
     font-family: var(--font-body);
     font-size: var(--text-base);
     text-decoration: none;
     text-transform: uppercase;
     letter-spacing: 0.02em;
     border-bottom: 1px solid var(--border);
+  }
+
+  .mobile-nav-list a:hover,
+  .mobile-nav-list a[aria-current="page"] {
+    color: var(--text);
+  }
+
+  .mobile-nav-list a:active {
+    color: var(--accent);
   }
 
   .mobile-actions {
@@ -260,5 +345,31 @@ const links = [
     .mobile-menu {
       display: block;
     }
+
+    .menu-toggle {
+      display: flex;
+    }
   }
 </style>
+
+<script>
+  (function () {
+    const details = document.querySelector('.mobile-menu');
+    const summary = details?.querySelector('.menu-toggle');
+    if (!details || !summary) return;
+
+    details.querySelectorAll('a').forEach((link) => {
+      link.addEventListener('click', () => {
+        details.open = false;
+      });
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && details.open) {
+        e.preventDefault();
+        details.open = false;
+        (summary as HTMLElement).focus();
+      }
+    });
+  })();
+</script>
