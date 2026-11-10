@@ -675,7 +675,7 @@ jobs:
           grep -q "on port $port: b'ping-agent'" agent-net-server.log
           # The deterministic HTTP call: the request line, the Host header and
           # the path are the ones of this run, and the answer arrived whole.
-          grep -qE "^AGENT selftest tool=http_get args=\{\"query\":\"http://10\.0\.2\.2:$http_port/agent\"\} result=status=200 reason=OK bytes=22 headers=content-type:text/plain,content-length:22 content=rabbit-agent http ok" agent-net-boot.log
+          grep -qE "^AGENT selftest tool=http_get args=\{\"query\":\"http://10\.0\.2\.2:$http_port/agent\"\} result=status=200 reason=OK bytes=21 headers=content-type:text/plain,content-length:21 content=rabbit-agent http ok" agent-net-boot.log
           # The server of the host read the request the client wrote: the
           # method, the path, the Host header and the agent's own header.
           grep -q "http got" agent-net-server.log
