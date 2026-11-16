@@ -118,8 +118,7 @@ const grouped = benchmarks.reduce<Record<string, typeof benchmarks>>((acc, b) =>
   }
 
   .table-wrap:focus-visible {
-    outline: none;
-    box-shadow: inset 0 0 0 2px var(--ring);
+    outline-offset: -2px;
   }
 
   table {

@@ -38,6 +38,8 @@ function extractVars(block) {
 const lightBlock = css.match(/:root\s*\{[\s\S]*?\n\}/)[0];
 const darkBlock = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?\n\s*\}\s*\n\}/)[0];
 
+const onInkBlock = css.match(/\.on-ink\s*\{[\s\S]*?\n\}/)[0];
+const onInk = { ...extractVars(lightBlock), ...extractVars(onInkBlock) };
 const light = extractVars(lightBlock);
 const dark = extractVars(darkBlock);
 
@@ -66,6 +68,7 @@ let fail = false;
 for (const theme of [
   { name: 'light', vars: light },
   { name: 'dark', vars: dark },
+  { name: 'on-ink', vars: onInk },
 ]) {
   console.log(`\n${theme.name.toUpperCase()} THEME`);
   for (const [fg, bg] of combos) {

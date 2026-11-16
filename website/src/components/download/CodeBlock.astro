@@ -101,10 +101,6 @@ const buttonId = `copy-${Math.random().toString(36).slice(2, 9)}`;
     border-color: var(--accent);
   }
 
-  .copy-button:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
-  }
 
   pre {
     padding: var(--space-md);
@@ -118,8 +114,7 @@ const buttonId = `copy-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   pre:focus-visible {
-    outline: none;
-    box-shadow: inset 0 0 0 2px var(--ring);
+    outline-offset: -2px;
   }
 
   code {
