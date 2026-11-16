@@ -1,6 +1,7 @@
 ---
 import { meta } from '../data/project';
 import { url } from '../lib/paths';
+import EarsMark from './EarsMark.astro';
 
 const bootLog = [
   { ts: '0.000', msg: 'Rabbit: boot OK' },
@@ -13,25 +14,35 @@ const bootLog = [
   { ts: '12.9s', msg: 'AGENT loop complete' },
 ];
 
-const headlineNumber = '376';
-const headlineUnit = 'ns';
 ---
 
-<section class="hero" aria-labelledby="hero-title">
+<section class="hero on-ink" aria-labelledby="hero-title">
+  <EarsMark class="hero-ears" />
   <div class="hero-content wrapper">
     <div class="hero-main">
-      <p class="hero-eyebrow">System call latency</p>
-      <h1 id="hero-title" class="hero-headline">
-        {headlineNumber}<span class="hero-unit">{headlineUnit}</span>
-      </h1>
-      <div class="hero-support">
-        <p class="hero-compare">Rabbit</p>
-        <p class="hero-compare-secondary">Linux 7.3.0: 29.3 µs · Linux, mitigations off: 1.04 µs</p>
+      <h1 id="hero-title" class="hero-word rv" style="--i: 0">Rabbit</h1>
+      <p class="hero-tagline rv" style="--i: 1">{meta.tagline}</p>
+
+      <div class="hero-figures rv" style="--i: 2">
+        <p class="hero-eyebrow">System call latency</p>
+        <dl class="figure-row">
+          <div class="figure">
+            <dt>Rabbit</dt>
+            <dd>376<span class="figure-unit"> ns</span></dd>
+          </div>
+          <div class="figure">
+            <dt>Linux 7.3.0</dt>
+            <dd>29.3<span class="figure-unit"> µs</span></dd>
+          </div>
+          <div class="figure">
+            <dt>Linux, mitigations off</dt>
+            <dd>1.04<span class="figure-unit"> µs</span></dd>
+          </div>
+        </dl>
+        <p class="hero-context">QEMU TCG, an emulator</p>
       </div>
-      <p class="hero-context">
-        {meta.description}
-      </p>
-      <div class="hero-actions">
+
+      <div class="hero-actions rv" style="--i: 3">
         <a class="button button-primary" href={url('/benchmarks')}>See the measurements</a>
         <a class="button button-secondary" href={meta.repo}>Source on GitHub</a>
       </div>
@@ -89,21 +100,77 @@ const headlineUnit = 'ns';
 
 <style>
   .hero {
+    position: relative;
     display: grid;
     grid-template-rows: 1fr auto;
     min-height: 100svh;
-    padding-block: var(--space-3xl) 0;
+    padding-block: var(--space-2xl) 0;
     overflow: hidden;
+    isolation: isolate;
+  }
+
+  /* The ears: white outline, cropped by the top edge of the viewport */
+  :global(.hero-ears) {
+    position: absolute;
+    z-index: -1;
+    inset-block-start: 0;
+    inset-inline-start: 74%;
+    height: 100vh;
+    width: 100vh;
+    max-width: none;
+    transform: translate(-50%, -30%);
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.5px;
+    pointer-events: none;
+  }
+
+  :global(.hero-ears path) {
+    vector-effect: non-scaling-stroke;
+  }
+
+  @media (max-width: 760px) {
+    :global(.hero-ears) {
+      inset-inline-start: 50%;
+      height: 60vh;
+      width: 60vh;
+      transform: translate(-50%, -33%);
+    }
   }
 
   .hero-content {
     display: grid;
     gap: var(--space-xl);
-    align-items: start;
+    align-items: end;
   }
 
   .hero-main {
     max-width: var(--measure);
+  }
+
+  .hero-word {
+    font-family: var(--font-display);
+    font-size: clamp(3rem, 24vw, 14rem);
+    line-height: 0.9;
+    font-weight: 800;
+    letter-spacing: -0.06em;
+    color: var(--ink);
+    margin-block-end: var(--space-md);
+    margin-inline-start: -0.04em;
+  }
+
+  .hero-tagline {
+    max-width: 40ch;
+    margin-block-end: var(--space-xl);
+    font-size: var(--text-lg);
+    line-height: var(--leading-snug);
+    color: var(--ink-secondary);
+  }
+
+  .hero-figures {
+    margin-block-end: var(--space-lg);
+    padding-block-start: var(--space);
+    border-top: 1px solid var(--hairline);
   }
 
   .hero-eyebrow {
@@ -116,54 +183,44 @@ const headlineUnit = 'ns';
     margin-block-end: var(--space-sm);
   }
 
-  .hero-headline {
-    font-family: var(--font-display);
-    font-size: var(--text-2xl);
-    line-height: var(--leading-tight);
+  .figure-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space) var(--space-xl);
+    margin: 0;
+  }
+
+  .figure dt {
+    font-size: var(--text-sm);
+    color: var(--muted);
+  }
+
+  .figure dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    line-height: var(--leading-snug);
     font-weight: var(--font-medium);
     letter-spacing: -0.04em;
     color: var(--ink);
-    margin-block-end: var(--space);
+    font-variant-numeric: tabular-nums;
   }
 
-  @media (min-width: 760px) {
-    .hero-headline {
-      font-size: var(--text-3xl);
-    }
-  }
-
-  .hero-unit {
-    font-size: 0.35em;
-    color: var(--muted);
-    margin-inline-start: 0.15em;
-    vertical-align: super;
-  }
-
-  .hero-support {
-    margin-block-end: var(--space-md);
-    padding-inline-start: var(--space);
-    border-inline-start: 2px solid var(--accent);
-  }
-
-  .hero-compare {
-    font-family: var(--font-body);
-    font-size: var(--text-md);
-    font-weight: var(--font-medium);
-    color: var(--ink);
-  }
-
-  .hero-compare-secondary {
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
+  /* Rabbit in full ink, the Linux references one step down */
+  .figure + .figure dd {
     color: var(--ink-secondary);
   }
 
+  .figure-unit {
+    font-size: 0.4em;
+    letter-spacing: 0;
+    color: var(--muted);
+  }
+
   .hero-context {
-    max-width: 60ch;
-    margin-block-end: var(--space-lg);
-    font-family: var(--font-body);
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
+    margin-block-start: var(--space-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
     color: var(--ink-secondary);
   }
 
@@ -171,6 +228,29 @@ const headlineUnit = 'ns';
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-sm);
+  }
+
+  /* One-time load reveal: transform and opacity only */
+  .rv {
+    animation: rise 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--i) * 90ms);
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rv {
+      animation: none;
+    }
   }
 
   .hero-meta {
@@ -206,10 +286,6 @@ const headlineUnit = 'ns';
   }
 
   @media (max-width: 760px) {
-    .hero-headline {
-      font-size: var(--text-2xl);
-      letter-spacing: -0.03em;
-    }
     .hero-meta {
       grid-template-columns: 1fr 1fr;
       gap: var(--space-sm);
@@ -222,7 +298,7 @@ const headlineUnit = 'ns';
     border: 1px solid var(--hairline);
     border-bottom: 0;
     border-radius: var(--radius-card) var(--radius-card) 0 0;
-    background: var(--surface-2);
+    background: var(--surface);
     padding: var(--space-md);
   }
 
@@ -239,7 +315,7 @@ const headlineUnit = 'ns';
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--ink);
   }
 
   .terminal-title {
@@ -282,7 +358,7 @@ const headlineUnit = 'ns';
     display: inline-block;
     width: 0.6em;
     height: 1.2em;
-    background: var(--accent);
+    background: var(--ink);
     margin-block-start: var(--space-xs);
     animation: blink 1s step-end infinite;
   }
