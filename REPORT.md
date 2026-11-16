@@ -83,10 +83,11 @@ The rules were written before the first number was measured, in
 - The reference image is Linux 7.3.0 built with `CONFIG_PVH=y`, so that both
   kernels are started by the same handover with the same command line.
 
-**Environment**: QEMU 11.1.2, TCG, one processor, 512 MiB of guest memory for
-the operation benchmarks and 1024 MiB for the inference ones, on an arm64
-macOS host. There is no hardware acceleration available on this host, which
-is the most important limitation of everything below.
+**Environment**: TCG, one processor, 512 MiB of guest memory for the operation
+benchmarks and 1024 MiB for the inference ones. The primary host runs QEMU
+8.2.2 on an x86_64 server and the cross check runs QEMU 11.1.2 on an arm64
+macOS laptop (both are described below). Neither host has hardware
+acceleration, which is the most important limitation of everything below.
 
 ## Results: the cost of an operation
 
