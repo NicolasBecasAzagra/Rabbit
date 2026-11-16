@@ -187,7 +187,7 @@ A cargo workspace with one crate per concern:
 | `rabbit-initramfs` | Parser for uncompressed `cpio` archives in the `newc` format. Pure, host-testable, no `unsafe`. |
 | `rabbit-bench` | The benchmark workload binary: a static Linux program that runs on both kernels. |
 | `rabbit-infer` | The inference runtime: the reader of the weights, the decoder, the merge encoder, the grammar of a tool call and the chat prompt. |
-| `rabbit-agent` | The agent loop: model, tool call, tool result, and the five tools it can call. |
+| `rabbit-agent` | The agent loop: model, tool call, tool result, and the seven tools it can call. |
 
 Crates are added when the milestone that needs them arrives, not before. A
 crate with one function does not exist yet.

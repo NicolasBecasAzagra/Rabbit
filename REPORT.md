@@ -53,9 +53,11 @@ publish the losses as carefully as the wins. Three findings came out of it:
   trained with, and a byte level grammar that forces the answer to be a well
   formed tool call. No dependency outside the Rust standard library.
 - **An agent** (`rabbit-agent`): a loop of model, tool call, tool result and
-  model, over five tools (`read_file`, `list_dir`, `write_file`, `compute` and
-  `done`). The model chooses the tool and the arguments, the kernel decides
-  how much of that costs.
+  model, over seven tools (`read_file`, `list_dir`, `write_file`, `compute`,
+  `net_send`, `http_get` and `done`). The model chooses the tool and the
+  arguments, the kernel decides how much of that costs. `list_dir` and
+  `write_file` are declared but not served by Rabbit yet: the kernel answers
+  `getdents64` with `ENOSYS` and the initramfs is read only (issue 15).
 - **A rig** (`bench/`): boots a kernel image with a fixed configuration,
   hands it the same initramfs, and records every sample, including the ones
   that failed. It rebuilds the kernel, the runtime and the initramfs on every
@@ -278,9 +280,11 @@ the same runtime, with the same checkpoint and with the same binary as the
 reference kernel.
 
 The checkpoint is `HuggingFaceTB/SmolLM2-135M-Instruct`, revision
-`12fd25f77366fa6b3b4b768ec3050bf629380bac`, Apache-2.0. The agent has five
-tools (`read_file`, `list_dir`, `write_file`, `compute` and `done`) and the
-model chooses which one to call and with which arguments. The grammar of the
+`12fd25f77366fa6b3b4b768ec3050bf629380bac`, Apache-2.0. The agent has seven
+tools (`read_file`, `list_dir`, `write_file`, `compute`, `net_send`, `http_get`
+and `done`), of which `list_dir` and `write_file` wait for a file system the
+guest can write (issue 15). The model chooses which one to call and with which
+arguments. The grammar of the
 call is not a prompt instruction but an automaton over bytes: the answer of the
 model cannot be anything but a well formed call of a declared tool, carrying
 the keys that tool needs, each of them once, with the type the tool expects.
