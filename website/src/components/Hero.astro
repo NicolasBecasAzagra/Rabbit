@@ -3,15 +3,18 @@ import { meta, benchmarkContext } from '../data/project';
 import { url } from '../lib/paths';
 import EarsMark from './EarsMark.astro';
 
+// Copied from the real serial log of docs/BOOT.md, in its order.
 const bootLog = [
-  { ts: '0.000', msg: 'Rabbit: boot OK' },
-  { ts: '0.012', msg: 'MM DIRECTMAP OK' },
-  { ts: '0.018', msg: 'HEAP OK 10000' },
-  { ts: '0.041', msg: 'USER OK exit=0' },
-  { ts: '0.102', msg: 'SCHED OK' },
-  { ts: '1.254', msg: 'TICKS 100' },
-  { ts: '2.008', msg: 'INFER OK tokens=42' },
-  { ts: '12.9s', msg: 'AGENT loop complete' },
+  'Rabbit: x86_64 kernel, M4b (SMP)',
+  'MM DIRECTMAP OK',
+  'Hello from Rabbit userland',
+  'USER OK exit=0',
+  'MEM OK',
+  'HEAP OK 10000',
+  'SCHED OK',
+  'Rabbit: exception survived',
+  'TICKS 100',
+  'Rabbit: boot OK',
 ];
 
 ---
@@ -60,11 +63,9 @@ const bootLog = [
       <ol class="terminal-lines" aria-label="Boot log">
         {
           bootLog.map((line, index) => {
-            const chars = `[${line.ts}] ${line.msg}`.length;
             return (
-              <li class="terminal-line" style={`--chars: ${chars}; --delay: ${index};`}>
-                <span class="terminal-ts">[{line.ts}]</span>
-                <span class="terminal-msg">{line.msg}</span>
+              <li class="terminal-line" style={`--chars: ${line.length}; --delay: ${index};`}>
+                <span class="terminal-msg">{line}</span>
               </li>
             );
           })
@@ -379,11 +380,6 @@ const bootLog = [
     white-space: nowrap;
   }
 
-  .terminal-ts {
-    color: var(--muted);
-    flex: none;
-  }
-
   .terminal-msg {
     color: var(--ink-secondary);
   }
@@ -411,7 +407,7 @@ const bootLog = [
   .terminal-cursor {
     opacity: 0;
     animation: type 0.1ms forwards, blink 1s step-end infinite;
-    animation-delay: calc(8 * 600ms), calc(8 * 600ms + 100ms);
+    animation-delay: calc(10 * 600ms), calc(10 * 600ms + 100ms);
   }
 
   @keyframes type {
