@@ -20,6 +20,9 @@ export const meta = {
   status: 'In development. Not production ready.',
 } as const;
 
+/** Where every figure of the hero was measured; it travels with the number. */
+export const benchmarkContext = 'QEMU TCG, an emulator';
+
 export type Layer = {
   id: string;
   name: string;

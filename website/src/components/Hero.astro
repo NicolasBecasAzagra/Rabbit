@@ -1,5 +1,5 @@
 ---
-import { meta } from '../data/project';
+import { meta, benchmarkContext } from '../data/project';
 import { url } from '../lib/paths';
 import EarsMark from './EarsMark.astro';
 
@@ -17,29 +17,30 @@ const bootLog = [
 ---
 
 <section class="hero on-ink" aria-labelledby="hero-title">
-  <EarsMark class="hero-ears" />
   <div class="hero-content wrapper">
     <div class="hero-main">
-      <h1 id="hero-title" class="hero-word rv" style="--i: 0">Rabbit</h1>
+      <div class="hero-lockup rv" style="--i: 0">
+        <h1 id="hero-title" class="hero-word">Rabbit</h1>
+        <EarsMark class="hero-ears" />
+      </div>
       <p class="hero-tagline rv" style="--i: 1">{meta.tagline}</p>
 
       <div class="hero-figures rv" style="--i: 2">
         <p class="hero-eyebrow">System call latency</p>
         <dl class="figure-row">
           <div class="figure">
-            <dt>Rabbit</dt>
+            <dt>Rabbit<span class="figure-ctx">{benchmarkContext}</span></dt>
             <dd>376<span class="figure-unit"> ns</span></dd>
           </div>
           <div class="figure">
-            <dt>Linux 7.3.0</dt>
+            <dt>Linux 7.3.0<span class="figure-ctx">{benchmarkContext}</span></dt>
             <dd>29.3<span class="figure-unit"> µs</span></dd>
           </div>
           <div class="figure">
-            <dt>Linux, mitigations off</dt>
+            <dt>Linux, mitigations off<span class="figure-ctx">{benchmarkContext}</span></dt>
             <dd>1.04<span class="figure-unit"> µs</span></dd>
           </div>
         </dl>
-        <p class="hero-context">QEMU TCG, an emulator</p>
       </div>
 
       <div class="hero-actions rv" style="--i: 3">
@@ -104,24 +105,32 @@ const bootLog = [
     display: grid;
     grid-template-rows: 1fr auto;
     min-height: 100svh;
-    padding-block: var(--space-2xl) 0;
+    padding-block: 26vh 0;
     overflow: hidden;
     isolation: isolate;
   }
 
-  /* The ears: white outline, cropped by the top edge of the viewport */
+  /* The word and the ears are one mark. Sizes of the ears are in em, so
+     they follow the word at every width. */
+  .hero-lockup {
+    position: relative;
+    width: fit-content;
+    font-size: clamp(3rem, 28vw, 14rem);
+    margin-block-end: var(--space-md);
+  }
+
   :global(.hero-ears) {
     position: absolute;
     z-index: -1;
-    inset-block-start: 0;
-    inset-inline-start: 74%;
-    height: 100vh;
-    width: 100vh;
+    width: 3.2em;
+    height: 3.2em;
     max-width: none;
-    transform: translate(-50%, -30%);
+    /* Above the word, right aligned, cropped by the top edge of the hero */
+    inset-inline-end: -0.9em;
+    inset-block-end: calc(100% - 0.12em);
     fill: none;
     stroke: var(--ink);
-    stroke-width: 1.5px;
+    stroke-width: 2px;
     pointer-events: none;
   }
 
@@ -129,12 +138,17 @@ const bootLog = [
     vector-effect: non-scaling-stroke;
   }
 
-  @media (max-width: 760px) {
+  @media (min-width: 1100px) {
+    .hero {
+      padding-block-start: var(--space-2xl);
+    }
+    /* Beside the word, standing on its baseline */
     :global(.hero-ears) {
-      inset-inline-start: 50%;
-      height: 60vh;
-      width: 60vh;
-      transform: translate(-50%, -33%);
+      inset-inline-end: auto;
+      inset-block-end: auto;
+      inset-inline-start: calc(100% - 0.75em);
+      inset-block-start: -2.18em;
+      stroke-width: 3px;
     }
   }
 
@@ -150,12 +164,11 @@ const bootLog = [
 
   .hero-word {
     font-family: var(--font-display);
-    font-size: clamp(3rem, 24vw, 14rem);
+    font-size: 1em;
     line-height: 0.9;
     font-weight: 800;
     letter-spacing: -0.06em;
     color: var(--ink);
-    margin-block-end: var(--space-md);
     margin-inline-start: -0.04em;
   }
 
@@ -217,11 +230,11 @@ const bootLog = [
     color: var(--muted);
   }
 
-  .hero-context {
-    margin-block-start: var(--space-sm);
+  .figure-ctx {
+    display: block;
     font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
+    font-size: var(--text-xs);
+    color: rgba(255, 255, 255, 0.72);
   }
 
   .hero-actions {
