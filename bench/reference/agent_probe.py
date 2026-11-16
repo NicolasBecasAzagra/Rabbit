@@ -163,13 +163,89 @@ def write_args(model, tokenizer, prompt: str, tool: str, end_ids: list) -> str:
         return "{}"
 
 
+# The variants of the prompt under test: text appended to the system block, and
+# whether the result of a tool is framed with a hint to finish.
+EXAMPLE = (
+    ' Example: for the task "Read /a" you call {"tool":"read_file","args":'
+    '{"path":"/a"}}, the result is "bytes=2 content=hi", and then you call '
+    '{"tool":"done","args":{"text":"hi"}}.'
+)
+VARIANTS = {
+    "none": ("", False),
+    "system": (
+        " When a tool has returned what the task asks for, call done with it."
+        " Never call the same tool twice.",
+        False,
+    ),
+    "frame": ("", True),
+    "both": (
+        " When a tool has returned what the task asks for, call done with it."
+        " Never call the same tool twice.",
+        True,
+    ),
+    "example": (EXAMPLE, False),
+    "example-frame": (EXAMPLE, True),
+}
+
+
+def run_variant(model, tokenizer, system, task, tools, end_ids, frame):
+    """Run the loop of the agent once and say how it ended."""
+    history = []
+    previous = None
+    steps = []
+    outcome = "ran out of steps"
+
+    for step in range(1, MAX_STEPS + 1):
+        prompt = tool_prompt(system, task, tools, history)
+        tool, scores = choose_tool(model, tokenizer, prompt, tools)
+        call_args = write_args(model, tokenizer, prompt, tool, end_ids)
+        written = f'{PREFIX}{tool}","args":{call_args}}}'
+        ranked = sorted(scores, key=scores.get, reverse=True)
+        gap = scores[ranked[0]] - scores["done"]
+        steps.append(
+            {"step": step, "tool": tool, "args": call_args, "top3": ranked[:3],
+             "done_gap": round(gap, 2)}
+        )
+        print(
+            f"  step {step}: {tool} {call_args[:80]}  "
+            f"(top3: {', '.join(ranked[:3])}; done is {gap:.2f} nats behind)"
+        )
+
+        request = f"{tool} {call_args}"
+        if request == previous:
+            outcome = "repeated the call"
+            break
+        previous = request
+        if tool == "done":
+            outcome = "done"
+            break
+        result = FIXTURES.get(tool, "error unknown tool")
+        if frame:
+            result = (
+                f"Result of {tool}: {result}\n"
+                "If this answers the task, call done with the answer."
+            )
+        history.append(("assistant", written))
+        history.append(("user", result))
+    return outcome, steps
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--quant", type=int, default=0, choices=(0, 4, 8))
     parser.add_argument("--endpoint", default="http://10.0.2.2:8080/")
+    parser.add_argument(
+        "--variants",
+        default="none",
+        help="comma separated: " + ", ".join(VARIANTS),
+    )
     parser.add_argument("--out", default="")
     args = parser.parse_args()
+    names = args.variants.split(",")
+    for name in names:
+        if name not in VARIANTS:
+            sys.exit(f"unknown variant {name}")
 
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -189,41 +265,19 @@ def main() -> int:
         print(f"quantized {rounded} linear layers to {args.quant} bits")
 
     end_ids = [tokenizer.convert_tokens_to_ids(IM_END), tokenizer.eos_token_id]
-    history = []
-    previous = None
-    steps = []
-    outcome = "ran out of steps"
+    runs = []
+    for name in names:
+        system_text, frame = VARIANTS[name]
+        outcome, steps = run_variant(
+            model, tokenizer, system + system_text, task, tools, end_ids, frame
+        )
+        print(f"variant {name}: {outcome}")
+        runs.append({"variant": name, "outcome": outcome, "steps": steps})
 
-    for step in range(1, MAX_STEPS + 1):
-        prompt = tool_prompt(system, task, tools, history)
-        tool, scores = choose_tool(model, tokenizer, prompt, tools)
-        call_args = write_args(model, tokenizer, prompt, tool, end_ids)
-        written = f'{PREFIX}{tool}","args":{call_args}}}'
-        ranked = sorted(scores, key=scores.get, reverse=True)[:3]
-        steps.append({"step": step, "tool": tool, "args": call_args, "top3": ranked})
-        print(f"step {step}: {tool} {call_args[:120]}  (top3: {', '.join(ranked)})")
-
-        request = f"{tool} {call_args}"
-        if request == previous:
-            outcome = "repeated the call"
-            break
-        previous = request
-        if tool == "done":
-            outcome = "done"
-            break
-        history.append(("assistant", written))
-        history.append(("user", FIXTURES.get(tool, "error unknown tool")))
-
-    print(f"outcome: {outcome}")
-    report = {
-        "model_dir": args.model_dir,
-        "quant": args.quant,
-        "outcome": outcome,
-        "steps": steps,
-    }
     if args.out:
+        report = {"model_dir": args.model_dir, "quant": args.quant, "runs": runs}
         Path(args.out).write_text(json.dumps(report, indent=2) + "\n")
-    return 0 if outcome == "done" else 1
+    return 0 if all(run["outcome"] == "done" for run in runs) else 1
 
 
 if __name__ == "__main__":
