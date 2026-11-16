@@ -75,8 +75,8 @@ export const layers: Layer[] = [
 
 export const agentTools = [
   { name: 'read_file', what: 'Read a file of the machine.' },
-  { name: 'list_dir', what: 'List a directory.' },
-  { name: 'write_file', what: 'Write a file.' },
+  { name: 'list_dir', what: 'List a directory. Waits for getdents64 in the kernel (issue 15).' },
+  { name: 'write_file', what: 'Write a file. Waits for a writable file system (issue 15).' },
   { name: 'compute', what: 'Run a computation.' },
   { name: 'net_send', what: 'Send a datagram over UDP.' },
   { name: 'http_get', what: 'Call an API over HTTP.' },
@@ -283,7 +283,7 @@ export const milestones: Milestone[] = [
     id: 'M11',
     name: 'A quantized checkpoint',
     delivers: 'A quantized model fits in the memory of the machine and keeps its answer.',
-    state: 'next',
+    state: 'done',
     exit: 'A quantized model fits in the memory of the machine and keeps its answer.',
     verification: 'The runtime against the reference, with the digest of the checkpoint.',
   },
@@ -325,27 +325,26 @@ export type NextStep = { title: string; why: string; id?: string };
 
 export const nextSteps: NextStep[] = [
   {
-    id: 'M13',
-    title: 'TLS',
-    why: 'Almost every API people call today is HTTPS, and an agent that cannot read a certificate cannot use them.',
+    title: 'A host with hardware acceleration',
+    why: 'The only thing missing for the timings to describe a machine instead of an emulator, and the first test of every ratio.',
+  },
+  {
+    title: 'A checkpoint that closes the conversation',
+    why: 'The model of 135 million parameters reads a file and then asks for it again. The grammar is not the problem: the checkpoint is.',
   },
   {
     id: 'E8',
-    title: 'The tools an agent of today expects',
-    why: 'Files of the machine and commands: the agent of today reads the files of the person and runs things.',
+    title: 'The tools that need a file system',
+    why: 'write_file and list_dir need a writable file system and the getdents64 call, which the kernel does not serve yet.',
   },
   {
     title: 'The model context protocol',
     why: 'The way the clients of today talk to a model and to its tools. An agent that speaks it works with the clients people already have.',
   },
   {
-    id: 'M11',
-    title: 'A checkpoint that closes the conversation',
-    why: 'The model of 135 million parameters reads a file and then asks for it again. The grammar is not the problem: the checkpoint is.',
-  },
-  {
-    title: 'A host with hardware acceleration',
-    why: 'The only thing missing for the timings to describe a machine instead of an emulator.',
+    id: 'M13',
+    title: 'TLS',
+    why: 'Almost every API people call today is HTTPS, and an agent that cannot read a certificate cannot use them.',
   },
   {
     title: 'A scheduler with a better tail',
