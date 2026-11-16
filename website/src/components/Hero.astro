@@ -49,10 +49,11 @@ const bootLog = [
         </dl>
       </div>
 
-      <div class="hero-actions rv" style="--i: 3">
-        <a class="button button-primary" href={url('/benchmarks')}>See the measurements</a>
-        <a class="button button-secondary" href={meta.repo}>Source on GitHub</a>
-      </div>
+    </div>
+
+    <div class="hero-actions rv" style="--i: 3">
+      <a class="button button-primary" href={url('/benchmarks')}>See the measurements</a>
+      <a class="button button-secondary" href={meta.repo}>Source on GitHub</a>
     </div>
 
     <div class="hero-terminal" data-boot-log>
@@ -107,17 +108,19 @@ const bootLog = [
   .hero {
     position: relative;
     min-height: 100svh;
-    padding-block: 26vh var(--space-xl);
-    overflow: hidden;
+    padding-block: 12vh var(--space-xl);
+    /* The ears bleed off the right edge: clip, never scroll */
+    overflow-x: clip;
+    overflow-y: hidden;
     isolation: isolate;
   }
 
-  /* The word and the ears are one mark. The ears are sized in em, so they
-     follow the word at every width. */
+  /* The word and the ears are one mark. The ears are sized in em on narrow
+     screens and by the viewport on wide ones, so they follow the word. */
   .hero-lockup {
     position: relative;
     width: fit-content;
-    font-size: clamp(3rem, 28vw, 19rem);
+    font-size: clamp(3rem, 28vw, 17rem);
     margin-block-end: var(--space-md);
   }
 
@@ -132,10 +135,11 @@ const bootLog = [
   }
 
   :global(.hero-ears) {
+    --ear-h: 3.2em;
     position: absolute;
     z-index: -1;
-    width: 3.2em;
-    height: 3.2em;
+    width: var(--ear-h);
+    height: var(--ear-h);
     max-width: none;
     /* Narrow: above the word, right aligned, cropped by the top edge */
     inset-inline-end: -0.9em;
@@ -152,46 +156,71 @@ const bootLog = [
 
   @media (min-width: 761px) {
     .hero {
-      padding-block-start: 16vh;
+      padding-block-start: 5vh;
     }
     .hero-lockup {
-      font-size: clamp(3rem, 23vw, 19rem);
+      font-size: clamp(3rem, 23vw, 17rem);
     }
-    /* Wide: standing on the baseline right after the word, tall, cropped */
+    /* Wide: right after the word with a clear gap, as tall as the space
+       allows, cropped by the top edge and bleeding off the right edge. The
+       bottom of the ears sits on the bottom of the word. */
     :global(.hero-ears) {
-      width: 2.7em;
-      height: 2.7em;
+      --ear-h: 3.3em;
       inset-inline-end: auto;
       inset-block-end: auto;
-      inset-inline-start: calc(100% - 0.64em);
-      inset-block-start: -1.66em;
+      inset-inline-start: calc(100% + 0.26em - var(--ear-h) * 0.28125);
+      inset-block-start: calc(0.9em - var(--ear-h) * 0.9375);
       stroke-width: 3px;
+    }
+  }
+
+  @media (min-width: 1183px) {
+    :global(.hero-ears) {
+      --ear-h: clamp(898px, calc(898px + 1.8 * (100vw - 1183px)), 1700px);
     }
   }
 
   .hero-grid {
     display: grid;
-    gap: var(--space-xl);
+    gap: var(--space-lg);
     align-items: start;
+    grid-template-areas: 'main' 'terminal' 'actions';
+  }
+
+  .hero-main {
+    grid-area: main;
+  }
+
+  .hero-terminal {
+    grid-area: terminal;
+  }
+
+  .hero-actions {
+    grid-area: actions;
   }
 
   @media (min-width: 900px) {
     .hero-grid {
-      grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-      gap: var(--space-2xl);
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+      grid-template-areas: 'main terminal' 'actions terminal';
+      column-gap: var(--space-xl);
+      row-gap: 0;
+    }
+    .hero-actions {
+      margin-block-start: 0;
     }
   }
 
   .hero-tagline {
     max-width: 40ch;
-    margin-block-end: var(--space-xl);
-    font-size: var(--text-lg);
+    margin-block-end: var(--space-md);
+    font-size: var(--text-md);
     line-height: var(--leading-snug);
     color: var(--ink-secondary);
   }
 
   .hero-figures {
-    margin-block-end: var(--space-lg);
+    margin-block-end: var(--space-md);
     padding-block-start: var(--space);
     border-top: 1px solid var(--hairline);
   }
@@ -206,17 +235,20 @@ const bootLog = [
     margin-block-end: var(--space);
   }
 
+  /* Narrow and middle: one row per figure, label and context left, number
+     right. From 1200px: three columns. */
   .figure-row {
     display: grid;
-    gap: var(--space-lg) var(--space-md);
     margin: 0;
   }
 
-  @media (min-width: 900px) {
-    .figure-row {
-      grid-template-columns: repeat(3, auto);
-      justify-content: space-between;
-    }
+  .figure {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-sm);
+    padding-block: var(--space-sm);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .figure dt {
@@ -227,7 +259,7 @@ const bootLog = [
   .figure dd {
     margin: 0;
     font-family: var(--font-mono);
-    font-size: 3.5rem;
+    font-size: 2.5rem;
     line-height: 1;
     font-weight: 700;
     letter-spacing: -0.06em;
@@ -242,7 +274,18 @@ const bootLog = [
     }
   }
 
-  @media (min-width: 1100px) {
+  @media (min-width: 1200px) {
+    .figure-row {
+      grid-template-columns: repeat(3, auto);
+      justify-content: space-between;
+      gap: var(--space-md);
+    }
+    .figure {
+      grid-template-columns: none;
+      align-items: start;
+      padding-block: 0;
+      border-bottom: 0;
+    }
     .figure dd {
       font-size: 4.5rem;
     }
@@ -262,7 +305,7 @@ const bootLog = [
 
   .figure-ctx {
     display: block;
-    margin-block: 2px var(--space-sm);
+    margin-block-start: 2px;
     font-family: var(--font-mono);
     font-size: 0.8125rem;
     color: rgba(255, 255, 255, 0.8);
@@ -301,7 +344,7 @@ const bootLog = [
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: var(--space-md);
-    margin-block: var(--space-2xl) 0;
+    margin-block: var(--space-xl) 0;
     padding-block-start: var(--space-lg);
     border-top: 1px solid var(--hairline);
   }
@@ -368,7 +411,7 @@ const bootLog = [
     padding: 0;
     margin: 0;
     font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    font-size: 0.8125rem;
     line-height: var(--code-line-height);
     color: var(--ink-secondary);
   }
