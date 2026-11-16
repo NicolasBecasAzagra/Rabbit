@@ -87,10 +87,10 @@ The QEMU configuration is identical for both kernels:
 -display none -monitor none -no-reboot -serial file:<log>
 ```
 
-One processor and 512 MiB, because the kernel is uniprocessor today. The
-kernel can describe up to 32 GiB of guest memory, so a larger guest is
-possible, but the number of processors is a property of the kernel and not of
-the rig. The CPU model is fixed on purpose: `-cpu host` changes between
+One processor and 512 MiB, because every published dataset uses them. The
+kernel can describe up to 32 GiB of guest memory, and it starts more processors
+since M9, so a larger guest is possible, but a run with more processors is a
+different experiment and is not published. The CPU model is fixed on purpose: `-cpu host` changes between
 machines and invalidates the comparison. Mainline needs `console=ttyS0` so
 that its output reaches the same serial line; Rabbit ignores the command
 line. The initramfs is an uncompressed `cpio` archive, which both kernels

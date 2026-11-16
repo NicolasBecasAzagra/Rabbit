@@ -441,8 +441,9 @@ serial log, so the claims in this document are checked on every push.
   the inference timings to mean something about a machine rather than about
   an emulator.
 - **A scheduler with a better tail, and more than one processor.** A server
-  that batches requests lives on the latency of the tail, and the kernel is
-  still uniprocessor.
+  that batches requests lives on the latency of the tail. The kernel starts
+  more processors since M9, but every dataset published here is one
+  processor.
 - **The same method applied to a real serving stack**, with a model that is
   actually used, rather than one that is served to see what it costs.
 

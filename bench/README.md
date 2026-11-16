@@ -147,9 +147,9 @@ Both kernels always run with the same flags:
 
 - `-cpu Skylake-Client` is fixed. `-cpu host` changes between machines and
   invalidates the comparison.
-- One vCPU and 512 MiB match what the Rabbit scheduler and frame allocator
-  support today, and keep the comparison honest: the kernel is a uniprocessor,
-  so a multi-vCPU mainline run would measure a different machine.
+- One vCPU and 512 MiB are what every published dataset uses. The kernel
+  starts more processors since M9, but no multi-processor dataset is published,
+  and a multi-vCPU mainline run would measure a different machine.
 - `-append "console=ttyS0"` is needed by mainline; Rabbit ignores the command
   line.
 - The initramfs is an uncompressed `cpio` `newc` archive. Mainline accepts it
