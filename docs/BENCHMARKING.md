@@ -396,8 +396,9 @@ At most two narrow claims, each with the losing configuration also published:
 
 ## Claims that are not made
 
-No throughput claims about real applications, no networking claims, no
-security claims ("more secure", "safer"), no "production ready", and no
+No throughput claims about real applications, no claims about the throughput
+of the network (the `net` row is the round trip of one datagram on an emulated
+device), no security claims ("more secure", "safer"), no "production ready", and no
 comparison where one side runs features the other side does not have.
 
 ## Published artifacts
