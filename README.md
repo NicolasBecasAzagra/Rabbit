@@ -229,7 +229,11 @@ rabbit-elf/        the ELF64 reader
 rabbit-initramfs/  the reader of the cpio archive of the initramfs
 rabbit-kernel/     the no_std kernel binary
 rabbit-userland/   the test program that runs unmodified in ring 3
+rabbit-net/        Ethernet, ARP, IPv4, UDP and TCP, pure and tested on the host
+rabbit-http/       the HTTP/1.1 messages of the client of the agent
 rabbit-bench/      the workload that measures the kernel
+rabbit-netclient/  the datagram round trip client, the same binary on both kernels
+rabbit-netstream/  the stream round trip client, the same binary on both kernels
 rabbit-infer/      the inference runtime, the grammar, the merge encoder
 rabbit-agent/      the agent loop: model, tool call, tool result
 bench/             the rig, the workloads, the reference build, the datasets
