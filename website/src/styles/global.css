@@ -1,4 +1,4 @@
-/* Rabbit visual system — white canvas, near-black ink, one emerald accent */
+/* Rabbit visual system: strictly black and white, no accent colour */
 /* Inter for prose; JetBrains Mono for code, data and technical labels only. */
 
 @font-face {
@@ -46,28 +46,45 @@
 }
 
 :root {
-  /* Accent: emerald */
-  --accent: #0E7E4E;
-  --accent-hover: #0B6B41;
-  --accent-soft: #E7F3EC;
-  --ring: #30BA79;
+  /* Raw palette: strictly black and white, nothing else */
+  --black: #000000;
+  --white: #FFFFFF;
+  --ink-2: #0A0A0A;
+  --g900: #171717;
+  --g700: #404040;
+  --g500: #6B6B6B;
+  --g400: #8F8F8F;
+  --g200: #E5E5E5;
+  --g100: #F2F2F2;
+
+  /* Semantic pair on white: --ink is text, --paper is the canvas */
+  --ink: #000000;
+  --paper: #FFFFFF;
+  --canvas: #FFFFFF;
+  --surface: #F2F2F2;
+  --surface-2: #F2F2F2;
+  --ink-secondary: #404040;
+  --muted: #6B6B6B;
+  --hairline: rgba(0, 0, 0, 0.14);
+  --rule: rgba(0, 0, 0, 0.14);
+  --border-subtle: rgba(0, 0, 0, 0.07);
+  --ink-inverse: #FFFFFF;
+
+  /* No accent colour: the old accent names alias to ink */
+  --accent: #000000;
+  --accent-hover: #404040;
+  --accent-soft: #F2F2F2;
+  --ring: #000000;
   --on-accent: #FFFFFF;
 
-  /* Light canvas */
-  --canvas: #FFFFFF;
-  --surface: #FAFAFA;
-  --surface-2: #F5F5F4;
-  --ink: #0A0A0A;
-  --ink-secondary: #525252;
-  --muted: #757575;
-  --hairline: rgba(0, 0, 0, 0.09);
-  --rule: rgba(0, 0, 0, 0.14);
+  /* Status without colour: solid = done or measured, hollow = pending,
+     hatch = not measured */
+  --hatch: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 5px);
 
   /* Legacy aliases so existing component styles keep working */
   --bg: var(--canvas);
   --bg-elevated: var(--surface);
   --bg-sunk: var(--surface-2);
-  --paper: var(--canvas);
   --paper-elevated: var(--surface);
   --paper-sunk: var(--surface-2);
   --surface-glass: var(--surface);
@@ -77,13 +94,11 @@
   --text-inverse: var(--ink-inverse);
   --border: var(--hairline);
   --border-strong: var(--rule);
-  --border-subtle: rgba(0, 0, 0, 0.05);
-  --ink-inverse: #FFFFFF;
   --ink-tertiary: var(--muted);
   --accent-on-dark: var(--accent);
   --accent-on-dark-hover: var(--accent-hover);
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow: none;
   --shadow-float: 0 24px 48px rgba(0, 0, 0, 0.10);
 
   --radius-sm: 6px;
@@ -139,43 +154,48 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #22C77E;
-    --accent-hover: #3AD894;
-    --accent-soft: rgba(34, 199, 126, 0.12);
-    --ring: #30BA79;
-    --on-accent: #062014;
-
-    --canvas: #0C0C0C;
-    --surface: #141414;
-    --surface-2: #1A1A1A;
-    --ink: #EDEDED;
-    --ink-secondary: #A3A3A3;
-    --muted: #8A8A8A;
-    --hairline: rgba(255, 255, 255, 0.10);
+    --ink: #FFFFFF;
+    --paper: #000000;
+    --canvas: #000000;
+    --surface: #0A0A0A;
+    --surface-2: #171717;
+    --ink-secondary: #E5E5E5;
+    --muted: #8F8F8F;
+    --hairline: rgba(255, 255, 255, 0.16);
     --rule: rgba(255, 255, 255, 0.16);
-    --border-subtle: rgba(255, 255, 255, 0.05);
-    --ink-inverse: #0A0A0A;
+    --border-subtle: rgba(255, 255, 255, 0.07);
+    --ink-inverse: #000000;
 
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --accent: #FFFFFF;
+    --accent-hover: #E5E5E5;
+    --accent-soft: #171717;
+    --ring: #FFFFFF;
+    --on-accent: #000000;
+
     --shadow-float: 0 24px 48px rgba(0, 0, 0, 0.45);
-
-    --bg: var(--canvas);
-    --bg-elevated: var(--surface);
-    --bg-sunk: var(--surface-2);
-    --paper: var(--canvas);
-    --paper-elevated: var(--surface);
-    --paper-sunk: var(--surface-2);
-    --surface-glass: var(--surface);
-    --text: var(--ink);
-    --text-secondary: var(--ink-secondary);
-    --text-tertiary: var(--muted);
-    --text-inverse: var(--ink-inverse);
-    --border-subtle: rgba(255, 255, 255, 0.05);
-    --ink-inverse: #0A0A0A;
-    --ink-tertiary: var(--muted);
-    --accent-on-dark: var(--accent);
-    --accent-on-dark-hover: var(--accent-hover);
   }
+}
+
+/* Sections forced black whatever the system theme: set the semantic pair to
+   its dark values inside the scope. */
+.on-ink {
+  --ink: #FFFFFF;
+  --paper: #000000;
+  --canvas: #000000;
+  --surface: #0A0A0A;
+  --surface-2: #171717;
+  --ink-secondary: #E5E5E5;
+  --muted: #8F8F8F;
+  --hairline: rgba(255, 255, 255, 0.16);
+  --rule: rgba(255, 255, 255, 0.16);
+  --ink-inverse: #000000;
+  --accent: #FFFFFF;
+  --accent-hover: #E5E5E5;
+  --ring: #FFFFFF;
+  --bg: #000000;
+  background: #000000;
+  color: #FFFFFF;
+  color-scheme: dark;
 }
 
 * {
@@ -234,7 +254,7 @@ video {
 }
 
 a {
-  color: var(--ink-secondary);
+  color: var(--ink);
   text-decoration: underline;
   text-underline-offset: 0.15em;
   text-decoration-thickness: 1px;
@@ -245,6 +265,7 @@ a {
 
 a:hover {
   color: var(--ink);
+  text-decoration-thickness: 2px;
 }
 
 a:focus-visible,
@@ -253,9 +274,9 @@ input:focus-visible,
 textarea:focus-visible,
 summary:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
-  border-radius: var(--radius);
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+  box-shadow: none;
 }
 
 button {
@@ -535,13 +556,6 @@ th.numeric {
 
 /* Selection */
 ::selection {
-  background: var(--accent-soft);
-  color: var(--ink);
-}
-
-@media (prefers-color-scheme: dark) {
-  ::selection {
-    background: var(--accent-soft);
-    color: var(--ink);
-  }
+  background: var(--ink);
+  color: var(--ink-inverse);
 }
