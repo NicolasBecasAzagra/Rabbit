@@ -17,12 +17,15 @@ const bootLog = [
 ---
 
 <section class="hero on-ink" aria-labelledby="hero-title">
-  <div class="hero-content wrapper">
+  <div class="hero-top wrapper">
+    <div class="hero-lockup rv" style="--i: 0">
+      <h1 id="hero-title" class="hero-word">Rabbit</h1>
+      <EarsMark class="hero-ears" />
+    </div>
+  </div>
+
+  <div class="hero-grid wrapper">
     <div class="hero-main">
-      <div class="hero-lockup rv" style="--i: 0">
-        <h1 id="hero-title" class="hero-word">Rabbit</h1>
-        <EarsMark class="hero-ears" />
-      </div>
       <p class="hero-tagline rv" style="--i: 1">{meta.tagline}</p>
 
       <div class="hero-figures rv" style="--i: 2">
@@ -49,74 +52,82 @@ const bootLog = [
       </div>
     </div>
 
-    <dl class="hero-meta">
-      <div class="meta-item">
-        <dt>Repository</dt>
-        <dd>{meta.repoPath}</dd>
+    <div class="hero-terminal" data-boot-log>
+      <div class="terminal-header">
+        <span class="terminal-status" aria-hidden="true"></span>
+        <span class="terminal-title">serial0</span>
       </div>
-      <div class="meta-item">
-        <dt>License</dt>
-        <dd>{meta.license}</dd>
-      </div>
-      <div class="meta-item">
-        <dt>Toolchain</dt>
-        <dd>{meta.toolchain}</dd>
-      </div>
-      <div class="meta-item">
-        <dt>ABI</dt>
-        <dd>Linux userspace</dd>
-      </div>
-      <div class="meta-item">
-        <dt>Architecture</dt>
-        <dd>x86_64</dd>
-      </div>
-      <div class="meta-item">
-        <dt>Status</dt>
-        <dd>{meta.status}</dd>
-      </div>
-    </dl>
+      <ol class="terminal-lines" aria-label="Boot log">
+        {
+          bootLog.map((line, index) => {
+            const chars = `[${line.ts}] ${line.msg}`.length;
+            return (
+              <li class="terminal-line" style={`--chars: ${chars}; --delay: ${index};`}>
+                <span class="terminal-ts">[{line.ts}]</span>
+                <span class="terminal-msg">{line.msg}</span>
+              </li>
+            );
+          })
+        }
+      </ol>
+      <span class="terminal-cursor" aria-hidden="true"></span>
+    </div>
   </div>
 
-  <div class="hero-terminal wrapper">
-    <div class="terminal-header">
-      <span class="terminal-status" aria-hidden="true"></span>
-      <span class="terminal-title">serial0</span>
+  <dl class="hero-meta wrapper">
+    <div class="meta-item">
+      <dt>Repository</dt>
+      <dd>{meta.repoPath}</dd>
     </div>
-    <ol class="terminal-lines" aria-label="Boot log">
-      {
-        bootLog.map((line, index) => {
-          const chars = `[${line.ts}] ${line.msg}`.length;
-          return (
-            <li class="terminal-line" style={`--chars: ${chars}; --delay: ${index};`}>
-              <span class="terminal-ts">[{line.ts}]</span>
-              <span class="terminal-msg">{line.msg}</span>
-            </li>
-          );
-        })
-      }
-    </ol>
-    <span class="terminal-cursor" aria-hidden="true"></span>
-  </div>
+    <div class="meta-item">
+      <dt>License</dt>
+      <dd>{meta.license}</dd>
+    </div>
+    <div class="meta-item">
+      <dt>Toolchain</dt>
+      <dd>{meta.toolchain}</dd>
+    </div>
+    <div class="meta-item">
+      <dt>ABI</dt>
+      <dd>Linux userspace</dd>
+    </div>
+    <div class="meta-item">
+      <dt>Architecture</dt>
+      <dd>x86_64</dd>
+    </div>
+    <div class="meta-item">
+      <dt>Status</dt>
+      <dd>{meta.status}</dd>
+    </div>
+  </dl>
 </section>
 
 <style>
   .hero {
     position: relative;
-    display: grid;
-    grid-template-rows: 1fr auto;
     min-height: 100svh;
-    padding-block: 26vh 0;
+    padding-block: 26vh var(--space-xl);
     overflow: hidden;
     isolation: isolate;
   }
 
-  /* The word and the ears are one mark. Sizes of the ears are in em, so
-     they follow the word at every width. */
+  /* The word and the ears are one mark. The ears are sized in em, so they
+     follow the word at every width. */
   .hero-lockup {
     position: relative;
     width: fit-content;
-    font-size: clamp(3rem, 28vw, 14rem);
+    font-size: clamp(3rem, 28vw, 19rem);
     margin-block-end: var(--space-md);
+  }
+
+  .hero-word {
+    font-family: var(--font-display);
+    font-size: 1em;
+    line-height: 0.9;
+    font-weight: 800;
+    letter-spacing: -0.06em;
+    color: var(--ink);
+    margin-inline-start: -0.04em;
   }
 
   :global(.hero-ears) {
@@ -125,7 +136,7 @@ const bootLog = [
     width: 3.2em;
     height: 3.2em;
     max-width: none;
-    /* Above the word, right aligned, cropped by the top edge of the hero */
+    /* Narrow: above the word, right aligned, cropped by the top edge */
     inset-inline-end: -0.9em;
     inset-block-end: calc(100% - 0.12em);
     fill: none;
@@ -138,38 +149,36 @@ const bootLog = [
     vector-effect: non-scaling-stroke;
   }
 
-  @media (min-width: 1100px) {
+  @media (min-width: 761px) {
     .hero {
-      padding-block-start: var(--space-2xl);
+      padding-block-start: 16vh;
     }
-    /* Beside the word, standing on its baseline */
+    .hero-lockup {
+      font-size: clamp(3rem, 23vw, 19rem);
+    }
+    /* Wide: standing on the baseline right after the word, tall, cropped */
     :global(.hero-ears) {
+      width: 2.7em;
+      height: 2.7em;
       inset-inline-end: auto;
       inset-block-end: auto;
-      inset-inline-start: calc(100% - 0.75em);
-      inset-block-start: -2.18em;
+      inset-inline-start: calc(100% - 0.64em);
+      inset-block-start: -1.66em;
       stroke-width: 3px;
     }
   }
 
-  .hero-content {
+  .hero-grid {
     display: grid;
     gap: var(--space-xl);
-    align-items: end;
+    align-items: start;
   }
 
-  .hero-main {
-    max-width: var(--measure);
-  }
-
-  .hero-word {
-    font-family: var(--font-display);
-    font-size: 1em;
-    line-height: 0.9;
-    font-weight: 800;
-    letter-spacing: -0.06em;
-    color: var(--ink);
-    margin-inline-start: -0.04em;
+  @media (min-width: 900px) {
+    .hero-grid {
+      grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+      gap: var(--space-2xl);
+    }
   }
 
   .hero-tagline {
@@ -193,30 +202,49 @@ const bootLog = [
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: var(--font-medium);
-    margin-block-end: var(--space-sm);
+    margin-block-end: var(--space);
   }
 
   .figure-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space) var(--space-xl);
+    display: grid;
+    gap: var(--space-lg) var(--space-md);
     margin: 0;
+  }
+
+  @media (min-width: 900px) {
+    .figure-row {
+      grid-template-columns: repeat(3, auto);
+      justify-content: space-between;
+    }
   }
 
   .figure dt {
     font-size: var(--text-sm);
-    color: var(--muted);
+    color: var(--ink);
   }
 
   .figure dd {
     margin: 0;
     font-family: var(--font-mono);
-    font-size: var(--text-xl);
-    line-height: var(--leading-snug);
-    font-weight: var(--font-medium);
-    letter-spacing: -0.04em;
+    font-size: 3.5rem;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: -0.06em;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 900px) {
+    .figure dd {
+      font-size: 3.25rem;
+    }
+  }
+
+  @media (min-width: 1100px) {
+    .figure dd {
+      font-size: 4.5rem;
+    }
   }
 
   /* Rabbit in full ink, the Linux references one step down */
@@ -225,16 +253,18 @@ const bootLog = [
   }
 
   .figure-unit {
-    font-size: 0.4em;
+    font-size: 0.3em;
+    font-weight: 500;
     letter-spacing: 0;
-    color: var(--muted);
+    color: rgba(255, 255, 255, 0.7);
   }
 
   .figure-ctx {
     display: block;
+    margin-block: 2px var(--space-sm);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.8125rem;
+    color: rgba(255, 255, 255, 0.8);
   }
 
   .hero-actions {
@@ -270,7 +300,7 @@ const bootLog = [
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: var(--space-md);
-    margin: 0;
+    margin-block: var(--space-2xl) 0;
     padding-block-start: var(--space-lg);
     border-top: 1px solid var(--hairline);
   }
@@ -298,19 +328,10 @@ const bootLog = [
     }
   }
 
-  @media (max-width: 760px) {
-    .hero-meta {
-      grid-template-columns: 1fr 1fr;
-      gap: var(--space-sm);
-    }
-  }
-
   .hero-terminal {
     position: relative;
-    margin-block-start: var(--space-3xl);
     border: 1px solid var(--hairline);
-    border-bottom: 0;
-    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    border-radius: var(--radius-card);
     background: var(--surface);
     padding: var(--space-md);
   }
@@ -373,7 +394,6 @@ const bootLog = [
     height: 1.2em;
     background: var(--ink);
     margin-block-start: var(--space-xs);
-    animation: blink 1s step-end infinite;
   }
 
   @keyframes blink {
@@ -406,9 +426,6 @@ const bootLog = [
     .terminal-cursor {
       animation: none;
       clip-path: inset(0 0 0 0);
-      opacity: 1;
-    }
-    .terminal-cursor {
       opacity: 1;
     }
   }
