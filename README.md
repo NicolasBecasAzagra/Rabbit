@@ -59,12 +59,18 @@ same machine, with the same binary and the same checkpoint.
 | fault in memory, 2 MiB pages | **825 us/MiB** | 44.9 ms/MiB | 13.0 ms/MiB |
 | futex round trip | **6.53 us** | 407 us | 97.7 us |
 | four threads, spawn to join | **620 us** | 7.73 ms | 4.59 ms |
-| boot to the first result | **12.9 s** | 206 s | 63.8 s |
-| resident memory of the guest | **319 MB** | 476 MB | 483 MB |
+| boot to the first result | 12.9 s | 206 s | 63.8 s |
+| resident memory of the guest | 319 MB | 476 MB | 483 MB |
 | time to the first token | **11.25 s** | 24.67 s | 22.82 s |
 | tokens per second | **0.45** | 0.20 | 0.21 |
 | seconds of an agent loop | **821** | 2793 | 2570 |
-| resident memory with the model | **857 MB** | 1021 MB | 1023 MB |
+| resident memory with the model | 857 MB | 1021 MB | 1023 MB |
+
+Every row ran under QEMU TCG, an emulator, with no hardware acceleration. The
+boot row is not a comparison of the kernels, as
+[docs/BENCHMARKING.md](docs/BENCHMARKING.md) states, and the rows of resident
+memory depend on how each kernel holds the initramfs, so read them as
+descriptions and not as wins.
 
 One processor, 512 MiB for the operations and 1024 MiB for the model and the
 agent, QEMU 8.2.2, Linux 7.3.0 built from the mainline tree by
@@ -88,12 +94,15 @@ the network.
 
 Three things about these numbers:
 
-- **The ratios are the claim.** Between 1.3 and 7.4 times cheaper per
-  operation, three times faster in the agent loop, two thirds of the memory of
-  the guest.
+- **The ratios compare two kernels on one emulator.** Between 1.3 and 7.4
+  times cheaper per operation. The agent loop is one run: 3.4 times faster by
+  the clock of the guest and 2.3 times by the clock of the host. Part of that
+  gap may belong to the emulator, and it is the first thing a run with KVM
+  has to confirm or retire.
 - **The absolute numbers describe an emulator.** There is no hardware
-  acceleration on the host, so a wall clock statement about a processor is not
-  supported yet. A host with KVM is the open issue for that.
+  acceleration on the host, so a statement about a processor, and the claim
+  that the ratios hold on real hardware, are not supported yet. A host with
+  KVM is the open issue for that (v0.4).
 - **Every loss is published.** The reference kernel without mitigations is
   measured too, and the batches where a boot did not finish are in
   `bench/results/` with the samples that are missing.
