@@ -1,0 +1,20 @@
+---
+// The rabbit as negative space: two tall rounded ears, no mascot.
+export interface Props {
+  class?: string;
+  title?: string;
+}
+const { class: className, title } = Astro.props;
+---
+
+<svg
+  class={className}
+  viewBox="0 0 32 32"
+  fill="currentColor"
+  role={title ? 'img' : undefined}
+  aria-label={title}
+  aria-hidden={title ? undefined : 'true'}
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path d="M9 4.5a2.5 2.5 0 0 1 5 0v23a2.5 2.5 0 0 1-5 0zM18 4.5a2.5 2.5 0 0 1 5 0v23a2.5 2.5 0 0 1-5 0z" />
+</svg>
