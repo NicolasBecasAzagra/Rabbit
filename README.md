@@ -109,8 +109,11 @@ Three things about these numbers:
 
 ## Status
 
-Everything below is implemented, verified on the host and asserted in the
-continuous integration. One commit per milestone.
+Everything in the table is implemented, verified on the host and asserted in
+the continuous integration. One commit per milestone. What is not in the table
+is in [the open milestones](https://github.com/NicolasBecasAzagra/Rabbit/milestones),
+and the agent does not close a task yet: the model of 135 million parameters
+repeats a call it has already made ([issue 14](https://github.com/NicolasBecasAzagra/Rabbit/issues/14)).
 
 | Milestone | What it delivers | State |
 |---|---|---|
@@ -126,6 +129,8 @@ continuous integration. One commit per milestone.
 | M8 | Benchmark rig, seventeen measurements, the comparison published with its raw data | done |
 | M9 | SMP: ACPI MADT, INIT-SIPI-SIPI, LAPIC and IOAPIC, IPIs, four processors | done |
 | M10 | The network: the bus PCI, a virtio device, IPv4 and UDP, the sockets of the ABI | done |
+| M11 | Quantization: a quantized checkpoint decoded by the same runtime, token for token | done |
+| M12 | TCP in the kernel, the sockets of a stream, so the agent can speak HTTP | done |
 | E1 | The initramfs as a read only file system | done |
 | E2 | A file backed mapping and large pages | done |
 | E2b | Large pages for file mappings and `mlock` residency of the weights | done |
@@ -137,21 +142,20 @@ continuous integration. One commit per milestone.
 
 ## What comes next
 
-In the order it has to happen. The reasoning and the exit criteria of each one
-are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the issues of the
-tracker carry the same criteria.
+In the order it has to happen, one row per milestone of the tracker. The
+reasoning and the exit criteria of each one are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the issues carry the same
+criteria.
 
-| Next | Why it is next |
-|---|---|
-| **TLS** | Almost every API people call today is HTTPS, and an agent that cannot read a certificate cannot use them. |
-| **The tools an agent of today expects** | Files of the machine and commands: the agent of today reads the files of the person and runs things. |
-| **The model context protocol** | The way the clients of today talk to a model and to its tools. An agent that speaks it works with the clients people already have. |
-| **A checkpoint that closes the conversation** | The model of 135 million parameters reads a file and then asks for it again. The grammar is not the problem: the checkpoint is. |
-| **A host with hardware acceleration** | The only thing missing for the timings to describe a machine instead of an emulator. |
-| **A scheduler with a better tail** | Batching inference requests lives on the tail of the scheduler. |
+| Milestone | Issues | Why it is next |
+|---|---|---|
+| **v0.4 Credible numbers** | [#10](https://github.com/NicolasBecasAzagra/Rabbit/issues/10) | A host with hardware acceleration: the only thing missing for the timings to describe a machine instead of an emulator, and the first test of every ratio above. |
+| **v0.5 An agent that finishes** | [#14](https://github.com/NicolasBecasAzagra/Rabbit/issues/14), [#15](https://github.com/NicolasBecasAzagra/Rabbit/issues/15) | A checkpoint that closes the conversation, and the tools that need a writable file system: `write_file` and `list_dir`. |
+| **v0.6 Reach the world** | [#18](https://github.com/NicolasBecasAzagra/Rabbit/issues/18), [#19](https://github.com/NicolasBecasAzagra/Rabbit/issues/19) | The model context protocol, so the agent works with the clients people already have, and TLS, because almost every API people call is HTTPS. |
+| **Deferred** | [#16](https://github.com/NicolasBecasAzagra/Rabbit/issues/16) | Processes, signals, dynamic linking and a shell test suite: named so they are not lost. |
 
-Deferred, and named so they are not lost: processes and a real file system,
-dynamic linking, signals and a shell test suite.
+A scheduler with a better tail, for batching inference requests, is the work
+after these.
 
 ## Build and run
 
