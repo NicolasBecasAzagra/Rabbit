@@ -1,5 +1,5 @@
 ---
-import { benchmarks, meta } from '../../data/project';
+import { benchmarks, meta, benchmarkContext } from '../../data/project';
 import { url } from '../../lib/paths';
 
 export interface Props {
@@ -203,7 +203,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                   {ratio && (
                     <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
                   )}
-                  {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
+                  {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
                     const valueSeconds = toSeconds(p.value, p.unit);
@@ -222,13 +222,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                           stroke-dasharray="2,2"
                         />
                         {key === 'rabbit' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--accent)" />
+                          <circle cx={x} cy={y} r="4" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
                         )}
                         {key === 'mainline' && (
                           <circle cx={x} cy={y} r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" />
                         )}
                         {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-tertiary)" />
+                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-secondary)" />
                         )}
                         <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
                       </g>
@@ -266,7 +266,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                   {ratio && (
                     <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
                   )}
-                  {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => {
+                  {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
                     const valueSeconds = toSeconds(p.value, p.unit);
@@ -285,13 +285,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                           stroke-dasharray="2,2"
                         />
                         {key === 'rabbit' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--accent)" />
+                          <circle cx={x} cy={y} r="4" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
                         )}
                         {key === 'mainline' && (
                           <circle cx={x} cy={y} r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" />
                         )}
                         {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-tertiary)" />
+                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-secondary)" />
                         )}
                         <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
                       </g>
@@ -342,9 +342,10 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
           Linux 7.3.0
         </span>
         <span class="legend-item">
-          <svg width="12" height="12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" fill="var(--ink-tertiary)" /></svg>
+          <svg width="12" height="12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" fill="var(--ink-secondary)" /></svg>
           Linux, mitigations off
         </span>
+        <span class="legend-item legend-context">{benchmarkContext}</span>
       </div>
 
       <p class="dotplot-note">
@@ -569,6 +570,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     margin-block-start: var(--space-md);
     font-family: var(--font-body);
     font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .legend-context {
+    margin-inline-start: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
     color: var(--ink-secondary);
   }
 
