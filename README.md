@@ -12,23 +12,25 @@ On top of that kernel sit two programs that are not toys: an inference runtime
 that serves a real language model with no dependency outside the Rust standard
 library, and an agent that asks the model what to do and runs the tools.
 
-The goal is a machine that serves models to agents, faster and with less
-memory than the incumbent, and that shows its numbers.
+Rabbit is an experiment in measured method: the same static binary and the
+same initramfs run on Rabbit and on mainline Linux, the model reproduces the
+reference implementation token for token, and every number is published with
+its raw data, the losses included. It asks what a kernel built for one job
+costs, and it answers on an emulator first.
 
 ![The three layers of Rabbit](docs/architecture.svg)
 
 ## What we are building
 
-**The standard way to run local agents on a person's own machine, fast.**
+**A machine for local agents, built in the open and measured against Linux.**
 
 An agent of today expects three things from the machine it runs on: it calls
 APIs over HTTP, it reads and writes files, and it runs commands. It expects a
-model that fits, and it expects the answers to come back in milliseconds. A
-product that only does the third of that is a demonstration.
+model that fits, and it expects the answers to come back quickly. Rabbit does
+part of that today and names the rest in the roadmap below.
 
-Rabbit is that machine, built in three layers, each one measurable against
-mainline Linux on the same machine, with the same binary and the same
-checkpoint.
+It is built in three layers, each one measurable against mainline Linux on the
+same machine, with the same binary and the same checkpoint.
 
 1. **A kernel that does less.** No page table isolation, no LSM, no audit, no
    cgroups, no hooks. Demand paging, large pages, a scheduler with a short
@@ -40,8 +42,9 @@ checkpoint.
    the gated feed forward block and a key value cache. It generates the same
    tokens as the reference implementation, one for one.
 3. **An agent that acts.** The model answers with a tool call, the kernel
-   runs the tool, and the model answers again. The tools reach the files of
-   the machine, the network and the APIs over HTTP. The shape of the call is not a
+   runs the tool, and the model answers again. The tools read the files of
+   the machine, reach the network and call APIs over HTTP; writing files and
+   listing a directory wait for a writable file system. The shape of the call is not a
    request in the prompt but an automaton over bytes: the answer cannot be
    anything but a well formed call of a declared tool, with the keys that tool
    needs, each of them once, with the type the tool expects.
