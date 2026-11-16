@@ -468,12 +468,12 @@ export const benchmarkMethod = {
 
 export const benchmarkCaveats = [
   {
-    title: 'The ratios are the claim',
-    body: 'Between 1.3 and 7.4 times cheaper per operation, three times faster in the agent loop, two thirds of the memory of the guest.',
+    title: 'The ratios compare two kernels on one emulator',
+    body: 'Between 1.3 and 7.4 times cheaper per operation. The agent loop is one run: 3.4 times faster by the clock of the guest and 2.3 times by the clock of the host. Part of that gap may belong to the emulator, and it is the first thing a run with KVM has to confirm or retire.',
   },
   {
     title: 'The absolute numbers describe an emulator',
-    body: 'There is no hardware acceleration on the host, so a wall clock statement about a processor is not supported yet. A host with KVM is the open issue for that.',
+    body: 'There is no hardware acceleration on the host, so a statement about a processor, and the claim that the ratios hold on real hardware, are not supported yet. A host with KVM is the open issue for that (v0.4).',
   },
   {
     title: 'Every loss is published',
