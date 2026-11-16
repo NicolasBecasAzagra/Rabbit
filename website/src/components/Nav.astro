@@ -336,7 +336,7 @@ c46 115 51 155 23 191 -5 7 -42 56 -81 108 -40 52 -90 118 -112 145 -22 28
 
 <script>
   (function () {
-    const details = document.querySelector('.mobile-menu');
+    const details = document.querySelector<HTMLDetailsElement>('.mobile-menu');
     const summary = details?.querySelector('.menu-toggle');
     if (!details || !summary) return;
 
