@@ -226,8 +226,9 @@ the answer of the kernel to the advice, so a kernel without large pages says
 so instead of being measured on something else.
 
 `weights` stands in for faulting model weights in, which is the kernel cost that
-dominates loading a model. Rabbit has no file system yet, so the honest proxy
-is the anonymous equivalent: a 256 MiB region mapped with `MAP_FIXED` at a fixed
+dominates loading a model. The operation benchmark does not read a file, so the
+proxy is the anonymous equivalent (the file backed case is measured by the
+inference dataset): a 256 MiB region mapped with `MAP_FIXED` at a fixed
 address, with one byte read and written in every 4 KiB page. It is a proxy, not
 a file-backed load, and the numbers have to be read as such. The region takes
 half of the 512 MiB guest: the full 512 MiB cannot be faulted in when the kernel

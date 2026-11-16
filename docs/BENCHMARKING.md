@@ -129,8 +129,9 @@ refuses is printed with the error value, so an incomplete kernel produces
 data instead of silence.
 
 `weights` and `weights-tail` are the proxy for the dominant kernel cost of
-loading a model: there is no file system yet, so the anonymous mapping is
-the honest equivalent, mapping a fixed 256 MiB region and touching one byte
+loading a model: the operation benchmark does not read a file, so the anonymous
+mapping is the equivalent (the file backed case is measured by the inference
+dataset), mapping a fixed 256 MiB region and touching one byte
 in every page. The region is fixed at an address and the sample count is
 five, because every sample faults 65536 pages.
 
