@@ -86,7 +86,7 @@
 
   <rect class="panel-kernel" x="80" y="194" width="860" height="66" rx="14"/>
   <text class="ink layer-name-sm" x="110" y="222">the kernel</text>
-  <text class="secondary layer-body" x="110" y="248">paging, scheduling, memory, processes</text>
+  <text class="secondary layer-body" x="110" y="248">paging, scheduling, memory, threads</text>
 
   <!-- base -->
   <rect class="panel-base" x="80" y="276" width="860" height="48" rx="12"/>
