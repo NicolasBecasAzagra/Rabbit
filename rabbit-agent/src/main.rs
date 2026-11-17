@@ -88,6 +88,8 @@ mod call;
 mod capability;
 mod encode;
 mod expression;
+#[cfg(test)]
+mod landlock;
 mod link;
 #[cfg(test)]
 mod seccomp;
