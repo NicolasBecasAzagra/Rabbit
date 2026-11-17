@@ -243,6 +243,10 @@ const AT_EMPTY_PATH: u64 = 0x1000;
 /// Longest path a system call accepts, including the terminating NUL.
 const PATH_MAX: usize = 4096;
 
+/// Size of the kernel buffer a path is copied into: the longest path a policy
+/// can accept, 255 bytes, and a byte more so a longer path is told apart.
+const PATH_COPY_LEN: usize = 256;
+
 /// `AF_INET`: the internet address family.
 const AF_INET: u16 = 2;
 /// `SOCK_DGRAM`: a datagram socket.
@@ -566,13 +570,33 @@ fn sys_openat(dirfd: u64, address: u64, flags: u64) -> i64 {
         crate::kprintln!("openat refused: path={address:#x} is not readable");
         return EFAULT;
     };
+    // The program can rewrite its path while the kernel works, so a path the
+    // policy can accept is copied into the kernel once, and the copy is what
+    // the policy checks and what is opened. A longer path is not copied: no
+    // rule of a policy can match it, and it is refused before its bytes matter.
+    let mut copy = [0u8; PATH_COPY_LEN];
+    let path = if path.len() < PATH_COPY_LEN {
+        for (offset, byte) in copy[..path.len()].iter_mut().enumerate() {
+            // SAFETY: `user_c_string` checked these bytes as mapped user
+            // memory, and `offset` is below the length of the path. The read
+            // is volatile because the program may write the byte meanwhile.
+            *byte = unsafe { path.as_ptr().add(offset).read_volatile() };
+        }
+        &copy[..path.len()]
+    } else {
+        path
+    };
+    if let Err(error) = policy::check_open(path, flags & fd::O_ACCMODE != 0) {
+        return error;
+    }
     let result = fd::open(path, flags);
     if result < 0 {
         // The name is in the log: a program that opens a file that is there
-        // and does not find it needs to know which name it asked for.
+        // and does not find it needs to know which name it asked for. The
+        // program chose the name, so it is sanitized before it is printed.
         crate::kprintln!(
             "open failed: number=257 address={address:#x} error={result} name={}",
-            core::str::from_utf8(path).unwrap_or("<not utf8>")
+            policy::Sanitized(path)
         );
     }
     result
@@ -696,11 +720,15 @@ fn sys_socket(domain: u64, socket_type: u64, protocol: u64) -> i64 {
     if protocol != 0 {
         return EPROTONOSUPPORT;
     }
-    match socket_type & SOCK_TYPE_MASK {
-        value if value == u64::from(SOCK_DGRAM) => fd::socket(net::SocketType::Datagram),
-        value if value == u64::from(SOCK_STREAM) => fd::socket(net::SocketType::Stream),
-        _ => EPROTONOSUPPORT,
+    let kind = match socket_type & SOCK_TYPE_MASK {
+        value if value == u64::from(SOCK_DGRAM) => net::SocketType::Datagram,
+        value if value == u64::from(SOCK_STREAM) => net::SocketType::Stream,
+        _ => return EPROTONOSUPPORT,
+    };
+    if let Err(error) = policy::check_socket(kind) {
+        return error;
     }
+    fd::socket(kind)
 }
 
 /// `bind`: give a socket its local address and port.
@@ -729,6 +757,13 @@ fn sys_connect(descriptor: u64, address: u64, length: u64) -> i64 {
         Ok(endpoint) => endpoint,
         Err(error) => return error,
     };
+    let kind = match net::socket_type(index) {
+        Ok(kind) => kind,
+        Err(error) => return socket_errno(error),
+    };
+    if let Err(error) = policy::check_connect(kind, address, port) {
+        return error;
+    }
     match net::socket_connect(index, address, port) {
         Ok(()) => 0,
         Err(error) => socket_errno(error),
@@ -773,7 +808,16 @@ fn sys_sendto(
                 None
             } else {
                 match read_sockaddr(address, address_length) {
-                    Ok((port, address)) => Some((address, port)),
+                    Ok((port, address)) => {
+                        // The destination replaces the other end of the
+                        // socket, so it is a connect as far as the policy goes.
+                        if let Err(error) =
+                            policy::check_connect(net::SocketType::Datagram, address, port)
+                        {
+                            return error;
+                        }
+                        Some((address, port))
+                    }
                     Err(error) => return error,
                 }
             };
@@ -892,6 +936,9 @@ fn sys_getsockname(descriptor: u64, address: u64, length: u64) -> i64 {
 /// A datagram socket has no connection to wait for, so the call is refused
 /// with the error Linux uses for an operation a socket type does not support.
 fn sys_listen(descriptor: u64, _backlog: u64) -> i64 {
+    if let Err(error) = policy::check_inbound("listen") {
+        return error;
+    }
     let index = match fd::socket_index(descriptor) {
         Ok(index) => index,
         Err(error) => return error,
@@ -907,6 +954,9 @@ fn sys_listen(descriptor: u64, _backlog: u64) -> i64 {
 /// The accepted socket gets a descriptor of its own, and the listening socket
 /// keeps waiting for the next connection.
 fn sys_accept(descriptor: u64, address: u64, length: u64) -> i64 {
+    if let Err(error) = policy::check_inbound("accept") {
+        return error;
+    }
     let index = match fd::socket_index(descriptor) {
         Ok(index) => index,
         Err(error) => return error,

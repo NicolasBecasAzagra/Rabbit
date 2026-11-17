@@ -104,10 +104,11 @@ pub fn resolve(path: &[u8]) -> Result<Option<Entry<'static>>, PathError> {
         None => Ok(None),
     };
     // The name and the answer are in the log: a program that opens a file
-    // that is in the archive needs to know what the kernel looked for.
+    // that is in the archive needs to know what the kernel looked for. The
+    // program chose the name, so it is sanitized before it is printed.
     crate::kprintln!(
         "initramfs resolve: name={} found={}",
-        core::str::from_utf8(path).unwrap_or("<not utf8>"),
+        super::policy::Sanitized(path),
         match &result {
             Ok(Some(entry)) => entry.name_str().unwrap_or("<not utf8>"),
             Ok(None) => "none",

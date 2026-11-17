@@ -60,7 +60,7 @@ const S_IFIFO: u32 = 0o010000;
 const S_IFSOCK: u32 = 0o140000;
 
 /// `O_ACCMODE`: the access mode bits of an `openat` flags word.
-const O_ACCMODE: u64 = 0o3;
+pub(super) const O_ACCMODE: u64 = 0o3;
 /// `O_WRONLY`: a write only stream.
 const O_WRONLY: u64 = 1;
 

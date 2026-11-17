@@ -63,10 +63,13 @@ jobs:
         run: |
           set +e
           # A broken kernel would hang here forever, so the boot is bounded.
+          # The card gives the user program a socket, which the checks of its
+          # capability policy on connect and sendto need.
           timeout 60 qemu-system-x86_64 -M q35 -m 512M \
             -kernel "$(make -s print-kernel-path)" \
             -display none -monitor none -no-reboot \
             -serial file:serial.log \
+            -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
             -device isa-debug-exit,iobase=0xf4,iosize=0x04
           status=$?
           echo "QEMU exit status: $status"
@@ -95,6 +98,12 @@ jobs:
           # garbage is refused, a valid policy is accepted once and a second
           # install is refused.
           grep -qxF "POLICY OK install=0 again=-1 garbage=-22" serial-clean.log
+          # A path with a newline and the text of that line must not forge a
+          # second one: exactly one line starts with it.
+          test "$(grep -c '^POLICY OK ' serial-clean.log)" -eq 1
+          # The policy refuses what it does not list and lets through what it
+          # does, with a socket, which the card of this boot provides.
+          grep -qE "^POLICY ENFORCE OK outside=-13 missing=-[0-9]+ traversal=-13 write=-13 stream=-13 datagram=[0-9]+ connect=-?[0-9]+ sendto=-13$" serial-clean.log
           grep -q "SCHED OK" serial-clean.log
           # Interleaving proof: every demo thread must appear in the log.
           grep -q "^T1 " serial-clean.log

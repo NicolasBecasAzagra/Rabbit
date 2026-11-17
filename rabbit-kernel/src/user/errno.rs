@@ -21,11 +21,7 @@ pub const EFAULT: i64 = -14;
 pub const EINVAL: i64 = -22;
 /// Function not implemented.
 pub const ENOSYS: i64 = -38;
-/// Permission denied.
-///
-/// Part of the Linux number table: a kernel without a filesystem or a mode bit
-/// never produces it, but the dispatcher must be able to name it.
-#[allow(dead_code)]
+/// Permission denied: the policy of the program does not list the request.
 pub const EACCES: i64 = -13;
 /// File exists.
 pub const EEXIST: i64 = -17;
