@@ -11,7 +11,9 @@
 //!
 //! Nothing here can affect the machine beyond the temporary tree of the test
 //! and the loopback. The table has no `kill`, no `ptrace`, no `mount`, no
-//! `reboot`, and no call that changes the system. The files it creates, removes
+//! `reboot`, and no call that changes the system. The one `kill` of the module
+//! is the harness ending the group of a child it made that outlived five
+//! seconds; it is not a case of the table. The files it creates, removes
 //! and renames are names under the read root of the setup, which on a Linux
 //! test is a directory of its own; the programs it starts are `/bin/true`,
 //! which exits at once; `memfd_create` makes a descriptor that is closed and
@@ -800,6 +802,17 @@ mod raw {
     const SIGCHLD: u64 = 17;
     /// `STATX_TYPE`.
     const STATX_TYPE: u64 = 1;
+    /// `WNOHANG`: `wait4` returns at once when no child has ended.
+    const WNOHANG: u64 = 1;
+    /// `SIGKILL`.
+    const SIGKILL: u64 = 9;
+    /// How many times a child is waited for, and how long between the times:
+    /// five seconds in all.
+    const POLLS: u32 = 500;
+    const POLL_NANOSECONDS: i64 = 10_000_000;
+    /// What a child that had to be killed returns: below every error number
+    /// and every signal of the code above.
+    const TIMED_OUT: i64 = -2000;
 
     /// A NUL terminated copy of `text`.
     fn c_string(text: &str) -> Vec<u8> {
@@ -866,6 +879,9 @@ mod raw {
             return direct(op);
         }
         if pid == 0 {
+            // A group of its own, so that the whole group can be ended.
+            // SAFETY: setpgid takes two numbers.
+            let _ = unsafe { syscall3(109, 0, 0, 0) };
             let result = direct(op);
             exit(if result >= 0 {
                 0
@@ -873,10 +889,34 @@ mod raw {
                 result.unsigned_abs() & 0xff
             });
         }
+        // The parent sets the group too, so that it exists before any kill.
+        // SAFETY: setpgid takes two numbers.
+        let _ = unsafe { syscall3(109, pid as u64, pid as u64, 0) };
         let mut status = 0i32;
-        // SAFETY: wait4 writes the status of the child into `status`, which is
-        // live, and takes no options and a null usage.
-        let waited = unsafe { syscall4(61, pid as u64, &mut status as *mut i32 as u64, 0, 0) };
+        let mut waited = 0;
+        for _ in 0..POLLS {
+            // SAFETY: wait4 writes the status of the child into `status`,
+            // which is live, and with `WNOHANG` returns zero while the child
+            // is running.
+            waited =
+                unsafe { syscall4(61, pid as u64, &mut status as *mut i32 as u64, WNOHANG, 0) };
+            if waited != 0 {
+                break;
+            }
+            let pause = [0i64, POLL_NANOSECONDS];
+            // SAFETY: nanosleep reads the two words of `pause`.
+            let _ = unsafe { syscall3(35, pause.as_ptr() as u64, 0, 0) };
+        }
+        if waited == 0 {
+            // The child outlived its deadline. This is the only `kill` of the
+            // table: it ends the group of the child this function made, and
+            // nothing else.
+            // SAFETY: kill with a negative pid signals the group of the child.
+            let _ = unsafe { syscall3(62, pid.wrapping_neg() as u64, SIGKILL, 0) };
+            // SAFETY: the group is dead, so the wait ends.
+            let _ = unsafe { syscall4(61, pid as u64, &mut status as *mut i32 as u64, 0, 0) };
+            return TIMED_OUT;
+        }
         if waited < 0 {
             return waited;
         }
@@ -1281,6 +1321,22 @@ mod tests {
         assert_eq!(numbers.len(), SYSCALLS.len(), "no two calls share a number");
     }
 
+    /// The setup of a Linux tree: everything under one directory of its own.
+    fn linux_tree() -> Setup {
+        Setup {
+            base: "/tmp/rb-tests/raw-1".to_string(),
+            root: "/tmp/rb-tests/raw-1/agent".to_string(),
+            allowed_ip: [127, 0, 0, 1],
+            other_ip: [127, 0, 0, 2],
+            udp_port: 40000,
+            tcp_port: 40001,
+            other_udp_port: 40002,
+            other_tcp_port: 40003,
+            linux_udp_ports: false,
+            links: true,
+        }
+    }
+
     #[test]
     fn nothing_that_could_harm_the_machine_is_in_the_table() {
         for forbidden in [
@@ -1293,17 +1349,30 @@ mod tests {
                 "{forbidden}"
             );
         }
-        // Every call that changes a name is on a path under the read root.
-        for case in cases(&setup(), true) {
-            let paths: Vec<&String> = match &case.op {
-                Op::Creat { path } | Op::Unlink { path } | Op::Mkdir { path } => vec![path],
-                Op::Rename { from, to } => vec![from, to],
-                Op::Symlink { link, .. } => vec![link],
-                Op::Open { path, flags } if *flags != O_RDONLY => vec![path],
-                _ => vec![],
-            };
-            for path in paths {
-                assert!(path.starts_with("/agent/"), "{}: {path}", case.name);
+        // Every call that changes a name is on a path under the read root, on
+        // Rabbit and on a Linux tree, and every path of a call is in the tree
+        // of the setup, but for the program that is started.
+        for setup in [setup(), linux_tree()] {
+            let root = format!("{}/", setup.root);
+            for case in cases(&setup, true) {
+                let (changes, paths): (bool, Vec<&String>) = match &case.op {
+                    Op::Creat { path } | Op::Unlink { path } | Op::Mkdir { path } => {
+                        (true, vec![path])
+                    }
+                    Op::Rename { from, to } => (true, vec![from, to]),
+                    Op::Symlink { link, .. } => (true, vec![link]),
+                    Op::Open { path, flags } => (*flags != O_RDONLY, vec![path]),
+                    Op::Readlink { path } | Op::Chdir { path } | Op::Probe { path, .. } => {
+                        (false, vec![path])
+                    }
+                    _ => (false, vec![]),
+                };
+                for path in paths {
+                    assert!(path.starts_with(&setup.base), "{}: {path}", case.name);
+                    if changes {
+                        assert!(path.starts_with(&root), "{}: {path}", case.name);
+                    }
+                }
             }
         }
     }
@@ -1640,7 +1709,7 @@ mod tests {
             return;
         }
 
-        let scratch = Scratch::new("rabbit-compromised");
+        let scratch = Scratch::new("raw");
         let directory = scratch.path();
         std::fs::create_dir_all(format!("{directory}/agent")).unwrap();
         std::fs::write(format!("{directory}/agent/hello.txt"), "hello").unwrap();
@@ -1712,7 +1781,12 @@ mod tests {
         for case in table {
             let ret = printed_ret(&output.stdout, &case.name)
                 .unwrap_or_else(|| panic!("the child printed no line for {}", case.name));
-            let reached = case.sends.then(|| servers.reached(&case.name));
+            // A datagram is in flight for a moment after the call that sent it,
+            // so what must have reached is waited for, and what must not have
+            // is looked for after the same wait.
+            let reached = case.sends.then(|| {
+                servers.reached_within(&case.name, case.linux == Expect::Is(Raw::Allowed))
+            });
             let outcome = Outcome {
                 ret,
                 verdict: classify(ret, reached),
@@ -1731,7 +1805,14 @@ mod tests {
             if case.name.ends_with("_other_ip") && !routable {
                 eprintln!("SKIP {} reason=127.0.0.2 not routable", case.name);
             } else if !seccomp && SECCOMP_CASES.contains(&case.name.as_str()) {
-                eprintln!("SKIP {} reason=the kernel has no seccomp", case.name);
+                assert!(
+                    std::env::var_os("RABBIT_REQUIRE_LANDLOCK").is_none_or(|value| value != "1"),
+                    "RABBIT_REQUIRE_LANDLOCK=1 and the seccomp filter is not in force: {line}"
+                );
+                eprintln!(
+                    "SKIP {} reason=the seccomp filter is not in force: {line}",
+                    case.name
+                );
             } else {
                 assert!(
                     case.linux.holds(outcome.verdict),

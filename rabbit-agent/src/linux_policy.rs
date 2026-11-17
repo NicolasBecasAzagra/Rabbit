@@ -514,7 +514,7 @@ mod tests {
             return;
         }
 
-        let scratch = Scratch::new("rabbit-linux-policy");
+        let scratch = Scratch::new("policy");
         let directory = scratch.path();
         std::fs::create_dir_all(format!("{directory}/in")).unwrap();
         std::fs::create_dir_all(format!("{directory}/out")).unwrap();

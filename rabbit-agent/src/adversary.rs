@@ -1019,6 +1019,24 @@ pub(crate) mod tests {
 
         /// Whether a datagram or a request that carries `name` reached any of
         /// the servers.
+        /// Like [`Servers::reached`], but for the call that sent a datagram or
+        /// opened a connection a moment ago: the server may not have recorded
+        /// it yet. A call that is expected to have reached waits until it
+        /// shows, for at most half a second; one that is not is looked for
+        /// after the whole half second.
+        pub(crate) fn reached_within(&self, name: &str, expected: bool) -> bool {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            loop {
+                if expected && self.reached(name) {
+                    return true;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return self.reached(name);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+
         pub(crate) fn reached(&self, name: &str) -> bool {
             self.seen.iter().any(|record| {
                 record
@@ -1084,7 +1102,7 @@ pub(crate) mod tests {
             return;
         }
 
-        let scratch = Scratch::new("rabbit-adversary");
+        let scratch = Scratch::new("adv");
         let directory = scratch.path();
         std::fs::create_dir_all(format!("{directory}/agent")).unwrap();
         std::fs::write(format!("{directory}/agent/hello.txt"), "hello").unwrap();
@@ -1155,7 +1173,7 @@ pub(crate) mod tests {
             }
             let tool = printed_verdict(&output.stdout, &case.name)
                 .unwrap_or_else(|| panic!("the child printed no verdict for {}", case.name));
-            let reached = servers.reached(&case.name);
+            let reached = servers.reached_within(&case.name, case.linux == Verdict::Allowed);
             let policy = policy_verdict(tool, reached);
             // Without Landlock rules for stream ports the other port is not
             // refused either.
