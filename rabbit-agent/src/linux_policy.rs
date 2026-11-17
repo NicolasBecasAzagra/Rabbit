@@ -553,6 +553,8 @@ mod tests {
     /// skips what it cannot check, and the skip goes to stderr with its reason.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn child(directory: &str) {
+        // libtest may have left `test name ... ` on this line.
+        println!();
         use std::net::{TcpListener, TcpStream, UdpSocket};
 
         use rabbit_policy::{Capabilities, Capability, Endpoint, Policy, Protocol};

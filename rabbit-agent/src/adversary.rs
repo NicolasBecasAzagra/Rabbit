@@ -358,19 +358,19 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
 
     let connect = |protocol, ip, port| Intent::Connect { protocol, ip, port };
-    let udp = |ip, port| {
-        call_bytes(
-            "net_send",
-            &[("query", &address(ip, port)), ("text", "adv")],
-        )
+    // The datagram carries the name of its case and the request asks for it as
+    // its path, so a server that records what reaches it can say which calls
+    // were let through, whatever the tool made of the answer.
+    let udp = |name: &str, ip, port| {
+        call_bytes("net_send", &[("query", &address(ip, port)), ("text", name)])
     };
-    let tcp = |ip, port| {
+    let tcp = |name: &str, ip, port| {
         call_bytes(
             "http_get",
-            &[("query", &format!("http://{}/agent", address(ip, port)))],
+            &[("query", &format!("http://{}/{name}", address(ip, port)))],
         )
     };
-    let other_ip_gap = Some("Landlock keys network rules by port and cannot filter the address");
+    let other_ip_gap = Some("Landlock network rules name a port and no address");
     let udp_port_linux = if setup.linux_udp_ports {
         (Verdict::Denied, None)
     } else {
@@ -382,7 +382,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     let (allowed, other) = (setup.allowed_ip, setup.other_ip);
     table.push(case(
         "net_send_allowed",
-        udp(allowed, setup.udp_port),
+        udp("net_send_allowed", allowed, setup.udp_port),
         connect(Protocol::Udp, allowed, setup.udp_port),
         Verdict::Allowed,
         Verdict::Allowed,
@@ -390,7 +390,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
     table.push(case(
         "net_send_other_ip",
-        udp(other, setup.udp_port),
+        udp("net_send_other_ip", other, setup.udp_port),
         connect(Protocol::Udp, other, setup.udp_port),
         Verdict::Denied,
         Verdict::Allowed,
@@ -398,7 +398,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
     table.push(case(
         "net_send_other_port",
-        udp(allowed, setup.other_udp_port),
+        udp("net_send_other_port", allowed, setup.other_udp_port),
         connect(Protocol::Udp, allowed, setup.other_udp_port),
         Verdict::Denied,
         udp_port_linux.0,
@@ -406,7 +406,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
     table.push(case(
         "http_get_allowed",
-        tcp(allowed, setup.tcp_port),
+        tcp("http_get_allowed", allowed, setup.tcp_port),
         connect(Protocol::Tcp, allowed, setup.tcp_port),
         Verdict::Allowed,
         Verdict::Allowed,
@@ -414,7 +414,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
     table.push(case(
         "http_get_other_ip",
-        tcp(other, setup.tcp_port),
+        tcp("http_get_other_ip", other, setup.tcp_port),
         connect(Protocol::Tcp, other, setup.tcp_port),
         Verdict::Denied,
         Verdict::Allowed,
@@ -422,7 +422,7 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
     ));
     table.push(case(
         "http_get_other_port",
-        tcp(allowed, setup.other_tcp_port),
+        tcp("http_get_other_port", allowed, setup.other_tcp_port),
         connect(Protocol::Tcp, allowed, setup.other_tcp_port),
         Verdict::Denied,
         Verdict::Denied,
@@ -844,10 +844,98 @@ mod tests {
         }
     }
 
+    /// The line of `output` that holds `marker`, from the marker to the end of
+    /// the line. The child is the test binary run again with `--nocapture`, so
+    /// libtest may have printed `test name ... ` in front of its first line,
+    /// without a newline: a marker is found where it is, not at the start.
+    fn marked_line<'a>(output: &'a str, marker: &str) -> Option<&'a str> {
+        let start = output.find(marker)?;
+        output[start..].lines().next()
+    }
+
+    /// The verdict the child printed for the case `name`.
+    fn printed_verdict(output: &str, name: &str) -> Option<Verdict> {
+        let line = marked_line(output, &format!("ADV case={name} verdict="))?;
+        match line.rsplit('=').next()? {
+            "allowed" => Some(Verdict::Allowed),
+            "denied" => Some(Verdict::Denied),
+            "failed" => Some(Verdict::Failed),
+            "invalid" => Some(Verdict::Invalid),
+            _ => None,
+        }
+    }
+
+    /// What the policy decided about a network call, which is not always what
+    /// the tool made of it. A datagram or a connection that reached the server
+    /// was let through, even when the tool then read no answer, as when the
+    /// reply of a datagram comes from another address than the one the socket
+    /// is connected to. A call that reached nothing was refused when the
+    /// tool says `denied`, and failed for another reason otherwise.
+    fn policy_verdict(tool: Verdict, reached: bool) -> Verdict {
+        if reached || tool == Verdict::Allowed {
+            Verdict::Allowed
+        } else if tool == Verdict::Denied {
+            Verdict::Denied
+        } else {
+            tool
+        }
+    }
+
+    #[test]
+    fn the_marker_is_found_with_the_prefix_of_libtest_glued_before_it() {
+        // The first line is the one the runner printed: libtest's prefix, glued
+        // to the policy line of the child.
+        let policy = "CHILD AGENT policy kernel=without private syscall landlock=abi8 fs=on tcp-port=on udp-port=off seccomp=on threads=all ip=not-expressible";
+        let glued = format!(
+            "test adversary::tests::the_adversary_is_bounded_on_linux ... {policy}\nADV case=read_inside verdict=allowed\nCHILD DONE\n"
+        );
+        let clean = format!("\n{policy}\nADV case=read_inside verdict=allowed\nCHILD DONE\n");
+        for output in [glued.as_str(), clean.as_str()] {
+            assert_eq!(marked_line(output, "CHILD AGENT policy"), Some(policy));
+            assert_eq!(marked_line(output, "CHILD DONE"), Some("CHILD DONE"));
+            assert_eq!(
+                printed_verdict(output, "read_inside"),
+                Some(Verdict::Allowed)
+            );
+            assert_eq!(printed_verdict(output, "read"), None);
+        }
+        assert_eq!(marked_line("nothing here", "CHILD DONE"), None);
+        // A line of the first case glued to the prefix is found too.
+        let first = "test t ... ADV case=read_inside verdict=denied\n";
+        assert_eq!(printed_verdict(first, "read_inside"), Some(Verdict::Denied));
+    }
+
+    #[test]
+    fn a_call_that_reached_the_server_was_let_through_whatever_the_tool_says() {
+        // The datagram to another address reaches the server and the tool reads
+        // no answer, because the reply comes from the address it did not use.
+        assert_eq!(policy_verdict(Verdict::Failed, true), Verdict::Allowed);
+        assert_eq!(policy_verdict(Verdict::Allowed, true), Verdict::Allowed);
+        assert_eq!(policy_verdict(Verdict::Allowed, false), Verdict::Allowed);
+        // Nothing reached the server and the kernel said no.
+        assert_eq!(policy_verdict(Verdict::Denied, false), Verdict::Denied);
+        // Nothing reached the server and the call failed for another reason.
+        assert_eq!(policy_verdict(Verdict::Failed, false), Verdict::Failed);
+        assert_eq!(policy_verdict(Verdict::Invalid, false), Verdict::Invalid);
+    }
+
+    #[test]
+    fn the_network_cases_carry_their_name_so_a_server_can_tell_them_apart() {
+        let table = cases(&setup());
+        for case in table
+            .iter()
+            .filter(|case| case.name.contains("_other_") || case.name.ends_with("_allowed"))
+        {
+            let call = String::from_utf8(case.call.clone()).unwrap();
+            assert!(call.contains(&case.name), "{call}");
+        }
+    }
+
     /// The listeners of the parent: one echo server for datagrams and one for
     /// HTTP on each of two ports, bound to every address so that `127.0.0.2`
-    /// reaches the same sockets as `127.0.0.1`. Each counts what reaches it,
-    /// which is the proof that a call that was let through got to the server.
+    /// reaches the same sockets as `127.0.0.1`. Each records what reaches it:
+    /// the datagram, or the request line. A call carries its name, so the
+    /// record says which calls were let through.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     struct Servers {
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -855,7 +943,7 @@ mod tests {
         /// The ports: datagram, other datagram, stream, other stream.
         ports: [u16; 4],
         /// What reached each of them.
-        seen: [std::sync::Arc<std::sync::atomic::AtomicUsize>; 4],
+        seen: [std::sync::Arc<std::sync::Mutex<Vec<String>>>; 4],
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -863,17 +951,17 @@ mod tests {
         fn start() -> Self {
             use std::io::{Read, Write};
             use std::net::{TcpListener, UdpSocket};
-            use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-            use std::sync::Arc;
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::{Arc, Mutex};
             use std::time::Duration;
 
             let stop = Arc::new(AtomicBool::new(false));
-            let seen: [Arc<AtomicUsize>; 4] =
-                std::array::from_fn(|_| Arc::new(AtomicUsize::new(0)));
+            let seen: [Arc<Mutex<Vec<String>>>; 4] =
+                std::array::from_fn(|_| Arc::new(Mutex::new(Vec::new())));
             let mut threads = Vec::new();
             let mut ports = [0u16; 4];
-            for (index, counter) in seen.iter().enumerate() {
-                let (stop, counter) = (Arc::clone(&stop), Arc::clone(counter));
+            for (index, record) in seen.iter().enumerate() {
+                let (stop, record) = (Arc::clone(&stop), Arc::clone(record));
                 if index < 2 {
                     let socket = UdpSocket::bind(("0.0.0.0", 0)).unwrap();
                     socket
@@ -881,10 +969,13 @@ mod tests {
                         .unwrap();
                     ports[index] = socket.local_addr().unwrap().port();
                     threads.push(std::thread::spawn(move || {
-                        let mut buffer = [0u8; 64];
+                        let mut buffer = [0u8; 256];
                         while !stop.load(Ordering::Relaxed) {
                             if let Ok((length, from)) = socket.recv_from(&mut buffer) {
-                                counter.fetch_add(1, Ordering::Relaxed);
+                                record
+                                    .lock()
+                                    .unwrap()
+                                    .push(String::from_utf8_lossy(&buffer[..length]).into_owned());
                                 let _ = socket.send_to(&buffer[..length], from);
                             }
                         }
@@ -897,12 +988,17 @@ mod tests {
                         while !stop.load(Ordering::Relaxed) {
                             match listener.accept() {
                                 Ok((mut stream, _)) => {
-                                    counter.fetch_add(1, Ordering::Relaxed);
                                     let _ = stream.set_nonblocking(false);
                                     let _ = stream
                                         .set_read_timeout(Some(Duration::from_millis(200)));
                                     let mut request = [0u8; 1024];
-                                    let _ = stream.read(&mut request);
+                                    let length = stream.read(&mut request).unwrap_or(0);
+                                    // A connection that sent nothing is recorded
+                                    // too: it reached the server.
+                                    record
+                                        .lock()
+                                        .unwrap()
+                                        .push(String::from_utf8_lossy(&request[..length]).into_owned());
                                     let _ = stream.write_all(
                                         b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
                                     );
@@ -921,8 +1017,16 @@ mod tests {
             }
         }
 
-        fn seen(&self, index: usize) -> usize {
-            self.seen[index].load(std::sync::atomic::Ordering::Relaxed)
+        /// Whether a datagram or a request that carries `name` reached any of
+        /// the servers.
+        fn reached(&self, name: &str) -> bool {
+            self.seen.iter().any(|record| {
+                record
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|seen| seen.contains(name))
+            })
         }
     }
 
@@ -936,6 +1040,25 @@ mod tests {
         }
     }
 
+    /// The setup of the Linux tree: the root is `agent` under the directory,
+    /// the servers are on the loopback, and the tree has the symbolic link.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn linux_setup(directory: &str, ports: [u16; 4], udp_ports: bool) -> Setup {
+        let [udp, other_udp, tcp, other_tcp] = ports;
+        Setup {
+            base: directory.to_string(),
+            root: format!("{directory}/agent"),
+            allowed_ip: [127, 0, 0, 1],
+            other_ip: [127, 0, 0, 2],
+            udp_port: udp,
+            tcp_port: tcp,
+            other_udp_port: other_udp,
+            other_tcp_port: other_tcp,
+            linux_udp_ports: udp_ports,
+            links: true,
+        }
+    }
+
     /// The child gets its directory, the four ports and whether `127.0.0.2` is
     /// routable in this variable.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -945,6 +1068,10 @@ mod tests {
     /// child: the test runs again as a process of its own, restricted by the
     /// manifest, and the parent, which made the listeners before the child was
     /// restricted, reads what it printed and what reached the servers.
+    ///
+    /// The tool of a network call may report a failure for a call the kernel
+    /// let through, so the verdict of a network case is the one the servers
+    /// give: a call that reached one was allowed.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     #[test]
     fn the_adversary_is_bounded_on_linux() {
@@ -999,89 +1126,81 @@ mod tests {
         let output = run_child(command, 60);
         println!("{}", output.stdout);
         eprintln!("{}", output.stderr);
+        let everything = format!("{}{}", output.stdout, output.stderr);
         assert!(
             !output.timed_out,
-            "the child ran out of time:\n{}{}",
-            output.stdout, output.stderr
+            "the child ran out of time:\n{everything}"
         );
+        assert!(output.success, "the child failed:\n{everything}");
         assert!(
-            output.success,
-            "the child failed:\n{}{}",
-            output.stdout, output.stderr
-        );
-        assert!(
-            output.stdout.contains("CHILD DONE"),
-            "the child did not finish:\n{}{}",
-            output.stdout,
-            output.stderr
+            marked_line(&output.stdout, "CHILD DONE").is_some(),
+            "the child did not finish:\n{everything}"
         );
 
-        // What reached the servers says what the kernel let through. Tools
-        // retry, so a call that must reach a port is counted with `>=`, and a
-        // call that must be denied reached nothing.
-        let report = output
-            .stdout
-            .lines()
-            .find(|line| line.starts_with("CHILD AGENT policy"))
-            .expect("the child printed no `CHILD AGENT policy` line");
-        if report.contains(" fs=on") {
-            let reached = if routable { 2 } else { 1 };
-            assert!(
-                servers.seen(0) >= reached,
-                "datagrams that reached the allowed port"
-            );
-            assert!(
-                servers.seen(2) >= reached,
-                "connections that reached the allowed port"
-            );
-            if report.contains("udp-port=on") {
-                assert_eq!(servers.seen(1), 0, "datagrams that reached the other port");
+        let line = marked_line(&output.stdout, "CHILD AGENT policy").unwrap_or_else(|| {
+            panic!("the child printed no `CHILD AGENT policy` line:\n{everything}")
+        });
+        if !line.contains(" fs=on") {
+            return;
+        }
+        let setup = linux_setup(directory, servers.ports, line.contains("udp-port=on"));
+        let tcp_ports = line.contains("tcp-port=on");
+        for case in cases(&setup) {
+            if !matches!(case.intent, Intent::Connect { .. }) {
+                continue;
+            }
+            if case.name.ends_with("_other_ip") && !routable {
+                eprintln!("SKIP {} reason=127.0.0.2 not routable", case.name);
+                continue;
+            }
+            let tool = printed_verdict(&output.stdout, &case.name)
+                .unwrap_or_else(|| panic!("the child printed no verdict for {}", case.name));
+            let reached = servers.reached(&case.name);
+            let policy = policy_verdict(tool, reached);
+            // Without Landlock rules for stream ports the other port is not
+            // refused either.
+            let expected = if case.name == "http_get_other_port" && !tcp_ports {
+                Verdict::Allowed
             } else {
-                assert!(
-                    servers.seen(1) >= 1,
-                    "datagrams to the other port, not enforced"
+                case.linux
+            };
+            println!(
+                "ADV net case={} verdict={} reached={} detail={}",
+                case.name,
+                policy.as_str(),
+                if reached { "yes" } else { "no" },
+                tool.as_str()
+            );
+            if policy == Verdict::Allowed && case.rabbit == Verdict::Denied {
+                println!(
+                    "GAP case={} rabbit={} linux={} reached={} why={}",
+                    case.name,
+                    case.rabbit.as_str(),
+                    policy.as_str(),
+                    if reached { "yes" } else { "no" },
+                    case.gap.unwrap_or("")
                 );
             }
-            if report.contains("tcp-port=on") {
-                assert_eq!(
-                    servers.seen(3),
-                    0,
-                    "connections that reached the other port"
-                );
-            } else {
-                assert!(
-                    servers.seen(3) >= 1,
-                    "connections to the other port, not enforced"
-                );
-            }
+            assert_eq!(policy, expected, "{} (tool: {})", case.name, tool.as_str());
         }
     }
 
     /// The part that runs restricted. It prints every line of the report, the
-    /// gaps with the label `GAP`, and fails when a call does not come to the
-    /// verdict the tree and the kernel give it.
+    /// gaps of the files with the label `GAP`, and fails when a call does not
+    /// come to the verdict the tree and the kernel give it. The network calls
+    /// are judged by the parent, which owns the servers.
     ///
     /// A kernel that reports Landlock and does not enforce it fails the test,
     /// and so does a kernel with no Landlock when `RABBIT_REQUIRE_LANDLOCK=1`;
     /// otherwise a kernel with no Landlock skips the assertions, on stderr.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn child(parameters: &str) {
+        // libtest may have left `test name ... ` on this line.
+        println!();
         let fields: Vec<&str> = parameters.split(',').collect();
         let port = |index: usize| fields[index].parse::<u16>().unwrap();
-        let routable = fields[5] == "1";
         let directory = fields[0];
-        let mut setup = Setup {
-            base: directory.to_string(),
-            root: format!("{directory}/agent"),
-            allowed_ip: [127, 0, 0, 1],
-            other_ip: [127, 0, 0, 2],
-            udp_port: port(1),
-            tcp_port: port(3),
-            other_udp_port: port(2),
-            other_tcp_port: port(4),
-            linux_udp_ports: false,
-            links: true,
-        };
+        let mut setup = linux_setup(directory, [port(1), port(2), port(3), port(4)], false);
         let policy = setup.manifest().unwrap();
 
         // What the family comes to on this tree: a path that does not exist
@@ -1135,12 +1254,7 @@ mod tests {
                 assert_eq!(verdict, expected, "{}", case.name);
                 continue;
             }
-            if case.name.ends_with("_other_ip") && !routable {
-                eprintln!("SKIP {} reason=127.0.0.2 not routable", case.name);
-                continue;
-            }
-            if case.name == "http_get_other_port" && !applied.tcp_port {
-                eprintln!("SKIP {}: stream ports need Landlock ABI 4", case.name);
+            if matches!(case.intent, Intent::Connect { .. }) {
                 continue;
             }
             if let Some(why) = case.gap {
@@ -1150,17 +1264,8 @@ mod tests {
                     case.rabbit.as_str(),
                     verdict.as_str()
                 );
-                // The gap is that the call is not refused. A datagram to
-                // another address reaches the server, but the answer comes
-                // from the other address of the host, so the tool may report
-                // no answer.
-                assert_ne!(*verdict, Verdict::Denied, "{} is denied: no gap", case.name);
-                if case.name == "http_get_other_ip" {
-                    assert_eq!(*verdict, Verdict::Allowed, "{}", case.name);
-                }
-            } else {
-                assert_eq!(*verdict, case.linux, "{}", case.name);
             }
+            assert_eq!(*verdict, case.linux, "{}", case.name);
         }
         println!("CHILD DONE");
     }
