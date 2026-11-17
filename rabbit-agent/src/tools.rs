@@ -729,7 +729,7 @@ unsafe fn syscall1(number: u64, argument1: u64) -> i64 {
 ///
 /// See [`syscall1`].
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe fn syscall3(number: u64, argument1: u64, argument2: u64, argument3: u64) -> i64 {
+pub(crate) unsafe fn syscall3(number: u64, argument1: u64, argument2: u64, argument3: u64) -> i64 {
     let result: i64;
     // SAFETY: the caller upholds the contract above.
     unsafe {

@@ -62,7 +62,7 @@
 //! parser for prose:
 //!
 //! ```text
-//! AGENT policy bytes=<n>
+//! AGENT policy installed bytes=<n>
 //! AGENT step=<n> tool=<name> args=<json> result=<text>
 //! AGENT selftest tool=net_send args=<json> result=<text>
 //! AGENT selftest tool=http_get args=<json> result=<text>
@@ -71,8 +71,11 @@
 //! AGENT DONE
 //! ```
 //!
-//! The `AGENT policy` line is the one line on stderr: the size of the encoded
-//! capability policy of the run, built by [`capability::manifest`]. The serial
+//! The `AGENT policy` line is the one line on stderr: what the kernel answered
+//! when the agent installed the capability policy of the run, built by
+//! [`capability::manifest`], through the private call of Rabbit. `installed`
+//! carries the size of the encoded policy, `kernel=linux` says that the kernel
+//! has no such call and `ERR errno=<n>` that it refused. The serial
 //! console mixes stderr into the guest log, so the line appears there; the
 //! greps of the gates are anchored on the other lines and ignore it.
 
@@ -408,10 +411,8 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
 #[cfg(target_os = "linux")]
 fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
     // The policy of the run is built from the tools the loop declares and the
-    // servers of the task. Nothing enforces it yet: its size goes to stderr.
-    // The serial console mixes stderr into the guest log, so the line shows
-    // there; the greps of the gates are anchored on the other lines and
-    // ignore it.
+    // servers of the task, and it is installed once the model is loaded: the
+    // files of the model are open and mapped by then. Nothing enforces it yet.
     let address = endpoint.address.octets();
     let servers = [
         PolicyEndpoint {
@@ -425,20 +426,23 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
             port: endpoint.http_port,
         },
     ];
-    let scope = capability::Scope {
-        read_roots: &[],
-        write_roots: &[],
-        endpoints: &servers,
-    };
-    let policy = capability::manifest(&tools::NAMES, &scope)
+    let policy = capability::manifest(&tools::NAMES, &capability::scope(&servers))
         .map_err(|reason| format!("policy: {reason:?}"))?;
     let mut wire = [0; rabbit_policy::MAX_ENCODED_LEN];
     let bytes = policy
         .encode(&mut wire)
         .map_err(|reason| format!("policy: {reason:?}"))?;
-    eprintln!("AGENT policy bytes={bytes}");
 
     let mut server = Server::open()?;
+    // The answer goes to stderr. Any answer but a refusal of the call is not
+    // fatal: nothing enforces the policy yet, and a kernel without the call is
+    // a kernel the agent has to run on too. The serial console mixes stderr
+    // into the guest log, so the line shows there; the greps of the gates are
+    // anchored on the other lines and ignore it.
+    eprintln!(
+        "{}",
+        capability::install_line(capability::install(&wire[..bytes]), bytes)
+    );
     let encoder = encode::Encoder::new(server.vocab())?;
     // The default bound on the argument strings: a path, a command or the
     // answer of `done` fits, and an unterminated string stops the call. The

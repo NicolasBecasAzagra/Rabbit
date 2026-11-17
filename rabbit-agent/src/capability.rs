@@ -37,6 +37,19 @@ pub struct Scope<'a> {
     pub endpoints: &'a [Endpoint],
 }
 
+/// Roots the files of the agent are read under.
+const READ_ROOTS: &[&str] = &["/agent"];
+
+/// The scope of the agent: it reads under [`READ_ROOTS`], writes nowhere, and
+/// reaches the servers of the task.
+pub fn scope(endpoints: &[Endpoint]) -> Scope<'_> {
+    Scope {
+        read_roots: READ_ROOTS,
+        write_roots: &[],
+        endpoints,
+    }
+}
+
 /// The policy of a run that declares `tools` and has the reach of `scope`.
 ///
 /// A name that is not in [`CAPABILITIES`] is [`Reason::Malformed`]: a tool the
@@ -84,6 +97,51 @@ fn refuse_whole_tree(root: &str) -> Result<(), Reason> {
     }
 }
 
+/// The private system call of Rabbit that installs a policy.
+///
+/// Linux answers `ENOSYS` for it, which is how the agent knows which kernel
+/// it runs on.
+#[cfg(target_os = "linux")]
+const SYS_RABBIT_POLICY: u64 = 500;
+
+/// `ENOSYS`, as a system call result.
+const ENOSYS: i64 = -38;
+
+/// Hand the kernel the encoded policy and return what it answered.
+///
+/// The result is the raw one: zero, or a negated error number. A target that
+/// is not x86-64 has no raw call here and answers like a kernel without it.
+#[cfg(target_os = "linux")]
+pub fn install(bytes: &[u8]) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the kernel reads `bytes.len()` bytes from a slice that is
+        // valid for that long, and the call takes no other argument.
+        unsafe {
+            tools::syscall3(
+                SYS_RABBIT_POLICY,
+                bytes.as_ptr() as u64,
+                bytes.len() as u64,
+                0,
+            )
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = bytes;
+        ENOSYS
+    }
+}
+
+/// The log line for the answer of [`install`] to a policy of `bytes` bytes.
+pub fn install_line(result: i64, bytes: usize) -> String {
+    match result {
+        0 => format!("AGENT policy installed bytes={bytes}"),
+        ENOSYS => "AGENT policy kernel=linux (no private syscall)".to_string(),
+        other => format!("AGENT policy ERR errno={}", other.saturating_neg()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rabbit_policy::{Protocol, Verdict};
@@ -92,7 +150,7 @@ mod tests {
 
     const SERVER: [u8; 4] = [10, 0, 2, 2];
 
-    fn scope(endpoints: &[Endpoint]) -> Scope<'_> {
+    fn reach(endpoints: &[Endpoint]) -> Scope<'_> {
         Scope {
             read_roots: &["/in"],
             write_roots: &["/out"],
@@ -131,7 +189,7 @@ mod tests {
     #[test]
     fn compute_and_done_grant_nothing() {
         let endpoints = endpoints();
-        let policy = manifest(&["compute", "done"], &scope(&endpoints)).unwrap();
+        let policy = manifest(&["compute", "done"], &reach(&endpoints)).unwrap();
         assert_eq!(policy, Policy::new(Capabilities::EMPTY));
         assert_eq!(
             policy.check_open(b"/in/a", false),
@@ -147,7 +205,7 @@ mod tests {
     fn a_manifest_without_http_get_cannot_connect_over_tcp() {
         let endpoints = endpoints();
         let declared = ["read_file", "net_send", "compute", "done"];
-        let policy = manifest(&declared, &scope(&endpoints)).unwrap();
+        let policy = manifest(&declared, &reach(&endpoints)).unwrap();
         assert_eq!(
             policy.check_connect(Protocol::Tcp, SERVER, 80),
             Verdict::Deny(Reason::NotGranted)
@@ -161,14 +219,14 @@ mod tests {
     #[test]
     fn a_rule_is_installed_only_when_its_capability_is_granted() {
         let endpoints = endpoints();
-        let policy = manifest(&["read_file"], &scope(&endpoints)).unwrap();
+        let policy = manifest(&["read_file"], &reach(&endpoints)).unwrap();
         assert_eq!(policy.check_open(b"/in/a", false), Verdict::Allow);
         assert_eq!(
             policy.check_open(b"/out/a", true),
             Verdict::Deny(Reason::NotGranted)
         );
 
-        let policy = manifest(&["write_file"], &scope(&endpoints)).unwrap();
+        let policy = manifest(&["write_file"], &reach(&endpoints)).unwrap();
         assert_eq!(policy.check_open(b"/out/a", true), Verdict::Allow);
         assert_eq!(
             policy.check_open(b"/in/a", false),
@@ -179,7 +237,7 @@ mod tests {
     #[test]
     fn all_seven_tools_allow_the_endpoint_of_the_scope_and_no_other_ip() {
         let endpoints = endpoints();
-        let policy = manifest(&tools::NAMES, &scope(&endpoints)).unwrap();
+        let policy = manifest(&tools::NAMES, &reach(&endpoints)).unwrap();
         assert_eq!(
             policy.check_connect(Protocol::Tcp, SERVER, 80),
             Verdict::Allow
@@ -204,7 +262,7 @@ mod tests {
     fn an_unknown_tool_is_refused() {
         let endpoints = endpoints();
         assert_eq!(
-            manifest(&["read_file", "rm_rf"], &scope(&endpoints)),
+            manifest(&["read_file", "rm_rf"], &reach(&endpoints)),
             Err(Reason::Malformed)
         );
     }
@@ -218,6 +276,40 @@ mod tests {
             endpoints: &endpoints,
         };
         assert_eq!(manifest(&["read_file"], &scope), Err(Reason::Capacity));
+    }
+
+    #[test]
+    fn the_scope_of_the_agent_builds_a_manifest_of_all_seven_tools() {
+        let endpoints = endpoints();
+        let policy = manifest(&tools::NAMES, &scope(&endpoints)).unwrap();
+        assert_eq!(policy.check_open(b"/agent/x", false), Verdict::Allow);
+        assert_eq!(
+            policy.check_open(b"/agentx", false),
+            Verdict::Deny(Reason::OutsideRoots)
+        );
+        assert_eq!(
+            policy.check_open(b"/etc/passwd", false),
+            Verdict::Deny(Reason::OutsideRoots)
+        );
+        assert_eq!(
+            policy.check_open(b"/agent/x", true),
+            Verdict::Deny(Reason::OutsideRoots)
+        );
+        assert_eq!(
+            policy.check_connect(Protocol::Tcp, SERVER, 80),
+            Verdict::Allow
+        );
+    }
+
+    #[test]
+    fn the_answers_of_the_kernel_have_their_line() {
+        assert_eq!(install_line(0, 15), "AGENT policy installed bytes=15");
+        assert_eq!(
+            install_line(-38, 15),
+            "AGENT policy kernel=linux (no private syscall)"
+        );
+        assert_eq!(install_line(-1, 15), "AGENT policy ERR errno=1");
+        assert_eq!(install_line(-22, 15), "AGENT policy ERR errno=22");
     }
 
     #[test]
