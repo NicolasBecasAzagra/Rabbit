@@ -394,6 +394,9 @@ pub use raw::apply;
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    use crate::scratch::Scratch;
+
     use super::{Failure, Report};
 
     fn full() -> Report {
@@ -489,37 +492,6 @@ mod tests {
         assert!(line.contains("ip=not-expressible"));
     }
 
-    /// The directory the child works in. It is removed when the guard drops,
-    /// also when the test panics.
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    struct Scratch(String);
-
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    impl Scratch {
-        fn new() -> Self {
-            let nanoseconds = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or(0);
-            let directory = Self(format!(
-                "/tmp/rabbit-linux-policy-{}-{nanoseconds}",
-                std::process::id()
-            ));
-            std::fs::create_dir_all(format!("{}/in", directory.0)).unwrap();
-            std::fs::create_dir_all(format!("{}/out", directory.0)).unwrap();
-            std::fs::write(format!("{}/in/inside.txt", directory.0), "inside").unwrap();
-            std::fs::write(format!("{}/out/outside.txt", directory.0), "outside").unwrap();
-            directory
-        }
-    }
-
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     /// Landlock and seccomp cannot be undone, so the enforcement is checked in
     /// a child: the test runs again as a process of its own, with this
     /// variable naming the directory it works in, and the parent reads what
@@ -537,7 +509,12 @@ mod tests {
             return;
         }
 
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("rabbit-linux-policy");
+        let directory = scratch.path();
+        std::fs::create_dir_all(format!("{directory}/in")).unwrap();
+        std::fs::create_dir_all(format!("{directory}/out")).unwrap();
+        std::fs::write(format!("{directory}/in/inside.txt"), "inside").unwrap();
+        std::fs::write(format!("{directory}/out/outside.txt"), "outside").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -545,7 +522,7 @@ mod tests {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env(CHILD, &scratch.0)
+            .env(CHILD, directory)
             .output()
             .unwrap();
 

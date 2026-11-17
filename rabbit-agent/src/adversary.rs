@@ -734,4 +734,250 @@ mod tests {
             assert_eq!(path.len(), 128, "{name}");
         }
     }
+
+    /// The listeners of the parent: one echo server for datagrams and one for
+    /// HTTP on each of two ports, bound to every address so that `127.0.0.2`
+    /// reaches the same sockets as `127.0.0.1`. Each counts what reaches it,
+    /// which is the proof that a call that was let through got to the server.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    struct Servers {
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        threads: Vec<std::thread::JoinHandle<()>>,
+        /// The ports: datagram, other datagram, stream, other stream.
+        ports: [u16; 4],
+        /// What reached each of them.
+        seen: [std::sync::Arc<std::sync::atomic::AtomicUsize>; 4],
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    impl Servers {
+        fn start() -> Self {
+            use std::io::{Read, Write};
+            use std::net::{TcpListener, UdpSocket};
+            use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+            use std::sync::Arc;
+            use std::time::Duration;
+
+            let stop = Arc::new(AtomicBool::new(false));
+            let seen: [Arc<AtomicUsize>; 4] =
+                std::array::from_fn(|_| Arc::new(AtomicUsize::new(0)));
+            let mut threads = Vec::new();
+            let mut ports = [0u16; 4];
+            for (index, counter) in seen.iter().enumerate() {
+                let (stop, counter) = (Arc::clone(&stop), Arc::clone(counter));
+                if index < 2 {
+                    let socket = UdpSocket::bind(("0.0.0.0", 0)).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_millis(50)))
+                        .unwrap();
+                    ports[index] = socket.local_addr().unwrap().port();
+                    threads.push(std::thread::spawn(move || {
+                        let mut buffer = [0u8; 64];
+                        while !stop.load(Ordering::Relaxed) {
+                            if let Ok((length, from)) = socket.recv_from(&mut buffer) {
+                                counter.fetch_add(1, Ordering::Relaxed);
+                                let _ = socket.send_to(&buffer[..length], from);
+                            }
+                        }
+                    }));
+                } else {
+                    let listener = TcpListener::bind(("0.0.0.0", 0)).unwrap();
+                    listener.set_nonblocking(true).unwrap();
+                    ports[index] = listener.local_addr().unwrap().port();
+                    threads.push(std::thread::spawn(move || {
+                        while !stop.load(Ordering::Relaxed) {
+                            match listener.accept() {
+                                Ok((mut stream, _)) => {
+                                    counter.fetch_add(1, Ordering::Relaxed);
+                                    let _ = stream.set_nonblocking(false);
+                                    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                                    let mut request = [0u8; 1024];
+                                    let _ = stream.read(&mut request);
+                                    let _ = stream.write_all(
+                                        b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                                    );
+                                }
+                                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                            }
+                        }
+                    }));
+                }
+            }
+            Self {
+                stop,
+                threads,
+                ports,
+                seen,
+            }
+        }
+
+        fn seen(&self, index: usize) -> usize {
+            self.seen[index].load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    impl Drop for Servers {
+        fn drop(&mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            for thread in self.threads.drain(..) {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// The child gets its directory and the four ports in this variable.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    const CHILD: &str = "RABBIT_ADVERSARY_CHILD";
+
+    /// Neither Landlock nor seccomp can be undone, so the adversary runs in a
+    /// child: the test runs again as a process of its own, restricted by the
+    /// manifest, and the parent, which made the listeners before the child was
+    /// restricted, reads what it printed and what reached the servers.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn the_adversary_is_bounded_on_linux() {
+        use std::process::Command;
+
+        use crate::scratch::Scratch;
+
+        if let Ok(parameters) = std::env::var(CHILD) {
+            child(&parameters);
+            return;
+        }
+
+        let scratch = Scratch::new("rabbit-adversary");
+        let directory = scratch.path();
+        std::fs::create_dir_all(format!("{directory}/agent")).unwrap();
+        std::fs::write(format!("{directory}/agent/hello.txt"), "hello").unwrap();
+        std::fs::write(format!("{directory}/secret.txt"), "secret").unwrap();
+        let servers = Servers::start();
+        let [udp, other_udp, tcp, other_tcp] = servers.ports;
+
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "adversary::tests::the_adversary_is_bounded_on_linux",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(
+                CHILD,
+                format!("{directory},{udp},{other_udp},{tcp},{other_tcp}"),
+            )
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("{stdout}");
+        eprintln!("{stderr}");
+        assert!(output.status.success(), "the child failed");
+        assert!(stdout.contains("CHILD DONE"), "the child did not finish");
+
+        // What reached the servers says what the kernel let through: the
+        // allowed call and the call to another address reached the allowed
+        // ports, and the other ports were reached only where the kernel
+        // cannot enforce them.
+        let report = stdout
+            .lines()
+            .find(|line| line.starts_with("CHILD AGENT policy"))
+            .unwrap_or_default();
+        if report.contains(" fs=on") {
+            assert_eq!(
+                servers.seen(0),
+                2,
+                "datagrams that reached the allowed port"
+            );
+            assert_eq!(
+                servers.seen(2),
+                2,
+                "connections that reached the allowed port"
+            );
+            let udp_ports = report.contains("udp-port=on");
+            assert_eq!(
+                servers.seen(1),
+                usize::from(!udp_ports),
+                "datagrams to the other port"
+            );
+            let tcp_ports = report.contains("tcp-port=on");
+            assert_eq!(
+                servers.seen(3),
+                usize::from(!tcp_ports),
+                "connections to the other port"
+            );
+        }
+    }
+
+    /// The part that runs restricted. It prints every line of the report, the
+    /// gaps with the label `GAP`, and fails when a call that must be denied is
+    /// not. A kernel that reports Landlock and does not enforce it fails the
+    /// test; a kernel with no Landlock skips the assertions, on stderr.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn child(parameters: &str) {
+        let fields: Vec<&str> = parameters.split(',').collect();
+        let port = |index: usize| fields[index].parse::<u16>().unwrap();
+        let directory = fields[0];
+        let mut setup = Setup {
+            base: directory.to_string(),
+            root: format!("{directory}/agent"),
+            allowed_ip: [127, 0, 0, 1],
+            other_ip: [127, 0, 0, 2],
+            udp_port: port(1),
+            tcp_port: port(3),
+            other_udp_port: port(2),
+            other_tcp_port: port(4),
+            linux_udp_ports: false,
+        };
+        let policy = setup.manifest().unwrap();
+
+        let applied = crate::linux_policy::apply(&policy);
+        let line = applied.line();
+        println!("CHILD {line}");
+        assert!(applied.no_new_privs, "no_new_privs was refused: {line}");
+        setup.linux_udp_ports = applied.udp_port;
+
+        let results = execute(cases(&setup));
+        for line in report(&results, "linux") {
+            println!("{line}");
+        }
+
+        if !applied.fs {
+            assert_eq!(
+                applied.landlock_abi, 0,
+                "the kernel reports Landlock but it is not in force: {line}"
+            );
+            eprintln!("SKIP landlock unavailable: the kernel reports no Landlock ABI: {line}");
+            println!("CHILD DONE");
+            return;
+        }
+        for (case, verdict) in &results {
+            if case.name.starts_with("enum_") {
+                assert_ne!(*verdict, Verdict::Allowed, "{} was allowed", case.name);
+                continue;
+            }
+            if case.name == "http_get_other_port" && !applied.tcp_port {
+                eprintln!("SKIP {}: stream ports need Landlock ABI 4", case.name);
+                continue;
+            }
+            if let Some(why) = case.gap {
+                println!(
+                    "GAP case={} rabbit={} linux={} why={why}",
+                    case.name,
+                    case.rabbit.as_str(),
+                    verdict.as_str()
+                );
+                // The gap is that the call is not refused. A datagram to
+                // another address reaches the server, but the answer comes
+                // from the other address of the host, so the tool may report
+                // no answer.
+                assert_ne!(*verdict, Verdict::Denied, "{} is denied: no gap", case.name);
+                if case.name == "http_get_other_ip" {
+                    assert_eq!(*verdict, Verdict::Allowed, "{}", case.name);
+                }
+            } else {
+                assert_eq!(*verdict, case.linux, "{}", case.name);
+            }
+        }
+        println!("CHILD DONE");
+    }
 }

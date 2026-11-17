@@ -30,11 +30,17 @@
 //! http_port=43513
 //! path=/index.html
 //! selftest=1
+//! adversary=1
 //! ```
 //!
 //! `port` is the server of the datagram and `http_port` the server of the
 //! request; `path` is the resource the default task asks for. The scheme is
 //! `http` and the parser refuses any other, because the client has no TLS.
+//!
+//! `adversary=1`, or the argument `--adversary`, makes the agent install its
+//! policy and then run the table of [`adversary`] instead of the loop: calls
+//! that the grammar accepts, each with the verdict the kernel gave it. The model
+//! is not opened.
 //!
 //! `selftest=1` makes the agent call the network tools once before it asks the
 //! model, with the same code path the model uses, and print each result as an
@@ -69,6 +75,8 @@
 //! AGENT answer=<text>
 //! AGENT steps=<n> tokens=<n> seconds=<f64> tool_calls=<n> [net_us=<n> retries=<n>] [http_us=<n> http_retries=<n>]
 //! AGENT DONE
+//! ADV case=<name> verdict=<allowed|denied|failed>
+//! ADV summary cases=<n> allowed=<n> denied=<n> failed=<n> kernel=<rabbit|linux|unknown>
 //! ```
 //!
 //! The `AGENT policy` line is the one line on stderr: what the kernel answered
@@ -86,7 +94,6 @@
 // the helpers exist for the tests in that build.
 #![cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 
-#[cfg(test)]
 mod adversary;
 mod call;
 mod capability;
@@ -98,6 +105,8 @@ mod link;
 #[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 mod linux_policy;
 #[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(test, target_os = "linux"))]
+mod scratch;
 mod seccomp;
 mod tools;
 
@@ -161,6 +170,8 @@ pub struct Endpoint {
     pub path: String,
     /// Whether the agent proves the network tools before it asks the model.
     pub selftest: bool,
+    /// Whether the agent runs the adversary instead of the loop.
+    pub adversary: bool,
 }
 
 impl Default for Endpoint {
@@ -172,6 +183,7 @@ impl Default for Endpoint {
             scheme: "http".to_string(),
             path: "/".to_string(),
             selftest: false,
+            adversary: false,
         }
     }
 }
@@ -230,6 +242,7 @@ impl Endpoint {
                     endpoint.path = value.to_string();
                 }
                 "selftest" => endpoint.selftest = parse_flag(value)?,
+                "adversary" => endpoint.adversary = parse_flag(value)?,
                 other => return Err(format!("config: unknown key: {other}")),
             }
         }
@@ -417,11 +430,10 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
     samples
 }
 
-/// Drive the loop until `done` or [`MAX_STEPS`].
+/// The policy of a run and its encoding: the manifest of every tool, the fixed
+/// scope of the agent, and the servers of the task.
 #[cfg(target_os = "linux")]
-fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
-    // The policy of the run is built from the tools the loop declares and the
-    // servers of the task, and it is installed once the startup is over.
+fn manifest_of(endpoint: &Endpoint) -> Result<(rabbit_policy::Policy, Vec<u8>), String> {
     let address = endpoint.address.octets();
     let servers = [
         PolicyEndpoint {
@@ -441,6 +453,31 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
     let bytes = policy
         .encode(&mut wire)
         .map_err(|reason| format!("policy: {reason:?}"))?;
+    Ok((policy, wire[..bytes].to_vec()))
+}
+
+/// Install the policy the way the loop does, run the calls of the adversary
+/// and print what each came to. The model is not opened.
+#[cfg(target_os = "linux")]
+fn run_adversary(endpoint: &Endpoint) -> Result<(), String> {
+    let (policy, wire) = manifest_of(endpoint)?;
+    let answer = capability::install(&wire);
+    eprintln!("{}", capability::settle(&policy, answer, wire.len()));
+    let setup =
+        adversary::Setup::rabbit(endpoint.address.octets(), endpoint.port, endpoint.http_port);
+    let results = adversary::execute(adversary::cases(&setup));
+    for line in adversary::report(&results, capability::kernel(answer)) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// Drive the loop until `done` or [`MAX_STEPS`].
+#[cfg(target_os = "linux")]
+fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
+    // The policy of the run is built from the tools the loop declares and the
+    // servers of the task, and it is installed once the startup is over.
+    let (policy, wire) = manifest_of(endpoint)?;
 
     let mut server = Server::open()?;
     let encoder = encode::Encoder::new(server.vocab())?;
@@ -459,7 +496,7 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
     // anchored on the other lines and ignore it.
     eprintln!(
         "{}",
-        capability::settle(&policy, capability::install(&wire[..bytes]), bytes)
+        capability::settle(&policy, capability::install(&wire), wire.len())
     );
     // The default bound on the argument strings: a path, a command or the
     // answer of `done` fits, and an unterminated string stops the call. The
@@ -598,8 +635,13 @@ fn main() {
             leave(1);
         }
     };
-    let task = default_task(&arguments, &endpoint.url());
-    if let Err(error) = run(&task, &endpoint) {
+    let result = if endpoint.adversary || arguments.iter().any(|argument| argument == "--adversary")
+    {
+        run_adversary(&endpoint).map_err(Into::into)
+    } else {
+        run(&default_task(&arguments, &endpoint.url()), &endpoint)
+    };
+    if let Err(error) = result {
         eprintln!("AGENT ERR {error}");
         leave(1);
     }
@@ -653,6 +695,8 @@ mod tests {
         assert_eq!(Endpoint::default().port, DEFAULT_PORT);
         assert_eq!(Endpoint::default().http_port, DEFAULT_HTTP_PORT);
         assert!(!Endpoint::default().selftest);
+        assert!(!Endpoint::default().adversary);
+        assert!(Endpoint::from_text("adversary=1\n").unwrap().adversary);
     }
 
     #[test]

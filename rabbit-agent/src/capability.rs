@@ -154,6 +154,16 @@ pub fn settle(policy: &Policy, answer: i64, bytes: usize) -> String {
     install_line(answer, bytes)
 }
 
+/// The kernel a run is on, from its answer to [`install`]: Rabbit accepts the
+/// call, and a kernel that answers `ENOSYS` is Linux.
+pub fn kernel(answer: i64) -> &'static str {
+    match answer {
+        0 => "rabbit",
+        ENOSYS => "linux",
+        _ => "unknown",
+    }
+}
+
 /// The log line for the answer of [`install`] to a policy of `bytes` bytes.
 pub fn install_line(result: i64, bytes: usize) -> String {
     match result {
@@ -320,6 +330,13 @@ mod tests {
             policy.check_connect(Protocol::Tcp, SERVER, 80),
             Verdict::Allow
         );
+    }
+
+    #[test]
+    fn the_answer_of_the_kernel_names_the_kernel() {
+        assert_eq!(kernel(0), "rabbit");
+        assert_eq!(kernel(-38), "linux");
+        assert_eq!(kernel(-1), "unknown");
     }
 
     #[test]

@@ -61,6 +61,15 @@ jobs:
             --target-dir "$HOME/.cache/rabbit/target/agent-host" \
             linux_policy::tests::the_manifest_is_enforced_in_a_child_process \
             -- --nocapture --test-threads=1
+          # The adversary makes the calls that the grammar lets through, in a
+          # child restricted by the manifest, and the log has one ADV line per
+          # case and a GAP line for each place where Linux is weaker than
+          # Rabbit. The test fails when a call that must be denied is not.
+          cargo test --manifest-path rabbit-agent/Cargo.toml \
+            --target "$(rustc -vV | sed -n 's/^host: //p')" \
+            --target-dir "$HOME/.cache/rabbit/target/agent-host" \
+            adversary::tests::the_adversary_is_bounded_on_linux \
+            -- --nocapture --test-threads=1
 
       - name: Build kernel
         run: make build
