@@ -15,6 +15,11 @@
 //! address. Every step that the kernel refuses is reported and is not fatal:
 //! the agent runs with whatever protection the kernel could give it.
 //!
+//! UDP ports are restricted only from Landlock ABI 10: the right is
+//! `LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP`, `1ULL << 3` in
+//! `include/uapi/linux/landlock.h`, documented there as "Support added in
+//! Landlock ABI version 10". On an older kernel the report says `udp-port=off`.
+//!
 //! The values come from the public headers of the kernel: the calls from
 //! `arch/x86/entry/syscalls/syscall_64.tbl`, `PR_SET_NO_NEW_PRIVS` from
 //! `include/uapi/linux/prctl.h`, `O_PATH` from `include/uapi/asm-generic/fcntl.h`,

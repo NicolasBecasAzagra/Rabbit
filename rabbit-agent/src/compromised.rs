@@ -15,9 +15,17 @@
 //! and renames are names under the read root of the setup, which on a Linux
 //! test is a directory of its own; the programs it starts are `/bin/true`,
 //! which exits at once; `memfd_create` makes a descriptor that is closed and
-//! never executed; the processes it forks exit at once. `vfork` is left out on
+//! never executed; the calls that can replace or multiply the process run in a
+//! child of their own, which exits at once. `vfork` is left out on
 //! purpose: its child shares the stack of the caller, and a raw call from Rust
 //! cannot return twice on one stack without undefined behaviour.
+//!
+//! The table is not a table of what a policy refuses. On Rabbit most of the
+//! answers are `ENOSYS`: the kernel has no such call, which says nothing of
+//! the policy, and it is reported as `unavailable`, a class of its own. Only
+//! the calls whose arm of the dispatcher runs the policy are policy decisions:
+//! `openat`, `newfstatat`, `socket` by capability, `connect`, `sendto`,
+//! `listen` and `accept`. `bind` is not checked, and it is printed as a gap.
 //!
 //! The verdict of a call is read from what it returned, as [`Raw`]: `denied`
 //! for `EACCES` and `EPERM`, `unavailable` for `ENOSYS`, which says that the
@@ -286,7 +294,10 @@ pub const PROBES: [(&str, Probe); 5] = [
 ///
 /// `linux_tcp_ports` and `setup.linux_udp_ports` say whether the Linux kernel
 /// enforces the ports of the manifest, which Landlock does for TCP from ABI 4
-/// and for UDP from ABI 10. What each case expects of Rabbit is what the arms of
+/// and for UDP from ABI 10. The right for UDP is
+/// `LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP`, `1ULL << 3` in
+/// `include/uapi/linux/landlock.h`, which that header documents as "Support
+/// added in Landlock ABI version 10"; before it a datagram goes to any port. What each case expects of Rabbit is what the arms of
 /// its dispatcher answer: the calls it does not implement are `unavailable`,
 /// the ones its policy checks are `denied` outside the manifest, and `bind` is
 /// not checked. What it expects of Linux is asserted only where the
@@ -629,14 +640,17 @@ pub fn cases(setup: &Setup, linux_tcp_ports: bool) -> Vec<Case> {
         };
         add(name, syscall, op, rabbit, Is(Allowed), true, gap);
     }
+    // `bind` is a known gap on both kernels: the policy of Rabbit does not check
+    // it, and the manifest grants no port to bind, so Landlock handles neither
+    // the bind of TCP nor of UDP here. The answer is printed and not asserted.
     add(
         "bind_any",
         "bind",
         Op::Bind,
-        Is(Allowed),
-        Is(Allowed),
+        Any,
+        Any,
         false,
-        None,
+        Some("neither the policy nor the filter checks bind"),
     );
     add(
         "listen_stream",
@@ -824,7 +838,58 @@ mod raw {
         pid
     }
 
+    /// Leave the process with `status`.
+    fn exit(status: u64) -> ! {
+        loop {
+            // SAFETY: exit_group takes a status and never returns.
+            let _ = unsafe { syscall1(231, status) };
+        }
+    }
+
+    /// Make the call of `op`, and the calls that can replace or multiply the
+    /// process in a child of their own.
+    ///
+    /// A call of `execve` that works replaces the process with another program,
+    /// and the lines of the cases after it would never be printed. The child
+    /// makes the call and leaves with what it came to: zero when it worked, or
+    /// the error number when it did not, which never exceeds 255. A kernel with
+    /// no `fork` cannot isolate the call, and the call is made here: the table
+    /// of such a kernel has no `execve` to take the process away either, and a
+    /// table that is cut short has no summary line, which the caller requires.
     pub fn call(op: &Op) -> i64 {
+        if !matches!(op, Op::Exec { .. } | Op::Fork | Op::Clone) {
+            return direct(op);
+        }
+        // SAFETY: fork takes no argument.
+        let pid = unsafe { syscall1(57, 0) };
+        if pid < 0 {
+            return direct(op);
+        }
+        if pid == 0 {
+            let result = direct(op);
+            exit(if result >= 0 {
+                0
+            } else {
+                result.unsigned_abs() & 0xff
+            });
+        }
+        let mut status = 0i32;
+        // SAFETY: wait4 writes the status of the child into `status`, which is
+        // live, and takes no options and a null usage.
+        let waited = unsafe { syscall4(61, pid as u64, &mut status as *mut i32 as u64, 0, 0) };
+        if waited < 0 {
+            return waited;
+        }
+        match (status & 0x7f, (status >> 8) & 0xff) {
+            (0, 0) => 0,
+            (0, code) => -i64::from(code),
+            // A child that a signal ended is not an error number: it is below
+            // every one.
+            (signal, _) => -1000 - i64::from(signal),
+        }
+    }
+
+    fn direct(op: &Op) -> i64 {
         match op {
             Op::Open { path, flags } => {
                 let path = c_string(path);
@@ -1123,6 +1188,24 @@ pub fn existence_lines(results: &[(Case, Outcome)]) -> Vec<String> {
         .collect()
 }
 
+/// The known gaps of a run: the cases whose answer is not asserted on Rabbit
+/// because the kernel does not check them, and that were allowed.
+pub fn gap_lines(results: &[(Case, Outcome)]) -> Vec<String> {
+    results
+        .iter()
+        .filter(|(case, outcome)| case.rabbit == Expect::Any && outcome.verdict == Raw::Allowed)
+        .map(|(case, outcome)| {
+            format!(
+                "GAP case={} syscall={} ret={} why={}",
+                case.name,
+                case.syscall,
+                outcome.ret,
+                case.gap.unwrap_or("not asserted")
+            )
+        })
+        .collect()
+}
+
 /// The summary line.
 pub fn summary_line(results: &[(Case, Outcome)], kernel: &str) -> String {
     let count = |wanted| {
@@ -1389,6 +1472,40 @@ mod tests {
     }
 
     #[test]
+    fn the_table_has_the_counts_the_documents_give() {
+        // docs/ARCHITECTURE.md says how many of the cases the policy refuses
+        // and how many are calls the kernel does not have.
+        let table = cases(&setup(), false);
+        let count = |expected| table.iter().filter(|case| case.rabbit == expected).count();
+        assert_eq!(table.len(), 43);
+        assert_eq!(count(Expect::Is(Raw::Denied)), 11);
+        assert_eq!(count(Expect::Is(Raw::Unavailable)), 22);
+        assert_eq!(count(Expect::Is(Raw::Allowed)), 6);
+        assert_eq!(count(Expect::Is(Raw::Failed)), 3);
+        assert_eq!(count(Expect::Any), 1);
+    }
+
+    #[test]
+    fn a_call_that_is_not_checked_is_printed_as_a_gap() {
+        let table = cases(&setup(), false);
+        let bind = table.iter().find(|case| case.name == "bind_any").unwrap();
+        let allowed = Outcome {
+            ret: 0,
+            verdict: Raw::Allowed,
+        };
+        let results = vec![(bind.clone(), allowed)];
+        assert_eq!(
+            gap_lines(&results),
+            ["GAP case=bind_any syscall=bind ret=0 why=neither the policy nor the filter checks bind"]
+        );
+        let refused = Outcome {
+            ret: -13,
+            verdict: Raw::Denied,
+        };
+        assert!(gap_lines(&[(bind.clone(), refused)]).is_empty());
+    }
+
+    #[test]
     fn the_lines_have_the_format_the_greps_read() {
         let table = cases(&setup(), true);
         let case = &table[1];
@@ -1583,6 +1700,14 @@ mod tests {
         let setup = linux_setup(directory, servers.ports, line.contains("udp-port=on"));
         let seccomp = line.contains("seccomp=on");
         let table = cases(&setup, line.contains("tcp-port=on"));
+        // A table that a call cut short has no summary, or counts fewer cases.
+        let summary = marked_line(&output.stdout, "RAW summary cases=")
+            .unwrap_or_else(|| panic!("the child printed no `RAW summary` line:\n{everything}"));
+        assert!(
+            summary.starts_with(&format!("RAW summary cases={} ", table.len())),
+            "the table has {} cases and the summary says: {summary}",
+            table.len()
+        );
         let mut results = Vec::new();
         for case in table {
             let ret = printed_ret(&output.stdout, &case.name)

@@ -60,7 +60,9 @@ const FS_RESOLVE_UNIX: u64 = 1 << 16;
 
 /// `LANDLOCK_ACCESS_NET_CONNECT_TCP` (ABI 4).
 const NET_CONNECT_TCP: u64 = 1 << 1;
-/// `LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP` (ABI 10).
+/// `LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP` (ABI 10): `1ULL << 3` in
+/// `include/uapi/linux/landlock.h` at master, which documents it as "Support
+/// added in Landlock ABI version 10".
 const NET_CONNECT_SEND_UDP: u64 = 1 << 3;
 
 /// `LANDLOCK_RESTRICT_SELF_TSYNC` (ABI 8): enforce the ruleset on every thread

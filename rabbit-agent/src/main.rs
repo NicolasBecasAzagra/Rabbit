@@ -85,6 +85,7 @@
 //! RAW case=<name> syscall=<name> ret=<n> verdict=<allowed|denied|unavailable|failed> reached=<yes|no|na>
 //! RAW existence syscall=<name> outside=<n> missing=<n> oracle=<yes|no>
 //! RAW summary cases=<n> allowed=<n> denied=<n> unavailable=<n> failed=<n> kernel=<rabbit|linux|unknown>
+//! GAP case=<name> syscall=<name> ret=<n> why=<text>
 //! ```
 //!
 //! The `AGENT policy` line is the one line on stderr: what the kernel answered
@@ -519,6 +520,9 @@ fn run_compromised(endpoint: &Endpoint) -> Result<(), String> {
         results.push((case, outcome));
     }
     for line in compromised::existence_lines(&results) {
+        println!("{line}");
+    }
+    for line in compromised::gap_lines(&results) {
         println!("{line}");
     }
     println!("{}", compromised::summary_line(&results, kernel));

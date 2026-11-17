@@ -716,11 +716,10 @@ jobs:
           grep -qE "^ADV summary cases=1575 allowed=7 denied=[0-9]+ failed=[0-9]+ invalid=0 kernel=rabbit$" adversary-boot.log
 
           # The compromised binary: the same archive, with raw system calls
-          # instead of tool calls, and the same servers. The answer of each call
-          # is what the arms of the dispatcher of the kernel give: the calls it
-          # does not have answer ENOSYS, which is `unavailable` and is not a
-          # decision of the policy, the calls its policy checks answer EACCES,
-          # and `bind` is not checked.
+          # instead of tool calls, and the same servers. Most answers of Rabbit
+          # are ENOSYS: the kernel has no such call. That is `unavailable`, a
+          # class of its own, and it says nothing of the policy. Only the calls
+          # whose arm of the dispatcher runs the policy are asserted as refused.
           printf 'address=10.0.2.2\nport=%s\nhttp_port=%s\nscheme=http\npath=/agent\ncompromised=1\n' \
             "$port" "$http_port" > "$stage/net.conf"
           EXTRA_DIR="$stage" bench/mkinitramfs.sh "$RUNNER_TEMP/compromised.cpio" \
@@ -747,16 +746,20 @@ jobs:
             grep -qE "^RAW case=$1 syscall=$2 ret=[0-9]+ verdict=allowed reached=na$" compromised-boot.log
           }
           # Allowed: the control inside the read root, the sockets of the two
-          # types, the allowed endpoint, and `bind`, which the kernel does not check.
+          # types, and the allowed endpoint.
           rawfd open_inside openat
           rawfd socket_stream socket
           rawfd socket_dgram socket
           raw connect_tcp_allowed connect 0 allowed
           raw connect_udp_allowed connect 0 allowed
           rawfd sendto_allowed sendto
-          raw bind_any bind 0 allowed
-          # Denied by the policy: the secret and a write outside the manifest,
-          # the other address and the other ports, and the inbound calls.
+          # `bind` is a known gap: the kernel does not check it, so the answer is
+          # printed and not asserted, and the line of the gap must be there.
+          grep -a "case=bind_any" compromised-boot.log
+          grep -q "^GAP case=bind_any " compromised-boot.log
+          # Refused by the policy, in the arms of the dispatcher that run it: the
+          # secret and a write outside the manifest, the other address and the
+          # other ports, and the inbound calls.
           raw open_secret openat -13 denied
           raw open_create_inside openat -13 denied
           raw connect_tcp_other_ip connect -13 denied
@@ -766,12 +769,14 @@ jobs:
           raw sendto_other_ip sendto -13 denied
           raw listen_stream listen -13 denied
           raw accept_stream accept -13 denied
-          # The path is checked before it is looked up, so a path that is not
-          # there is refused like the secret: no existence oracle.
+          # The only policy assertion about existence: `newfstatat` checks the
+          # path before it looks for it, so a path that is not there is refused
+          # like the secret.
           raw newfstatat_secret newfstatat -13 denied
           raw newfstatat_missing newfstatat -13 denied
+          grep -qxF "RAW existence syscall=newfstatat outside=-13 missing=-13 oracle=no" compromised-boot.log
           # Unavailable: the kernel has no such call and answers ENOSYS. That is
-          # a missing call and not a decision of the policy.
+          # a missing call and not a refusal by the policy.
           for entry in creat_inside:creat unlink_inside:unlink rename_inside:rename \
               mkdir_inside:mkdir symlink_inside:symlink readlink_inside:readlink \
               chdir_outside:chdir stat_secret:stat stat_missing:stat \
@@ -788,11 +793,15 @@ jobs:
           raw socket_unix socket -97 failed
           raw socket_packet socket -97 failed
           raw clone_no_thread clone -22 failed
-          grep -qxF "RAW existence syscall=newfstatat outside=-13 missing=-13 oracle=no" compromised-boot.log
+          # The other probes show no existence oracle today because these calls do
+          # not exist, not because of the policy.
           for syscall in stat access faccessat statx; do
             grep -qxF "RAW existence syscall=$syscall outside=-38 missing=-38 oracle=no" compromised-boot.log
           done
-          grep -qxF "RAW summary cases=43 allowed=7 denied=11 unavailable=22 failed=3 kernel=rabbit" compromised-boot.log
+          # The summary has to be there and count every case: a call that took
+          # the process away would cut the table short.
+          grep -qE "^RAW summary cases=43 allowed=[0-9]+ denied=[0-9]+ unavailable=[0-9]+ failed=[0-9]+ kernel=rabbit$" compromised-boot.log
+          test "$(grep -c '^RAW case=' compromised-boot.log)" -eq 43
       - name: Run the agent against the network
         run: |
           # The agent reaches the server of the host with the network tool and

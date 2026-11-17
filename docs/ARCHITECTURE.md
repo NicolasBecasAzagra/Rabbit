@@ -123,6 +123,21 @@ What is not enforced:
   reads from a server it is allowed to reach can still steer the model into any
   call the tools allow.
 
+A call that answers `ENOSYS` is not an enforced policy. Rabbit implements few
+system calls, and most of what a compromised program could try, such as
+`creat`, `unlink`, `rename`, `mkdir`, `symlink`, `chdir`, `stat`, `execve`,
+`fork`, `sendmsg`, `memfd_create` and `io_uring_setup`, fails because the kernel
+has no such call, whatever the policy says. The table of raw calls of the agent
+(`--compromised`) has 43 cases. On Rabbit 11 of them are refused by the policy
+(the secret and the writes outside the manifest, `newfstatat` by path, the
+other address and the other ports, `listen` and `accept`), 22 are calls the
+kernel does not have and are reported as `unavailable`, 3 fail with another
+error (two socket families Rabbit lacks and a `clone` that is not a thread), and
+7 are allowed, `bind` among them, which the kernel does not check and the table
+prints as a gap. Only the first group says anything about enforcement. The
+second group will turn into refusals or into working calls the day the kernel
+implements them, and each of those calls then needs its own check.
+
 ## The stack of a ring 3 thread
 
 The stack of a user thread inside the kernel is the sixteen kilobytes that the
