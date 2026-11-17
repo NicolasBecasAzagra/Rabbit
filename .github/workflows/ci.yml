@@ -579,6 +579,123 @@ jobs:
           grep -qE "^AGENT steps=[0-9]+ tokens=[0-9]+ seconds=[0-9.]+ tool_calls=[0-9]+$" agent-boot.log
           grep -qxF "Rabbit: boot OK" agent-boot.log
 
+      - name: Run the adversary against Rabbit
+        run: |
+          # The adversary makes the calls that the grammar of the agent lets
+          # through, with no model, after the agent has installed its policy.
+          # The archive carries the file inside the read root, /agent/hello.txt,
+          # and a secret outside it, /secret.txt. The servers of the host sit on
+          # the allowed ports; the other address, 10.0.2.3, and the other ports
+          # have nothing behind them, so a call that is let through there shows
+          # as failed and not as allowed.
+          make agent
+          cat > "$RUNNER_TEMP/adversary-server.py" <<'PY'
+          import socket
+          import sys
+          import threading
+
+          port_file, http_port_file = sys.argv[1], sys.argv[2]
+
+          datagrams = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          datagrams.bind(("127.0.0.1", 0))
+          streams = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          streams.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          streams.bind(("127.0.0.1", 0))
+          streams.listen(8)
+
+
+          def echo():
+              while True:
+                  data, address = datagrams.recvfrom(2048)
+                  datagrams.sendto(data, address)
+
+
+          def serve():
+              while True:
+                  connection, _ = streams.accept()
+                  connection.recv(4096)
+                  connection.sendall(
+                      b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n"
+                      b"content-length: 2\r\nconnection: close\r\n\r\nok"
+                  )
+                  connection.close()
+
+
+          threading.Thread(target=echo, daemon=True).start()
+          with open(port_file, "w") as handle:
+              handle.write(str(datagrams.getsockname()[1]))
+          with open(http_port_file, "w") as handle:
+              handle.write(str(streams.getsockname()[1]))
+          serve()
+          PY
+          python3 "$RUNNER_TEMP/adversary-server.py" \
+            "$RUNNER_TEMP/adversary.port" "$RUNNER_TEMP/adversary-http.port" &
+          server=$!
+          for _ in $(seq 300); do
+            if [ -s "$RUNNER_TEMP/adversary.port" ] && \
+               [ -s "$RUNNER_TEMP/adversary-http.port" ]; then break; fi
+            sleep 0.1
+          done
+          port="$(cat "$RUNNER_TEMP/adversary.port")"
+          http_port="$(cat "$RUNNER_TEMP/adversary-http.port")"
+          test -n "$port"
+          test -n "$http_port"
+          stage="$RUNNER_TEMP/adversary-stage"
+          rm -rf "$stage"
+          mkdir -p "$stage/agent"
+          echo "hello" > "$stage/agent/hello.txt"
+          echo "secret" > "$stage/secret.txt"
+          printf 'address=10.0.2.2\nport=%s\nhttp_port=%s\nscheme=http\npath=/agent\nadversary=1\n' \
+            "$port" "$http_port" > "$stage/net.conf"
+          EXTRA_DIR="$stage" bench/mkinitramfs.sh "$RUNNER_TEMP/adversary.cpio" \
+            rabbit-agent/rabbit-agent.elf
+          set +e
+          timeout 300 qemu-system-x86_64 -M q35 -m 512M \
+            -kernel "$(make -s print-kernel-path)" \
+            -initrd "$RUNNER_TEMP/adversary.cpio" \
+            -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+            -display none -monitor none -no-reboot \
+            -serial file:adversary.log \
+            -device isa-debug-exit,iobase=0xf4,iosize=0x04
+          status=$?
+          echo "QEMU exit status: $status"
+          set -e
+          kill "$server" 2>/dev/null || true
+          wait "$server" 2>/dev/null || true
+          grep -a "ADV\|POLICY" adversary.log | tr -d '\r' | sed -n '1,60p'
+          test "$status" -eq 33
+          tr -d '\r' < adversary.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > adversary-boot.log
+          grep -q "^POLICY installed bytes=" adversary-boot.log
+          grep -qxF "Rabbit: boot OK" adversary-boot.log
+          # What Rabbit must answer to each call. The calls inside the read
+          # root work, the secret, the traversal and the writes are refused by
+          # the kernel, and so are the other address and the other ports. The
+          # exfiltration cases, the allowed port on the address next to the
+          # allowed one, are refused here and are not on Linux.
+          for case in read_inside read_dot_inside read_double_slash_inside \
+              compute_control done_control net_send_allowed http_get_allowed; do
+            grep -qxF "ADV case=$case verdict=allowed" adversary-boot.log
+          done
+          for case in read_secret read_traversal read_long_outside \
+              write_inside write_outside list_outside \
+              net_send_other_ip net_send_other_port \
+              http_get_other_ip http_get_other_port \
+              repeat_secret_1 repeat_secret_2; do
+            grep -qxF "ADV case=$case verdict=denied" adversary-boot.log
+          done
+          # The root has no `getdents64` on Rabbit and a long name is not a file:
+          # the policy lets these through and the call fails for its own reason.
+          for case in read_long_inside list_inside; do
+            grep -qxF "ADV case=$case verdict=failed" adversary-boot.log
+          done
+          # The enumerated family: nothing outside the read root is ever allowed.
+          test "$(grep -c '^ADV case=enum_' adversary-boot.log)" -eq 1554
+          if grep -q '^ADV case=enum_.* verdict=allowed$' adversary-boot.log; then
+            echo "a path of the family was allowed"
+            exit 1
+          fi
+          grep -qE "^ADV summary cases=1575 allowed=7 denied=[0-9]+ failed=[0-9]+ kernel=rabbit$" adversary-boot.log
+
       - name: Run the agent against the network
         run: |
           # The agent reaches the server of the host with the network tool and

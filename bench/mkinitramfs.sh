@@ -12,9 +12,11 @@
 #   BINARY  workload to pack, default rabbit-bench/rabbit-bench.elf
 #
 # EXTRA_DIR, when set, adds every regular file in that directory to the archive
-# root. The inference runtime uses it for /model.safetensors, /vocab.json and
-# /config.json, and the rig uses it for the /net.conf of the network client.
-# The names `bench` and `init` are reserved for the workload.
+# root, and every directory in it with what is under it. The inference runtime
+# uses the files for /model.safetensors, /vocab.json and /config.json, the rig
+# uses one for the /net.conf of the network client, and the adversary of the
+# agent uses a directory for the files of its read root. The names `bench`,
+# `init` and `dev` are reserved.
 #
 # The script builds the binary with `make bench`, with `make netclient` when the
 # binary is the datagram network client, or with `make netstream` when it is the
@@ -75,6 +77,18 @@ if [ -n "${EXTRA_DIR:-}" ]; then
                 ;;
         esac
         cp "$extra" "$work/$name"
+    done
+    for extra in "$EXTRA_DIR"/*/; do
+        [ -d "$extra" ] || continue
+        name=${extra%/}
+        name=${name##*/}
+        case $name in
+            dev)
+                echo "mkinitramfs: EXTRA_DIR must not provide $name" >&2
+                exit 1
+                ;;
+        esac
+        cp -R "$extra" "$work/$name"
     done
 fi
 
