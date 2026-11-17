@@ -20,10 +20,29 @@
 //! `include/uapi/linux/prctl.h`, `O_PATH` from `include/uapi/asm-generic/fcntl.h`,
 //! and the seccomp and Landlock constants from their own headers.
 
+/// A step that the kernel refused: which one, and the error number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Failure {
+    /// The step that failed.
+    pub step: &'static str,
+    /// The error number the kernel answered, positive.
+    pub errno: i64,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}(errno={})", self.step, self.errno)
+    }
+}
+
 /// What [`apply`] managed to put in place.
+///
+/// A protection is reported only once the kernel has accepted the call that
+/// puts it in force: a ruleset that was built and never restricted the
+/// process is not a protection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// The Landlock ABI version of the kernel, or zero when it has none.
+    /// The Landlock ABI version the kernel reports, or zero when it has none.
     pub landlock_abi: u32,
     /// Whether the files are restricted to the roots of the manifest.
     pub fs: bool,
@@ -33,14 +52,17 @@ pub struct Report {
     pub udp_port: bool,
     /// Whether the Landlock ruleset covers every thread, not only the caller.
     pub landlock_all_threads: bool,
+    /// The step that stopped Landlock, if one did.
+    pub landlock_error: Option<Failure>,
     /// Whether the seccomp filter is in place.
     pub seccomp: bool,
     /// Whether the seccomp filter covers every thread, not only the caller.
     pub seccomp_all_threads: bool,
+    /// The step that stopped seccomp, if one did.
+    pub seccomp_error: Option<Failure>,
     /// Whether `no_new_privs` was set, which both of the others need.
     pub no_new_privs: bool,
-    /// Roots of the manifest that do not exist in the file system and got no
-    /// rule.
+    /// Roots of the manifest that could not be opened and got no rule.
     pub roots_skipped: usize,
 }
 
@@ -56,28 +78,44 @@ impl Report {
     /// The line for the log. It starts the way the line of a kernel without
     /// the private call always did, and it says what is active and, always,
     /// that the address of an endpoint is not enforced.
+    ///
+    /// `threads` is `none` when nothing was applied, `all` when everything
+    /// that was applied covers every thread, and `caller-only` otherwise.
     pub fn line(&self) -> String {
         let landlock = if self.landlock_abi == 0 {
             "unavailable".to_string()
-        } else {
+        } else if self.fs {
             format!("abi{}", self.landlock_abi)
+        } else {
+            format!("abi{}-not-applied", self.landlock_abi)
         };
-        let landlock_covers_all =
-            !self.fs && !self.tcp_port && !self.udp_port || self.landlock_all_threads;
-        let all_threads = landlock_covers_all && (!self.seccomp || self.seccomp_all_threads);
+        let threads = if !self.fs && !self.seccomp {
+            "none"
+        } else if (!self.fs || self.landlock_all_threads)
+            && (!self.seccomp || self.seccomp_all_threads)
+        {
+            "all"
+        } else {
+            "caller-only"
+        };
         let mut line = format!(
-            "AGENT policy kernel=without private syscall landlock={landlock} fs={} tcp-port={} udp-port={} seccomp={} threads={} ip=not-expressible",
+            "AGENT policy kernel=without private syscall landlock={landlock} fs={} tcp-port={} udp-port={} seccomp={} threads={threads} ip=not-expressible",
             on_off(self.fs),
             on_off(self.tcp_port),
             on_off(self.udp_port),
             on_off(self.seccomp),
-            if all_threads { "all" } else { "caller-only" },
         );
         if !self.no_new_privs {
             line.push_str(" no-new-privs=off");
         }
         if self.roots_skipped != 0 {
             line.push_str(&format!(" roots-skipped={}", self.roots_skipped));
+        }
+        if let Some(error) = self.landlock_error {
+            line.push_str(&format!(" landlock-error={error}"));
+        }
+        if let Some(error) = self.seccomp_error {
+            line.push_str(&format!(" seccomp-error={error}"));
         }
         line
     }
@@ -93,7 +131,7 @@ mod raw {
 
     use rabbit_policy::{Capabilities, Capability, Policy, Protocol};
 
-    use super::Report;
+    use super::{Failure, Report};
     use crate::landlock::{net_port_attr, path_beneath_attr, Support};
     use crate::seccomp::{self, PROGRAM_LEN};
     use crate::tools::{syscall3, syscall4, syscall5};
@@ -138,7 +176,13 @@ mod raw {
         report
     }
 
-    /// Put a Landlock ruleset in place, or leave the report as it is.
+    /// The error number of a failed call.
+    fn errno(result: i64) -> i64 {
+        result.saturating_neg()
+    }
+
+    /// Put a Landlock ruleset in place, or say in the report which step
+    /// stopped it.
     fn landlock(policy: &Policy, report: &mut Report) {
         // SAFETY: with a null attribute and the version flag the call reads no
         // memory.
@@ -151,14 +195,29 @@ mod raw {
             )
         };
         let Ok(abi) = u32::try_from(abi) else {
+            report.landlock_error = Some(Failure {
+                step: "version",
+                errno: errno(abi),
+            });
             return;
         };
         report.landlock_abi = abi;
-        let support = Support::for_abi(abi);
         if abi == 0 {
             return;
         }
+        let support = Support::for_abi(abi);
+        match build_ruleset(policy, &support, report) {
+            Ok(ruleset) => restrict(&ruleset, &support, report),
+            Err(failure) => report.landlock_error = Some(failure),
+        }
+    }
 
+    /// Create the ruleset and add the rules of the manifest to it.
+    fn build_ruleset(
+        policy: &Policy,
+        support: &Support,
+        report: &mut Report,
+    ) -> Result<OwnedFd, Failure> {
         let (attribute, size) = support.ruleset_attr();
         // SAFETY: the kernel reads `size` bytes of `attribute`, which is a
         // valid array of at least that many.
@@ -170,17 +229,17 @@ mod raw {
                 0,
             )
         };
-        let Ok(descriptor) = i32::try_from(created) else {
-            return;
-        };
-        if descriptor < 0 {
-            return;
-        }
+        let descriptor = i32::try_from(created)
+            .ok()
+            .filter(|descriptor| *descriptor >= 0)
+            .ok_or(Failure {
+                step: "create_ruleset",
+                errno: errno(created),
+            })?;
         // SAFETY: the call returned this descriptor and nothing else owns it.
         let ruleset = unsafe { OwnedFd::from_raw_fd(descriptor) };
 
         let granted = policy.granted();
-        let mut roots_skipped = 0;
         let roots = [
             (
                 Capability::FsRead,
@@ -199,13 +258,16 @@ mod raw {
             }
             for root in list {
                 let Ok(directory) = open_path(root.as_bytes()) else {
-                    roots_skipped += 1;
+                    report.roots_skipped += 1;
                     continue;
                 };
                 let attribute = path_beneath_attr(access, directory.as_raw_fd());
-                if !add_rule(&ruleset, LANDLOCK_RULE_PATH_BENEATH, &attribute) {
-                    return;
-                }
+                add_rule(&ruleset, LANDLOCK_RULE_PATH_BENEATH, &attribute).map_err(|errno| {
+                    Failure {
+                        step: "add_rule_path",
+                        errno,
+                    }
+                })?;
             }
         }
         for endpoint in policy.endpoints() {
@@ -217,30 +279,48 @@ mod raw {
                 continue;
             }
             let attribute = net_port_attr(access, endpoint.port);
-            if !add_rule(&ruleset, LANDLOCK_RULE_NET_PORT, &attribute) {
+            add_rule(&ruleset, LANDLOCK_RULE_NET_PORT, &attribute).map_err(|errno| Failure {
+                step: "add_rule_port",
+                errno,
+            })?;
+        }
+        Ok(ruleset)
+    }
+
+    /// Enforce the ruleset, on every thread when the kernel can and on the
+    /// caller alone when it cannot, and report what the kernel accepted.
+    fn restrict(ruleset: &OwnedFd, support: &Support, report: &mut Report) {
+        let all_threads = support.restrict_flags();
+        let attempts: &[u64] = if all_threads != 0 {
+            &[all_threads, 0]
+        } else {
+            &[0]
+        };
+        let mut failure = None;
+        for &flags in attempts {
+            // SAFETY: the call takes the descriptor of the ruleset and flags,
+            // and no pointer.
+            let restricted = unsafe {
+                syscall3(
+                    SYS_LANDLOCK_RESTRICT_SELF,
+                    ruleset.as_raw_fd() as u64,
+                    flags,
+                    0,
+                )
+            };
+            if restricted == 0 {
+                report.fs = support.fs();
+                report.tcp_port = support.tcp_port();
+                report.udp_port = support.udp_port();
+                report.landlock_all_threads = flags != 0;
                 return;
             }
+            failure = Some(Failure {
+                step: "restrict_self",
+                errno: errno(restricted),
+            });
         }
-
-        let flags = support.restrict_flags();
-        // SAFETY: the call takes the descriptor of the ruleset and flags, and
-        // no pointer.
-        let restricted = unsafe {
-            syscall3(
-                SYS_LANDLOCK_RESTRICT_SELF,
-                ruleset.as_raw_fd() as u64,
-                flags,
-                0,
-            )
-        };
-        if restricted != 0 {
-            return;
-        }
-        report.roots_skipped = roots_skipped;
-        report.fs = support.fs();
-        report.tcp_port = support.tcp_port();
-        report.udp_port = support.udp_port();
-        report.landlock_all_threads = flags != 0;
+        report.landlock_error = failure;
     }
 
     /// Open `path` as a descriptor that only names it, for a Landlock rule.
@@ -251,8 +331,8 @@ mod raw {
             .open(Path::new(std::ffi::OsStr::from_bytes(path)))
     }
 
-    /// Add one rule to the ruleset, and say whether the kernel took it.
-    fn add_rule(ruleset: &OwnedFd, rule_type: u64, attribute: &[u8]) -> bool {
+    /// Add one rule to the ruleset, or return the error number.
+    fn add_rule(ruleset: &OwnedFd, rule_type: u64, attribute: &[u8]) -> Result<(), i64> {
         // SAFETY: the kernel reads the structure of the rule type from
         // `attribute`, which holds exactly the bytes of that structure.
         let added = unsafe {
@@ -264,10 +344,16 @@ mod raw {
                 0,
             )
         };
-        added == 0
+        if added == 0 {
+            Ok(())
+        } else {
+            Err(errno(added))
+        }
     }
 
-    /// Put the seccomp filter in place, or leave the report as it is.
+    /// Put the seccomp filter in place, or say in the report why not. The
+    /// filter goes to every thread when the kernel can do that, and to the
+    /// caller alone when it cannot.
     fn seccomp_filter(granted: Capabilities, report: &mut Report) {
         let program: [[u8; 8]; PROGRAM_LEN] =
             seccomp::build(granted).map(|instruction| instruction.to_bytes());
@@ -292,8 +378,13 @@ mod raw {
             if installed == 0 {
                 report.seccomp = true;
                 report.seccomp_all_threads = flags != 0;
+                report.seccomp_error = None;
                 return;
             }
+            report.seccomp_error = Some(Failure {
+                step: "seccomp",
+                errno: errno(installed),
+            });
         }
     }
 }
@@ -303,19 +394,18 @@ pub use raw::apply;
 
 #[cfg(test)]
 mod tests {
-    use super::Report;
+    use super::{Failure, Report};
 
     fn full() -> Report {
         Report {
             landlock_abi: 4,
             fs: true,
             tcp_port: true,
-            udp_port: false,
             landlock_all_threads: true,
             seccomp: true,
             seccomp_all_threads: true,
             no_new_privs: true,
-            roots_skipped: 0,
+            ..Report::default()
         }
     }
 
@@ -328,29 +418,63 @@ mod tests {
     }
 
     #[test]
-    fn a_kernel_without_landlock_or_seccomp_says_so() {
+    fn nothing_applied_is_not_reported_as_every_thread() {
         let report = Report {
+            no_new_privs: true,
+            landlock_error: Some(Failure {
+                step: "version",
+                errno: 38,
+            }),
+            seccomp_error: Some(Failure {
+                step: "seccomp",
+                errno: 38,
+            }),
+            ..Report::default()
+        };
+        assert_eq!(
+            report.line(),
+            "AGENT policy kernel=without private syscall landlock=unavailable fs=off tcp-port=off udp-port=off seccomp=off threads=none ip=not-expressible landlock-error=version(errno=38) seccomp-error=seccomp(errno=38)"
+        );
+    }
+
+    #[test]
+    fn landlock_without_tsync_covers_the_caller_only() {
+        let report = Report {
+            landlock_abi: 4,
+            fs: true,
+            tcp_port: true,
+            landlock_all_threads: false,
             no_new_privs: true,
             ..Report::default()
         };
         assert_eq!(
             report.line(),
-            "AGENT policy kernel=without private syscall landlock=unavailable fs=off tcp-port=off udp-port=off seccomp=off threads=all ip=not-expressible"
+            "AGENT policy kernel=without private syscall landlock=abi4 fs=on tcp-port=on udp-port=off seccomp=off threads=caller-only ip=not-expressible"
         );
-    }
-
-    #[test]
-    fn a_protection_that_covers_only_the_caller_is_not_reported_as_all_threads() {
-        let landlock_only = Report {
-            landlock_all_threads: false,
-            ..full()
-        };
-        assert!(landlock_only.line().contains("threads=caller-only"));
         let seccomp_only = Report {
             seccomp_all_threads: false,
             ..full()
         };
         assert!(seccomp_only.line().contains("threads=caller-only"));
+    }
+
+    #[test]
+    fn a_landlock_that_failed_at_add_rule_is_not_applied_and_says_why() {
+        let report = Report {
+            landlock_abi: 4,
+            landlock_error: Some(Failure {
+                step: "add_rule_path",
+                errno: 13,
+            }),
+            seccomp: true,
+            seccomp_all_threads: true,
+            no_new_privs: true,
+            ..Report::default()
+        };
+        assert_eq!(
+            report.line(),
+            "AGENT policy kernel=without private syscall landlock=abi4-not-applied fs=off tcp-port=off udp-port=off seccomp=on threads=all ip=not-expressible landlock-error=add_rule_path(errno=13)"
+        );
     }
 
     #[test]
@@ -361,11 +485,39 @@ mod tests {
             ..Report::default()
         };
         let line = report.line();
-        assert!(
-            line.ends_with(" no-new-privs=off roots-skipped=2"),
-            "{line}"
-        );
+        assert!(line.contains(" no-new-privs=off roots-skipped=2"), "{line}");
         assert!(line.contains("ip=not-expressible"));
+    }
+
+    /// The directory the child works in. It is removed when the guard drops,
+    /// also when the test panics.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    struct Scratch(String);
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    impl Scratch {
+        fn new() -> Self {
+            let nanoseconds = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0);
+            let directory = Self(format!(
+                "/tmp/rabbit-linux-policy-{}-{nanoseconds}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(format!("{}/in", directory.0)).unwrap();
+            std::fs::create_dir_all(format!("{}/out", directory.0)).unwrap();
+            std::fs::write(format!("{}/in/inside.txt", directory.0), "inside").unwrap();
+            std::fs::write(format!("{}/out/outside.txt", directory.0), "outside").unwrap();
+            directory
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     /// Landlock and seccomp cannot be undone, so the enforcement is checked in
@@ -385,12 +537,7 @@ mod tests {
             return;
         }
 
-        let directory = format!("/tmp/rabbit-linux-policy-{}", std::process::id());
-        std::fs::create_dir_all(format!("{directory}/in")).unwrap();
-        std::fs::create_dir_all(format!("{directory}/out")).unwrap();
-        std::fs::write(format!("{directory}/in/inside.txt"), "inside").unwrap();
-        std::fs::write(format!("{directory}/out/outside.txt"), "outside").unwrap();
-
+        let scratch = Scratch::new();
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -398,33 +545,32 @@ mod tests {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env(CHILD, &directory)
+            .env(CHILD, &scratch.0)
             .output()
             .unwrap();
-        std::fs::remove_dir_all(&directory).unwrap();
 
-        let text = String::from_utf8_lossy(&output.stdout);
-        println!("{text}");
-        assert!(
-            output.status.success(),
-            "child failed: {text}{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(text.contains("CHILD DONE"), "{text}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("{stdout}");
+        eprintln!("{stderr}");
+        assert!(output.status.success(), "the child failed");
+        assert!(stdout.contains("CHILD DONE"), "the child did not finish");
     }
 
     /// The part of the test that runs restricted: the manifest grants reads
-    /// under `in` and datagrams, and no streams. It prints the report, then
-    /// what each protection that is active refused or allowed, and `SKIP` for
-    /// each one the kernel does not have.
+    /// under `in` and datagrams, and no streams.
+    ///
+    /// A protection that the kernel reports and that is not in force is a
+    /// failure of the test. Only a kernel that has no Landlock, or no seccomp,
+    /// skips what it cannot check, and the skip goes to stderr with its reason.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn child(directory: &str) {
-        use std::io::ErrorKind;
         use std::net::{TcpListener, TcpStream, UdpSocket};
 
         use rabbit_policy::{Capabilities, Capability, Endpoint, Policy, Protocol};
 
         const EACCES: i32 = 13;
+        const ENOSYS: i64 = 38;
         const SERVER: [u8; 4] = [10, 0, 2, 2];
 
         let mut granted = Capabilities::EMPTY;
@@ -443,7 +589,9 @@ mod tests {
             .unwrap();
 
         let report = super::apply(&policy);
-        println!("CHILD {}", report.line());
+        let line = report.line();
+        println!("CHILD {line}");
+        assert!(report.no_new_privs, "no_new_privs was refused: {line}");
 
         if report.fs {
             let inside = std::fs::File::open(format!("{directory}/in/inside.txt"));
@@ -456,7 +604,11 @@ mod tests {
             );
             println!("CHILD fs checked");
         } else {
-            println!("SKIP landlock unavailable");
+            assert_eq!(
+                report.landlock_abi, 0,
+                "the kernel reports Landlock but it is not in force: {line}"
+            );
+            eprintln!("SKIP landlock unavailable: the kernel reports no Landlock ABI: {line}");
         }
 
         if report.seccomp {
@@ -479,7 +631,12 @@ mod tests {
             );
             println!("CHILD seccomp checked");
         } else {
-            println!("SKIP seccomp unavailable");
+            assert_eq!(
+                report.seccomp_error.map(|failure| failure.errno),
+                Some(ENOSYS),
+                "the kernel has seccomp but the filter is not in force: {line}"
+            );
+            eprintln!("SKIP seccomp unavailable: the kernel has no seccomp call: {line}");
         }
 
         if report.udp_port {
@@ -492,13 +649,15 @@ mod tests {
             );
             let listed = socket.send_to(b"x", ("127.0.0.1", 9999));
             assert!(
-                listed.as_ref().err().map(std::io::Error::kind)
-                    != Some(ErrorKind::PermissionDenied),
+                listed.as_ref().err().and_then(std::io::Error::raw_os_error) != Some(EACCES),
                 "a datagram to a listed port: {listed:?}"
             );
             println!("CHILD udp port checked");
-        } else {
-            println!("SKIP landlock udp port unavailable");
+        } else if report.fs {
+            eprintln!(
+                "SKIP landlock udp port unavailable: UDP ports need ABI 10, the kernel has ABI {}",
+                report.landlock_abi
+            );
         }
         println!("CHILD DONE");
     }

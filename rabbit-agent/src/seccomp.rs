@@ -13,8 +13,14 @@
 //! * `socket` is refused with `EACCES` unless the domain is `AF_INET` and the
 //!   type, once `SOCK_NONBLOCK` and `SOCK_CLOEXEC` are masked, is a stream
 //!   with `NetTcp` or a datagram with `NetUdp`;
+//! * the protocol of that socket must be the default or the one of its type,
+//!   TCP for a stream and UDP for a datagram: SCTP, UDP-Lite and ICMP are other
+//!   protocols behind the same two types, and the manifest names none of them;
 //! * `listen`, `accept` and `accept4` are refused with `EACCES`, because the
-//!   manifest has no inbound capability.
+//!   manifest has no inbound capability;
+//! * `io_uring_setup`, `io_uring_enter` and `io_uring_register` are refused
+//!   with `EACCES`, because a ring can open a socket (`IORING_OP_SOCKET`) and
+//!   run `connect` and `accept` without going through the calls above.
 //!
 //! Every other system call is allowed. A full allowlist would be the stronger
 //! filter, but the exact set of calls a static musl program with the standard
@@ -28,7 +34,8 @@
 //! instruction layout from `include/uapi/linux/filter.h`, the opcodes from
 //! `include/uapi/linux/bpf_common.h`, `AUDIT_ARCH_X86_64` from
 //! `include/uapi/linux/audit.h`, and the numbers of the calls from
-//! `arch/x86/entry/syscalls/syscall_64.tbl`.
+//! `arch/x86/entry/syscalls/syscall_64.tbl`, and the numbers of the protocols
+//! from `include/uapi/linux/in.h`.
 
 use rabbit_policy::{Capabilities, Capability};
 
@@ -76,6 +83,8 @@ const OFFSET_ARCH: u32 = 4;
 const OFFSET_ARGUMENT0: u32 = 16;
 /// Offset of the low word of `args[1]`.
 const OFFSET_ARGUMENT1: u32 = 24;
+/// Offset of the low word of `args[2]`.
+const OFFSET_ARGUMENT2: u32 = 32;
 
 /// `AUDIT_ARCH_X86_64`: `EM_X86_64` (62) | `__AUDIT_ARCH_64BIT` (0x80000000)
 /// | `__AUDIT_ARCH_LE` (0x40000000).
@@ -102,6 +111,12 @@ const SYS_ACCEPT: u32 = 43;
 const SYS_LISTEN: u32 = 50;
 /// `accept4` in the x86-64 table.
 const SYS_ACCEPT4: u32 = 288;
+/// `io_uring_setup` in the x86-64 table.
+const SYS_IO_URING_SETUP: u32 = 425;
+/// `io_uring_enter` in the x86-64 table.
+const SYS_IO_URING_ENTER: u32 = 426;
+/// `io_uring_register` in the x86-64 table.
+const SYS_IO_URING_REGISTER: u32 = 427;
 
 /// `AF_INET`.
 const AF_INET: u32 = 2;
@@ -109,19 +124,29 @@ const AF_INET: u32 = 2;
 const SOCK_STREAM: u32 = 1;
 /// `SOCK_DGRAM`.
 const SOCK_DGRAM: u32 = 2;
+/// `IPPROTO_IP`: the protocol of a type, as the kernel picks it.
+const IPPROTO_DEFAULT: u32 = 0;
+/// `IPPROTO_TCP`.
+const IPPROTO_TCP: u32 = 6;
+/// `IPPROTO_UDP`.
+const IPPROTO_UDP: u32 = 17;
 /// `SOCK_NONBLOCK`, which is `O_NONBLOCK`: `1 << 11`.
 const SOCK_NONBLOCK: u32 = 1 << 11;
 /// `SOCK_CLOEXEC`, which is `O_CLOEXEC`: `1 << 19`.
 const SOCK_CLOEXEC: u32 = 1 << 19;
 
 /// Instructions of the program.
-pub const PROGRAM_LEN: usize = 20;
+pub const PROGRAM_LEN: usize = 29;
 
 /// Positions in the program that a jump names.
-const ALLOW: usize = 8;
-const DENY: usize = 9;
-const KILL: usize = 10;
-const SOCKET_CHECK: usize = 11;
+const ALLOW: usize = 11;
+const DENY: usize = 12;
+const KILL: usize = 13;
+const SOCKET_CHECK: usize = 14;
+/// Where the protocol of a stream socket is checked.
+const STREAM_PROTOCOL: usize = 20;
+/// Where the protocol of a datagram socket is checked.
+const DATAGRAM_PROTOCOL: usize = 24;
 /// The last instruction: the refusal that the socket checks fall through to.
 /// A jump only goes forward, so they cannot use [`DENY`].
 const SOCKET_DENY: usize = PROGRAM_LEN - 1;
@@ -189,12 +214,15 @@ pub fn build(granted: Capabilities) -> [SockFilter; PROGRAM_LEN] {
         equal(4, SYS_SOCKET, SOCKET_CHECK, 5),
         equal(5, SYS_LISTEN, DENY, 6),
         equal(6, SYS_ACCEPT, DENY, 7),
-        equal(7, SYS_ACCEPT4, DENY, ALLOW),
+        equal(7, SYS_ACCEPT4, DENY, 8),
+        equal(8, SYS_IO_URING_SETUP, DENY, 9),
+        equal(9, SYS_IO_URING_ENTER, DENY, 10),
+        equal(10, SYS_IO_URING_REGISTER, DENY, ALLOW),
         ret(RET_ALLOW),
         ret(RET_DENY),
         ret(RET_KILL_PROCESS),
         load(OFFSET_ARGUMENT0),
-        equal(12, AF_INET, 13, SOCKET_DENY),
+        equal(15, AF_INET, 16, SOCKET_DENY),
         load(OFFSET_ARGUMENT1),
         SockFilter {
             code: AND_CONSTANT,
@@ -202,9 +230,15 @@ pub fn build(granted: Capabilities) -> [SockFilter; PROGRAM_LEN] {
             jf: 0,
             k: !(SOCK_NONBLOCK | SOCK_CLOEXEC),
         },
-        equal(15, SOCK_STREAM, 16, 17),
+        equal(18, SOCK_STREAM, STREAM_PROTOCOL, 19),
+        equal(19, SOCK_DGRAM, DATAGRAM_PROTOCOL, SOCKET_DENY),
+        load(OFFSET_ARGUMENT2),
+        equal(21, IPPROTO_DEFAULT, 23, 22),
+        equal(22, IPPROTO_TCP, 23, SOCKET_DENY),
         ret(stream),
-        equal(17, SOCK_DGRAM, 18, SOCKET_DENY),
+        load(OFFSET_ARGUMENT2),
+        equal(25, IPPROTO_DEFAULT, 27, 26),
+        equal(26, IPPROTO_UDP, 27, SOCKET_DENY),
         ret(datagram),
         ret(RET_DENY),
     ]
@@ -219,12 +253,13 @@ mod tests {
 
     /// Run `program` over a `seccomp_data` and return what it ends with. It
     /// knows the opcodes of this module and no others.
-    fn run(program: &[SockFilter], arch: u32, number: u32, arguments: [u64; 2]) -> u32 {
+    fn run(program: &[SockFilter], arch: u32, number: u32, arguments: [u64; 3]) -> u32 {
         let mut data = [0u8; 64];
         data[..4].copy_from_slice(&number.to_le_bytes());
         data[4..8].copy_from_slice(&arch.to_le_bytes());
         data[16..24].copy_from_slice(&arguments[0].to_le_bytes());
         data[24..32].copy_from_slice(&arguments[1].to_le_bytes());
+        data[32..40].copy_from_slice(&arguments[2].to_le_bytes());
 
         let mut accumulator = 0u32;
         let mut position = 0;
@@ -277,7 +312,17 @@ mod tests {
             &build(granted(capabilities)),
             arch,
             number,
-            [argument0, argument1],
+            [argument0, argument1, 0],
+        )
+    }
+
+    /// The verdict for `socket(AF_INET, kind, protocol)`.
+    fn socket(capabilities: &[Capability], kind: u32, protocol: u32) -> u32 {
+        run(
+            &build(granted(capabilities)),
+            AUDIT_ARCH_X86_64,
+            SYS_SOCKET,
+            [u64::from(AF_INET), u64::from(kind), u64::from(protocol)],
         )
     }
 
@@ -398,6 +443,50 @@ mod tests {
             ),
             RET_ALLOW
         );
+    }
+
+    #[test]
+    fn a_socket_type_with_another_protocol_is_refused() {
+        // IPPROTO_ICMP is 1, IPPROTO_SCTP is 132 and IPPROTO_UDPLITE is 136.
+        for protocol in [1, 132, 136, 255] {
+            assert_eq!(socket(BOTH, SOCK_STREAM, protocol), RET_DENY, "{protocol}");
+            assert_eq!(socket(BOTH, SOCK_DGRAM, protocol), RET_DENY, "{protocol}");
+        }
+        assert_eq!(socket(BOTH, SOCK_STREAM, IPPROTO_UDP), RET_DENY);
+        assert_eq!(socket(BOTH, SOCK_DGRAM, IPPROTO_TCP), RET_DENY);
+    }
+
+    #[test]
+    fn the_default_protocol_and_the_one_of_the_type_are_allowed() {
+        assert_eq!(socket(TCP, SOCK_STREAM, IPPROTO_DEFAULT), RET_ALLOW);
+        assert_eq!(socket(TCP, SOCK_STREAM, IPPROTO_TCP), RET_ALLOW);
+        assert_eq!(socket(UDP, SOCK_DGRAM, IPPROTO_DEFAULT), RET_ALLOW);
+        assert_eq!(socket(UDP, SOCK_DGRAM, IPPROTO_UDP), RET_ALLOW);
+        assert_eq!(socket(UDP, SOCK_STREAM, IPPROTO_TCP), RET_DENY);
+        assert_eq!(socket(TCP, SOCK_DGRAM, IPPROTO_UDP), RET_DENY);
+    }
+
+    #[test]
+    fn io_uring_is_refused_because_a_ring_opens_sockets_on_its_own() {
+        for number in [
+            SYS_IO_URING_SETUP,
+            SYS_IO_URING_ENTER,
+            SYS_IO_URING_REGISTER,
+        ] {
+            for capabilities in [NONE, BOTH] {
+                assert_eq!(
+                    verdict(
+                        capabilities,
+                        AUDIT_ARCH_X86_64,
+                        number,
+                        NO_ARGUMENT,
+                        NO_ARGUMENT
+                    ),
+                    RET_DENY,
+                    "call {number}"
+                );
+            }
+        }
     }
 
     #[test]
