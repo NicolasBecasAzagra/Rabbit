@@ -592,7 +592,7 @@ jobs:
           grep -qE "^AGENT steps=[0-9]+ tokens=[0-9]+ seconds=[0-9.]+ tool_calls=[0-9]+$" agent-boot.log
           grep -qxF "Rabbit: boot OK" agent-boot.log
 
-      - name: Run the adversary against Rabbit
+      - name: Run the adversary and the compromised binary against Rabbit
         run: |
           # The adversary makes the calls that the grammar of the agent lets
           # through, with no model, after the agent has installed its policy.
@@ -681,8 +681,6 @@ jobs:
           status=$?
           echo "QEMU exit status: $status"
           set -e
-          kill "$server" 2>/dev/null || true
-          wait "$server" 2>/dev/null || true
           grep -a "ADV\|POLICY" adversary.log | tr -d '\r' | sed -n '1,60p'
           test "$status" -eq 33
           tr -d '\r' < adversary.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > adversary-boot.log
@@ -717,6 +715,84 @@ jobs:
           fi
           grep -qE "^ADV summary cases=1575 allowed=7 denied=[0-9]+ failed=[0-9]+ invalid=0 kernel=rabbit$" adversary-boot.log
 
+          # The compromised binary: the same archive, with raw system calls
+          # instead of tool calls, and the same servers. The answer of each call
+          # is what the arms of the dispatcher of the kernel give: the calls it
+          # does not have answer ENOSYS, which is `unavailable` and is not a
+          # decision of the policy, the calls its policy checks answer EACCES,
+          # and `bind` is not checked.
+          printf 'address=10.0.2.2\nport=%s\nhttp_port=%s\nscheme=http\npath=/agent\ncompromised=1\n' \
+            "$port" "$http_port" > "$stage/net.conf"
+          EXTRA_DIR="$stage" bench/mkinitramfs.sh "$RUNNER_TEMP/compromised.cpio" \
+            rabbit-agent/rabbit-agent.elf
+          set +e
+          timeout 300 qemu-system-x86_64 -M q35 -m 512M \
+            -kernel "$(make -s print-kernel-path)" \
+            -initrd "$RUNNER_TEMP/compromised.cpio" \
+            -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+            -display none -monitor none -no-reboot \
+            -serial file:compromised.log \
+            -device isa-debug-exit,iobase=0xf4,iosize=0x04
+          status=$?
+          echo "QEMU exit status: $status"
+          set -e
+          grep -a "RAW\|POLICY" compromised.log | tr -d '\r'
+          test "$status" -eq 33
+          tr -d '\r' < compromised.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > compromised-boot.log
+          grep -qxF "Rabbit: boot OK" compromised-boot.log
+          raw() {
+            grep -qxF "RAW case=$1 syscall=$2 ret=$3 verdict=$4 reached=na" compromised-boot.log
+          }
+          rawfd() {
+            grep -qE "^RAW case=$1 syscall=$2 ret=[0-9]+ verdict=allowed reached=na$" compromised-boot.log
+          }
+          # Allowed: the control inside the read root, the sockets of the two
+          # types, the allowed endpoint, and `bind`, which the kernel does not check.
+          rawfd open_inside openat
+          rawfd socket_stream socket
+          rawfd socket_dgram socket
+          raw connect_tcp_allowed connect 0 allowed
+          raw connect_udp_allowed connect 0 allowed
+          rawfd sendto_allowed sendto
+          raw bind_any bind 0 allowed
+          # Denied by the policy: the secret and a write outside the manifest,
+          # the other address and the other ports, and the inbound calls.
+          raw open_secret openat -13 denied
+          raw open_create_inside openat -13 denied
+          raw connect_tcp_other_ip connect -13 denied
+          raw connect_tcp_other_port connect -13 denied
+          raw connect_udp_other_ip connect -13 denied
+          raw connect_udp_other_port connect -13 denied
+          raw sendto_other_ip sendto -13 denied
+          raw listen_stream listen -13 denied
+          raw accept_stream accept -13 denied
+          # The path is checked before it is looked up, so a path that is not
+          # there is refused like the secret: no existence oracle.
+          raw newfstatat_secret newfstatat -13 denied
+          raw newfstatat_missing newfstatat -13 denied
+          # Unavailable: the kernel has no such call and answers ENOSYS. That is
+          # a missing call and not a decision of the policy.
+          for entry in creat_inside:creat unlink_inside:unlink rename_inside:rename \
+              mkdir_inside:mkdir symlink_inside:symlink readlink_inside:readlink \
+              chdir_outside:chdir stat_secret:stat stat_missing:stat \
+              access_secret:access access_missing:access \
+              faccessat_secret:faccessat faccessat_missing:faccessat \
+              statx_secret:statx statx_missing:statx \
+              sendmsg_other_ip:sendmsg sendmmsg_other_ip:sendmmsg \
+              memfd_create:memfd_create io_uring_setup:io_uring_setup fork:fork \
+              execve_outside:execve execveat_outside:execveat; do
+            raw "${entry%%:*}" "${entry##*:}" -38 unavailable
+          done
+          # Failed: the families that Rabbit does not have answer EAFNOSUPPORT,
+          # and a clone that is not a thread answers EINVAL.
+          raw socket_unix socket -97 failed
+          raw socket_packet socket -97 failed
+          raw clone_no_thread clone -22 failed
+          grep -qxF "RAW existence syscall=newfstatat outside=-13 missing=-13 oracle=no" compromised-boot.log
+          for syscall in stat access faccessat statx; do
+            grep -qxF "RAW existence syscall=$syscall outside=-38 missing=-38 oracle=no" compromised-boot.log
+          done
+          grep -qxF "RAW summary cases=43 allowed=7 denied=11 unavailable=22 failed=3 kernel=rabbit" compromised-boot.log
       - name: Run the agent against the network
         run: |
           # The agent reaches the server of the host with the network tool and
