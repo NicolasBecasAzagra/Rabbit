@@ -46,6 +46,10 @@ jobs:
         run: make test
 
       - name: Linux policy on this runner
+        env:
+          # The runner is known to have Landlock, so a kernel that does not
+          # enforce it is a regression and not a reason to skip.
+          RABBIT_REQUIRE_LANDLOCK: "1"
         run: |
           # The agent restricts itself on a Linux kernel with Landlock and
           # seccomp. What the runner kernel supports decides what the test can
@@ -613,12 +617,18 @@ jobs:
           def serve():
               while True:
                   connection, _ = streams.accept()
-                  connection.recv(4096)
-                  connection.sendall(
-                      b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n"
-                      b"content-length: 2\r\nconnection: close\r\n\r\nok"
-                  )
-                  connection.close()
+                  # A client that stalls must not hold the port for the others.
+                  try:
+                      connection.settimeout(2)
+                      connection.recv(4096)
+                      connection.sendall(
+                          b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n"
+                          b"content-length: 2\r\nconnection: close\r\n\r\nok"
+                      )
+                  except OSError:
+                      pass
+                  finally:
+                      connection.close()
 
 
           threading.Thread(target=echo, daemon=True).start()
@@ -628,9 +638,11 @@ jobs:
               handle.write(str(streams.getsockname()[1]))
           serve()
           PY
+          rm -f "$RUNNER_TEMP/adversary.port" "$RUNNER_TEMP/adversary-http.port"
           python3 "$RUNNER_TEMP/adversary-server.py" \
             "$RUNNER_TEMP/adversary.port" "$RUNNER_TEMP/adversary-http.port" &
           server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
           for _ in $(seq 300); do
             if [ -s "$RUNNER_TEMP/adversary.port" ] && \
                [ -s "$RUNNER_TEMP/adversary-http.port" ]; then break; fi

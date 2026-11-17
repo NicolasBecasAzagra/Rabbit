@@ -83,7 +83,7 @@ if [ -n "${EXTRA_DIR:-}" ]; then
         name=${extra%/}
         name=${name##*/}
         case $name in
-            dev)
+            bench|init|dev)
                 echo "mkinitramfs: EXTRA_DIR must not provide $name" >&2
                 exit 1
                 ;;
