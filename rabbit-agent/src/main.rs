@@ -86,6 +86,8 @@
 // the helpers exist for the tests in that build.
 #![cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 
+#[cfg(test)]
+mod adversary;
 mod call;
 mod capability;
 mod encode;
