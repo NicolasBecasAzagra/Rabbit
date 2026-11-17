@@ -8,6 +8,7 @@ members = [
     "rabbit-initramfs",
     "rabbit-kernel",
     "rabbit-mm",
+    "rabbit-policy",
     "rabbit-sched",
 ]
 # Crates that carry their own workspace must be named here, or the paths that

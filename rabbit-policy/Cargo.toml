@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[package]
+name = "rabbit-policy"
+description = "The capability policy of a tool: what it may open and where it may connect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
