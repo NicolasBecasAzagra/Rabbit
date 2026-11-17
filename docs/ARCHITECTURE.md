@@ -83,10 +83,11 @@ those tools need. The pieces are in `rabbit-policy`, the manifest in
   it, every request that the policy does not list is refused.
 - **Enforced points**, each answering `EACCES` and printing one `POLICY deny`
   line (at most sixteen per boot):
-  - `openat` (and `open`): the path is copied into the kernel once, normalized,
-    and must lie under a read root, or under a write root when the access mode
-    is not read only. A path with a `..` component, a NUL or more than 255 bytes
-    is refused, not resolved.
+  - `openat` (and `open`), and `newfstatat` by path: the path is copied into
+    the kernel once, normalized, and must lie under a read root, or under a
+    write root when the access mode is not read only. The string that was
+    checked is the string that is opened. A path with a `..` component, a NUL or
+    256 bytes or more is refused, not resolved.
   - `socket`: a stream socket needs `NetTcp` and a datagram socket needs
     `NetUdp`.
   - `connect`, and `sendto` with an explicit address on a datagram socket: the
@@ -101,12 +102,17 @@ those tools need. The pieces are in `rabbit-policy`, the manifest in
 
 What is not enforced:
 
-- `bind`, `recvfrom`, `newfstatat` and the other calls that name a path or an
-  address are not checked. A program can still ask whether a file outside the
-  read root exists, and receive datagrams on a socket it may create.
+- `bind`, `recvfrom` and every other call that names a path or an address are
+  not checked: a program can still receive datagrams on a socket it may create.
+- Descriptors opened before the install stay usable afterwards: reads on files,
+  and writes and `sendto` on sockets that were opened earlier, are not asked.
 - The helpers that read user memory have no fault fixup, so a sibling thread
   that unmaps a range between the check and the copy can fault the kernel. This
   holds for every system call that reads user memory.
+- The denial log is capped at sixteen lines per boot, and the count of the
+  denials that were not printed is not kept.
+- The installed policy is copied on the kernel stack while it is decoded and
+  stored, about half a kilobyte. The size was not measured.
 - There is one policy per boot, for the whole process. The threads of the
   program share one address space, so a compromised thread is bounded by the
   same policy as the rest, and the policy cannot separate them.

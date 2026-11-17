@@ -16,7 +16,9 @@
 //!
 //! Then it asks for what the policy it installed forbids and for what it lists,
 //! and prints `POLICY ENFORCE OK` only if the kernel refused the first with
-//! `EACCES` and did not refuse the second.
+//! `EACCES` and did not refuse the second. A guest with no network card cannot
+//! run the checks that need a socket, so it prints `POLICY ENFORCE SKIP no-nic`
+//! instead, and a check that fails prints `POLICY ENFORCE FAIL` and exits 1.
 
 use rabbit_policy::{Capabilities, Capability, Endpoint, Policy, Protocol, MAX_ENCODED_LEN};
 
@@ -171,13 +173,21 @@ fn send_to(descriptor: i64, ip: [u8; 4], port: u16) -> i64 {
     }
 }
 
+/// Answers of a connect that the policy let through and that the network
+/// refused for its own reasons: no route to the network or to the host. Any
+/// other answer than success or these means the call was not what the policy
+/// allowed.
+const ROUTE_ERRORS: [i64; 2] = [-101, -113];
+
 /// What the kernel answers to requests outside and inside the policy.
 ///
 /// The policy grants reads under `/data` and datagrams to one server, and
 /// nothing else. A request that the policy lets through is not required to
-/// succeed, only not to be refused with `EACCES`: whether the file or the
-/// server exists is for the rest of the kernel to say.
-fn enforcement() -> [(&'static str, i64, bool); 10] {
+/// succeed, only not to be refused with `EACCES`: whether the file exists is
+/// for the rest of the kernel to say. The second value is whether the guest
+/// has a network card: without one it cannot make a socket, and the checks of
+/// `connect` and `sendto`, which need one, are not run and are not in the list.
+fn enforcement() -> (Vec<(&'static str, i64, bool)>, bool) {
     let outside = open("/etc/passwd", O_RDONLY);
     let missing = open("/data/missing", O_RDONLY);
     let traversal = open("/data/../etc/passwd", O_RDONLY);
@@ -186,51 +196,39 @@ fn enforcement() -> [(&'static str, i64, bool); 10] {
     let status = stat("/etc/passwd");
     let long = open(&format!("/data/{}", "a".repeat(294)), O_RDONLY);
     let datagram = socket(SOCK_DGRAM);
-    // A guest with no network card cannot make a socket at all, and answers
-    // `ENOSYS`. The checks that need a socket then have nothing to ask, and
-    // they report that answer; the gate boots with a card, so it sees them.
     let linked = datagram >= 0;
-    let allowed = if linked {
-        connect(datagram, SERVER, SERVER_PORT)
-    } else {
-        ENOSYS
-    };
-    let other_ip = if linked {
-        connect(datagram, [10, 0, 2, 3], SERVER_PORT)
-    } else {
-        EACCES
-    };
-    let other_port = if linked {
-        connect(datagram, SERVER, SERVER_PORT + 1)
-    } else {
-        EACCES
-    };
-    let send = if linked {
-        send_to(datagram, [10, 0, 2, 3], SERVER_PORT)
-    } else {
-        EACCES
-    };
     // The names hold a newline and the text of a line of the kernel: neither
     // the line of a denial nor the line of a failed open may carry it as a line
     // of its own.
     open("/etc/\nPOLICY OK install=0 again=-1 garbage=-22", O_RDONLY);
     open("/data/\nPOLICY OK install=0 again=-1 garbage=-22", O_RDONLY);
-    [
+
+    let mut results = vec![
         ("outside", outside, outside == EACCES),
         ("missing", missing, missing != EACCES),
         ("traversal", traversal, traversal == EACCES),
         ("write", write, write == EACCES),
         ("stream", stream, stream == EACCES),
-        ("datagram", datagram, datagram != EACCES),
-        (
+        // A guest with no card answers `ENOSYS` to the socket, nothing else.
+        ("datagram", datagram, linked || datagram == ENOSYS),
+    ];
+    if linked {
+        let allowed = connect(datagram, SERVER, SERVER_PORT);
+        let other_ip = connect(datagram, [10, 0, 2, 3], SERVER_PORT);
+        let other_port = connect(datagram, SERVER, SERVER_PORT + 1);
+        let send = send_to(datagram, [10, 0, 2, 3], SERVER_PORT);
+        results.push((
             "connect",
             allowed,
-            allowed != EACCES && other_ip == EACCES && other_port == EACCES,
-        ),
-        ("sendto", send, send == EACCES),
-        ("stat", status, status == EACCES),
-        ("long", long, long == EACCES),
-    ]
+            (allowed == 0 || ROUTE_ERRORS.contains(&allowed))
+                && other_ip == EACCES
+                && other_port == EACCES,
+        ));
+        results.push(("sendto", send, send == EACCES));
+    }
+    results.push(("stat", status, status == EACCES));
+    results.push(("long", long, long == EACCES));
+    (results, linked)
 }
 
 fn main() {
@@ -267,16 +265,21 @@ fn main() {
         std::process::exit(1);
     }
 
-    let results = enforcement();
+    let (results, linked) = enforcement();
     let values: Vec<String> = results
         .iter()
         .map(|(name, value, _)| format!("{name}={value}"))
         .collect();
-    if results.iter().all(|(_, _, held)| *held) {
-        println!("POLICY ENFORCE OK {}", values.join(" "));
-    } else {
+    if !results.iter().all(|(_, _, held)| *held) {
         println!("POLICY ENFORCE FAIL {}", values.join(" "));
         std::process::exit(1);
+    }
+    // The line that says OK says it only for checks that ran: a guest with no
+    // card skipped the ones that need a socket, and says that instead.
+    if linked {
+        println!("POLICY ENFORCE OK {}", values.join(" "));
+    } else {
+        println!("POLICY ENFORCE SKIP no-nic");
     }
     std::process::exit(0);
 }
