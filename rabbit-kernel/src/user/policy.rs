@@ -10,16 +10,22 @@
 //!
 //! Until a policy is installed every request is allowed, which is what the
 //! kernel did before the policy existed. Once it is installed the rule is deny
-//! by default: the checks below answer `EACCES` unless the policy lists the
-//! request. Each denial prints one line, with a limit, and the text that comes
-//! from the program is sanitized first so a program cannot forge a line of the
-//! log.
+//! by default, and these calls answer `EACCES` unless the policy lists the
+//! request: `openat` (and `open`), `newfstatat` by path, `socket`, `connect`,
+//! `sendto` with an address on a datagram socket, `listen` and `accept`.
+//!
+//! Nothing else is checked. `bind`, `recvfrom`, and the data calls on
+//! descriptors that were opened before the install (`read`, `write`, `sendto`
+//! without an address) are not asked, and neither is any other system call.
+//!
+//! Each denial prints one line, with a limit, and the text that comes from the
+//! program is sanitized first so a program cannot forge a line of the log.
 
 use core::cell::UnsafeCell;
 use core::fmt;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use rabbit_policy::{Policy, Protocol, Reason, Verdict, MAX_ENCODED_LEN};
+use rabbit_policy::{Policy, Protocol, Reason, Verdict, MAX_ENCODED_LEN, PATH_BUFFER_LEN};
 
 use crate::net::SocketType;
 use crate::sync::IrqSpinLock;
@@ -127,16 +133,38 @@ fn deny(line: fmt::Arguments<'_>) -> i64 {
     EACCES
 }
 
-/// Ask whether the program may open `path`, for writing when `write`.
+/// Ask whether the program may open `path`, for writing when `write`, and
+/// return the path to open.
 ///
-/// The caller passes a path it has already copied into the kernel, so the
-/// bytes that are checked are the bytes that are opened.
-pub fn check_open(path: &[u8], write: bool) -> Result<(), i64> {
-    match with_installed(|policy| policy.check_open(path, write)) {
-        None | Some(Verdict::Allow) => Ok(()),
-        Some(Verdict::Deny(reason)) => Err(deny(format_args!(
+/// With a policy installed the result is the normalized path the policy
+/// accepted, written into `normalized`: the string that was checked is the
+/// string the caller opens. Without a policy it is `path` itself. The caller
+/// passes a path it has already copied into the kernel.
+pub fn check_open<'a>(
+    path: &'a [u8],
+    write: bool,
+    normalized: &'a mut [u8; PATH_BUFFER_LEN],
+) -> Result<&'a [u8], i64> {
+    match with_installed(|policy| policy.check_open_normalized(path, write, normalized)) {
+        None => Ok(path),
+        Some(Ok(length)) => Ok(&normalized[..length]),
+        Some(Err(reason)) => Err(deny(format_args!(
             "open reason={reason:?} path={}",
             Sanitized(path)
+        ))),
+    }
+}
+
+/// Refuse a path that is too long to be copied, once a policy is installed.
+///
+/// No path of that length can be under a root, so the answer does not depend
+/// on its bytes, which are not read.
+pub fn check_long_path() -> Result<(), i64> {
+    match with_installed(|_| ()) {
+        None => Ok(()),
+        Some(()) => Err(deny(format_args!(
+            "open reason={:?} path=<too long>",
+            Reason::BadPath
         ))),
     }
 }

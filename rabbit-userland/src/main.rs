@@ -26,6 +26,7 @@ const SYS_OPENAT: i64 = 257;
 const SYS_SOCKET: i64 = 41;
 const SYS_CONNECT: i64 = 42;
 const SYS_SENDTO: i64 = 44;
+const SYS_NEWFSTATAT: i64 = 262;
 /// `EPERM`, negated as the kernel returns it.
 const EPERM: i64 = -1;
 /// `EACCES`, negated as the kernel returns it.
@@ -96,6 +97,28 @@ fn open(path: &str, flags: usize) -> i64 {
     }
 }
 
+/// `newfstatat` of `path` against the working directory.
+fn stat(path: &str) -> i64 {
+    let mut text = path.as_bytes().to_vec();
+    text.push(0);
+    let mut block = [0u8; 144];
+    // SAFETY: the call reads the NUL terminated path of `text` and writes at
+    // most the 144 bytes of a `struct stat` into `block`, which are valid.
+    unsafe {
+        syscall(
+            SYS_NEWFSTATAT,
+            [
+                AT_FDCWD,
+                text.as_ptr() as usize,
+                block.as_mut_ptr() as usize,
+                0,
+                0,
+                0,
+            ],
+        )
+    }
+}
+
 fn socket(kind: usize) -> i64 {
     // SAFETY: the call takes no pointer.
     unsafe { syscall(SYS_SOCKET, [AF_INET, kind, 0, 0, 0, 0]) }
@@ -154,12 +177,14 @@ fn send_to(descriptor: i64, ip: [u8; 4], port: u16) -> i64 {
 /// nothing else. A request that the policy lets through is not required to
 /// succeed, only not to be refused with `EACCES`: whether the file or the
 /// server exists is for the rest of the kernel to say.
-fn enforcement() -> [(&'static str, i64, bool); 8] {
+fn enforcement() -> [(&'static str, i64, bool); 10] {
     let outside = open("/etc/passwd", O_RDONLY);
     let missing = open("/data/missing", O_RDONLY);
     let traversal = open("/data/../etc/passwd", O_RDONLY);
     let write = open("/data/x", O_WRONLY);
     let stream = socket(SOCK_STREAM);
+    let status = stat("/etc/passwd");
+    let long = open(&format!("/data/{}", "a".repeat(294)), O_RDONLY);
     let datagram = socket(SOCK_DGRAM);
     // A guest with no network card cannot make a socket at all, and answers
     // `ENOSYS`. The checks that need a socket then have nothing to ask, and
@@ -203,6 +228,8 @@ fn enforcement() -> [(&'static str, i64, bool); 8] {
             allowed != EACCES && other_ip == EACCES && other_port == EACCES,
         ),
         ("sendto", send, send == EACCES),
+        ("stat", status, status == EACCES),
+        ("long", long, long == EACCES),
     ]
 }
 

@@ -379,23 +379,38 @@ impl Policy {
     /// A read needs [`Capability::FsRead`] and a read root, a write needs
     /// [`Capability::FsWrite`] and a write root; one does not imply the other.
     pub fn check_open(&self, path: &[u8], write: bool) -> Verdict {
+        let mut buffer = [0; PATH_BUFFER_LEN];
+        match self.check_open_normalized(path, write, &mut buffer) {
+            Ok(_) => Verdict::Allow,
+            Err(reason) => Verdict::Deny(reason),
+        }
+    }
+
+    /// The decision of [`Policy::check_open`], with the path it allowed.
+    ///
+    /// On `Ok(length)` the normalized form of `path` is in `out[..length]`, and
+    /// that is the string to open: a caller that opened `path` again could be
+    /// handed a different file than the one the policy looked at. On `Err`
+    /// there is no path to open, and `out` holds nothing to use.
+    pub fn check_open_normalized(
+        &self,
+        path: &[u8],
+        write: bool,
+        out: &mut [u8; PATH_BUFFER_LEN],
+    ) -> Result<usize, Reason> {
         let (capability, roots) = if write {
             (Capability::FsWrite, &self.write)
         } else {
             (Capability::FsRead, &self.read)
         };
         if !self.granted.contains(capability) {
-            return Verdict::Deny(Reason::NotGranted);
+            return Err(Reason::NotGranted);
         }
-        let mut buffer = [0; PATH_BUFFER_LEN];
-        let len = match normalize(path, &mut buffer) {
-            Ok(len) => len,
-            Err(reason) => return Verdict::Deny(reason),
-        };
-        if roots.covers(&buffer[..len]) {
-            Verdict::Allow
+        let length = normalize(path, out)?;
+        if roots.covers(&out[..length]) {
+            Ok(length)
         } else {
-            Verdict::Deny(Reason::OutsideRoots)
+            Err(Reason::OutsideRoots)
         }
     }
 
@@ -643,6 +658,40 @@ mod tests {
         assert_eq!(
             open(&policy, "/etc/passwd", false),
             Verdict::Deny(Reason::OutsideRoots)
+        );
+    }
+
+    #[test]
+    fn the_path_that_was_allowed_is_the_path_returned() {
+        let policy = policy(&["/a"], &[]);
+        let mut out = [0; PATH_BUFFER_LEN];
+        let length = policy
+            .check_open_normalized(b"//a/./b/", false, &mut out)
+            .unwrap();
+        assert_eq!(&out[..length], b"/a/b");
+        assert_eq!(policy.check_open(b"//a/./b/", false), Verdict::Allow);
+    }
+
+    #[test]
+    fn a_denied_path_returns_no_buffer() {
+        let policy = policy(&["/a"], &[]);
+        let mut out = [0; PATH_BUFFER_LEN];
+        assert_eq!(
+            policy.check_open_normalized(b"/etc/passwd", false, &mut out),
+            Err(Reason::OutsideRoots)
+        );
+        assert_eq!(
+            policy.check_open_normalized(b"/a/../etc", false, &mut out),
+            Err(Reason::BadPath)
+        );
+        assert_eq!(
+            policy.check_open_normalized(b"/a/b", true, &mut out),
+            Err(Reason::OutsideRoots)
+        );
+        let empty = Policy::new(Capabilities::EMPTY);
+        assert_eq!(
+            empty.check_open_normalized(b"/a/b", false, &mut out),
+            Err(Reason::NotGranted)
         );
     }
 

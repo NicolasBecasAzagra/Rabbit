@@ -240,12 +240,9 @@ const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 /// `AT_EMPTY_PATH`: `newfstatat` may describe the descriptor itself.
 const AT_EMPTY_PATH: u64 = 0x1000;
 
-/// Longest path a system call accepts, including the terminating NUL.
-const PATH_MAX: usize = 4096;
-
 /// Size of the kernel buffer a path is copied into: the longest path a policy
 /// can accept, 255 bytes, and a byte more so a longer path is told apart.
-const PATH_COPY_LEN: usize = 256;
+const PATH_COPY_LEN: usize = rabbit_policy::PATH_BUFFER_LEN;
 
 /// `AF_INET`: the internet address family.
 const AF_INET: u16 = 2;
@@ -566,29 +563,26 @@ fn sys_openat(dirfd: u64, address: u64, flags: u64) -> i64 {
         crate::kprintln!("openat refused: dirfd={dirfd:#x} path={address:#x}");
         return EINVAL;
     }
-    let Some(path) = user_c_string(address) else {
-        crate::kprintln!("openat refused: path={address:#x} is not readable");
-        return EFAULT;
-    };
-    // The program can rewrite its path while the kernel works, so a path the
-    // policy can accept is copied into the kernel once, and the copy is what
-    // the policy checks and what is opened. A longer path is not copied: no
-    // rule of a policy can match it, and it is refused before its bytes matter.
+    // The program can rewrite its path while the kernel works, so the path is
+    // copied into the kernel once, byte by byte, and the policy and the file
+    // system only ever see the copy. With a policy installed they see the
+    // normalized form the policy accepted, so the string that was checked is
+    // the string that is opened.
     let mut copy = [0u8; PATH_COPY_LEN];
-    let path = if path.len() < PATH_COPY_LEN {
-        for (offset, byte) in copy[..path.len()].iter_mut().enumerate() {
-            // SAFETY: `user_c_string` checked these bytes as mapped user
-            // memory, and `offset` is below the length of the path. The read
-            // is volatile because the program may write the byte meanwhile.
-            *byte = unsafe { path.as_ptr().add(offset).read_volatile() };
+    let mut normalized = [0u8; PATH_COPY_LEN];
+    let path = match checked_path(
+        address,
+        flags & fd::O_ACCMODE != 0,
+        &mut copy,
+        &mut normalized,
+    ) {
+        Ok(path) => path,
+        Err(EFAULT) => {
+            crate::kprintln!("openat refused: path={address:#x} is not readable");
+            return EFAULT;
         }
-        &copy[..path.len()]
-    } else {
-        path
+        Err(error) => return error,
     };
-    if let Err(error) = policy::check_open(path, flags & fd::O_ACCMODE != 0) {
-        return error;
-    }
     let result = fd::open(path, flags);
     if result < 0 {
         // The name is in the log: a program that opens a file that is there
@@ -603,6 +597,10 @@ fn sys_openat(dirfd: u64, address: u64, flags: u64) -> i64 {
 }
 
 /// `newfstatat`: describe one entry of the initramfs archive.
+///
+/// The path goes through the same copy and the same policy check as `openat`:
+/// whether a file exists is something a program outside the read roots does
+/// not learn.
 fn sys_newfstatat(dirfd: u64, path: u64, address: u64, flags: u64) -> i64 {
     if dirfd != AT_FDCWD {
         return EINVAL;
@@ -610,8 +608,11 @@ fn sys_newfstatat(dirfd: u64, path: u64, address: u64, flags: u64) -> i64 {
     if flags & !(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH) != 0 {
         return EINVAL;
     }
-    let Some(path) = user_c_string(path) else {
-        return EFAULT;
+    let mut copy = [0u8; PATH_COPY_LEN];
+    let mut normalized = [0u8; PATH_COPY_LEN];
+    let path = match checked_path(path, false, &mut copy, &mut normalized) {
+        Ok(path) => path,
+        Err(error) => return error,
     };
     match fd::stat_path(path) {
         Ok(block) => {
@@ -1618,35 +1619,63 @@ fn user_bytes(address: u64, length: u64) -> Option<&'static [u8]> {
     Some(unsafe { core::slice::from_raw_parts(address as *const u8, length) })
 }
 
-/// Borrow a NUL terminated path from user memory.
+/// What came of reading a NUL terminated path out of user memory.
+enum UserPath {
+    /// The path is in the buffer, this many bytes long, without the NUL.
+    Copied(usize),
+    /// The path is [`PATH_COPY_LEN`] bytes or longer.
+    TooLong,
+    /// A byte of the path is not mapped user memory.
+    Unreadable,
+}
+
+/// Copy a NUL terminated path out of user memory into `out`.
 ///
-/// Every byte is validated against the mapped user range, so a bad pointer or a
-/// string that runs off the mapped pages reports `None` instead of faulting in
-/// the kernel. The length bound keeps a missing terminator from walking the
-/// whole address space.
-fn user_c_string(address: u64) -> Option<&'static [u8]> {
-    let mut length = 0u64;
-    loop {
-        if length >= PATH_MAX as u64 {
-            return None;
+/// Every byte is validated against the mapped user range and read once, with a
+/// volatile read, because the program may write it meanwhile. No reference to
+/// user memory is made, so a bad pointer or a string that runs off the mapped
+/// pages is [`UserPath::Unreadable`] instead of a fault in the kernel, and a
+/// missing terminator stops at the size of the buffer.
+fn copy_user_path(address: u64, out: &mut [u8; PATH_COPY_LEN]) -> UserPath {
+    for (offset, slot) in out.iter_mut().enumerate() {
+        let Some(position) = address.checked_add(offset as u64) else {
+            return UserPath::Unreadable;
+        };
+        if user_range(position, 1).is_none() {
+            return UserPath::Unreadable;
         }
-        let position = address.checked_add(length)?;
-        user_range(position, 1)?;
         // SAFETY: the single byte at `position` was checked as mapped user
-        // memory above, and the program only changes it concurrently if it
-        // races its own path buffer.
-        if unsafe { (position as *const u8).read() } == 0 {
-            break;
+        // memory above.
+        let byte = unsafe { (position as *const u8).read_volatile() };
+        if byte == 0 {
+            return UserPath::Copied(offset);
         }
-        length += 1;
+        *slot = byte;
     }
-    let length = usize::try_from(length).ok()?;
-    if length == 0 {
-        return Some(&[]);
+    UserPath::TooLong
+}
+
+/// Bring the path at `address` into the kernel and ask the policy about it.
+///
+/// Returns the path to use: the bytes the policy accepted in normalized form
+/// when a policy is installed, the copy as it is otherwise. A path of
+/// [`PATH_COPY_LEN`] bytes or longer is refused by a policy before any of its
+/// bytes is read; without one it names nothing, because the archive holds no
+/// name that long.
+fn checked_path<'a>(
+    address: u64,
+    write: bool,
+    copy: &'a mut [u8; PATH_COPY_LEN],
+    normalized: &'a mut [u8; PATH_COPY_LEN],
+) -> Result<&'a [u8], i64> {
+    match copy_user_path(address, copy) {
+        UserPath::Unreadable => Err(EFAULT),
+        UserPath::TooLong => {
+            policy::check_long_path()?;
+            Err(ENOENT)
+        }
+        UserPath::Copied(length) => policy::check_open(&copy[..length], write, normalized),
     }
-    // SAFETY: the bytes from `address` to the NUL were checked one by one as
-    // mapped user memory, and the slice excludes the terminator.
-    Some(unsafe { core::slice::from_raw_parts(address as *const u8, length) })
 }
 
 /// Check that `[address, address + length)` is mapped user memory.

@@ -103,7 +103,7 @@ jobs:
           test "$(grep -c '^POLICY OK ' serial-clean.log)" -eq 1
           # The policy refuses what it does not list and lets through what it
           # does, with a socket, which the card of this boot provides.
-          grep -qE "^POLICY ENFORCE OK outside=-13 missing=-[0-9]+ traversal=-13 write=-13 stream=-13 datagram=[0-9]+ connect=-?[0-9]+ sendto=-13$" serial-clean.log
+          grep -qE "^POLICY ENFORCE OK outside=-13 missing=-[0-9]+ traversal=-13 write=-13 stream=-13 datagram=[0-9]+ connect=-?[0-9]+ sendto=-13 stat=-13 long=-13$" serial-clean.log
           grep -q "SCHED OK" serial-clean.log
           # Interleaving proof: every demo thread must appear in the log.
           grep -q "^T1 " serial-clean.log
