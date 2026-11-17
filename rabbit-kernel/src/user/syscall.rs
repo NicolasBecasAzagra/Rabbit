@@ -219,7 +219,8 @@ const SYS_RSEQ: u64 = 334;
 /// The private call that installs the capability policy of the program.
 ///
 /// The number is Rabbit's own: Linux answers `ENOSYS` for it, and the agent
-/// uses that answer to learn which kernel it runs on. 500 is above the last
+/// uses that answer to learn that the kernel has no such call, which does not
+/// say which kernel it is. 500 is above the last
 /// x86-64 Linux call this repository knows of, but no copy of the Linux
 /// system call table is in the tree, so that it is free there is not verified
 /// here.
@@ -1554,7 +1555,7 @@ fn sys_getrusage(address: u64) -> i64 {
 }
 
 /// Validate a user range and borrow it as bytes.
-pub(super) fn user_bytes(address: u64, length: u64) -> Option<&'static [u8]> {
+fn user_bytes(address: u64, length: u64) -> Option<&'static [u8]> {
     let length = user_range_faulted(address, length)?;
     if length == 0 {
         return Some(&[]);
@@ -1610,7 +1611,7 @@ fn user_c_string(address: u64) -> Option<&'static [u8]> {
 /// that the kernel has not mapped yet: the demand paging maps them when the
 /// program touches them, and a system call that writes into the buffer has to
 /// do the same. A range that cannot be brought in is refused.
-fn user_range_faulted(address: u64, length: u64) -> Option<usize> {
+pub(super) fn user_range_faulted(address: u64, length: u64) -> Option<usize> {
     if length == 0 {
         return Some(0);
     }

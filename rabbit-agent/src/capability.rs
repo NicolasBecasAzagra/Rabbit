@@ -99,8 +99,8 @@ fn refuse_whole_tree(root: &str) -> Result<(), Reason> {
 
 /// The private system call of Rabbit that installs a policy.
 ///
-/// Linux answers `ENOSYS` for it, which is how the agent knows which kernel
-/// it runs on.
+/// A kernel without the call answers `ENOSYS`, as Linux does. The answer says
+/// that the call is missing, not which kernel it is.
 #[cfg(target_os = "linux")]
 const SYS_RABBIT_POLICY: u64 = 500;
 
@@ -137,7 +137,7 @@ pub fn install(bytes: &[u8]) -> i64 {
 pub fn install_line(result: i64, bytes: usize) -> String {
     match result {
         0 => format!("AGENT policy installed bytes={bytes}"),
-        ENOSYS => "AGENT policy kernel=linux (no private syscall)".to_string(),
+        ENOSYS => "AGENT policy kernel=without private syscall".to_string(),
         other => format!("AGENT policy ERR errno={}", other.saturating_neg()),
     }
 }
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(install_line(0, 15), "AGENT policy installed bytes=15");
         assert_eq!(
             install_line(-38, 15),
-            "AGENT policy kernel=linux (no private syscall)"
+            "AGENT policy kernel=without private syscall"
         );
         assert_eq!(install_line(-1, 15), "AGENT policy ERR errno=1");
         assert_eq!(install_line(-22, 15), "AGENT policy ERR errno=22");

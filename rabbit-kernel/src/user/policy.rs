@@ -16,8 +16,17 @@ use rabbit_policy::{Policy, MAX_ENCODED_LEN};
 use crate::sync::IrqSpinLock;
 
 use super::errno::{EFAULT, EINVAL, EPERM};
-use super::syscall::user_bytes;
+use super::syscall::user_range_faulted;
 
+/// The slot of the policy.
+///
+/// There is one policy per boot: the kernel starts one program per boot and
+/// has no `execve`, so a second install answers `EPERM` by design.
+///
+/// Known limitation: the helpers that read user memory have no fault fixup, so
+/// a sibling thread that unmaps the range between the check and the copy can
+/// fault the kernel. Every system call that reads user memory has this
+/// property; it is not specific to this one.
 struct Installed(UnsafeCell<Option<Policy>>);
 
 // SAFETY: the cell is only reached while `LOCK` is held, which also keeps
@@ -42,11 +51,18 @@ pub fn install(address: u64, length: u64) -> i64 {
         Ok(length) if (1..=MAX_ENCODED_LEN).contains(&length) => length,
         _ => return EINVAL,
     };
-    let Some(user) = user_bytes(address, length as u64) else {
+    let Some(length) = user_range_faulted(address, length as u64) else {
         return EFAULT;
     };
     let mut bytes = [0u8; MAX_ENCODED_LEN];
-    bytes[..length].copy_from_slice(user);
+    for (offset, byte) in bytes[..length].iter_mut().enumerate() {
+        // SAFETY: the range was checked as mapped user memory, and `offset` is
+        // below `length`. The read is volatile because the program owns the
+        // memory and may rewrite it while the kernel reads it: a plain read of
+        // a slice would be a data race, and the compiler may read a byte more
+        // than once. No reference to user memory is kept.
+        *byte = unsafe { core::ptr::read_volatile((address as *const u8).add(offset)) };
+    }
     let Ok(policy) = Policy::decode(&bytes[..length]) else {
         return EINVAL;
     };

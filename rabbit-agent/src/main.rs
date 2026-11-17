@@ -74,8 +74,8 @@
 //! The `AGENT policy` line is the one line on stderr: what the kernel answered
 //! when the agent installed the capability policy of the run, built by
 //! [`capability::manifest`], through the private call of Rabbit. `installed`
-//! carries the size of the encoded policy, `kernel=linux` says that the kernel
-//! has no such call and `ERR errno=<n>` that it refused. The serial
+//! carries the size of the encoded policy, `kernel=without private syscall` says that
+//! the kernel has no such call and `ERR errno=<n>` that it refused. The serial
 //! console mixes stderr into the guest log, so the line appears there; the
 //! greps of the gates are anchored on the other lines and ignore it.
 
