@@ -62,6 +62,7 @@
 //! parser for prose:
 //!
 //! ```text
+//! AGENT policy bytes=<n>
 //! AGENT step=<n> tool=<name> args=<json> result=<text>
 //! AGENT selftest tool=net_send args=<json> result=<text>
 //! AGENT selftest tool=http_get args=<json> result=<text>
@@ -69,6 +70,9 @@
 //! AGENT steps=<n> tokens=<n> seconds=<f64> tool_calls=<n> [net_us=<n> retries=<n>] [http_us=<n> http_retries=<n>]
 //! AGENT DONE
 //! ```
+//!
+//! The `AGENT policy` line is the one line on stderr: the size of the encoded
+//! capability policy of the run, built by [`capability::manifest`].
 
 #![deny(unsafe_op_in_unsafe_fn)]
 // A host build that is not the guest has no server to drive; the modules and
@@ -76,6 +80,7 @@
 #![cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
 
 mod call;
+mod capability;
 mod encode;
 mod expression;
 mod link;
@@ -334,6 +339,8 @@ use rabbit_infer::chat::{self, Role};
 use rabbit_infer::grammar::Grammar;
 #[cfg(target_os = "linux")]
 use rabbit_infer::runtime::Server;
+#[cfg(target_os = "linux")]
+use rabbit_policy::{Endpoint as PolicyEndpoint, Protocol};
 
 #[cfg(target_os = "linux")]
 use crate::tools::Outcome;
@@ -398,6 +405,35 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
 /// Drive the loop until `done` or [`MAX_STEPS`].
 #[cfg(target_os = "linux")]
 fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
+    // The policy of the run is built from the tools the loop declares and the
+    // servers of the task. Nothing enforces it yet: its size goes to stderr,
+    // so the log the rig parses on stdout does not change.
+    let address = endpoint.address.octets();
+    let servers = [
+        PolicyEndpoint {
+            protocol: Protocol::Udp,
+            ip: address,
+            port: endpoint.port,
+        },
+        PolicyEndpoint {
+            protocol: Protocol::Tcp,
+            ip: address,
+            port: endpoint.http_port,
+        },
+    ];
+    let scope = capability::Scope {
+        read_roots: &[],
+        write_roots: &[],
+        endpoints: &servers,
+    };
+    let policy = capability::manifest(&tools::NAMES, &scope)
+        .map_err(|reason| format!("policy: {reason:?}"))?;
+    let mut wire = [0; rabbit_policy::MAX_ENCODED_LEN];
+    let bytes = policy
+        .encode(&mut wire)
+        .map_err(|reason| format!("policy: {reason:?}"))?;
+    eprintln!("AGENT policy bytes={bytes}");
+
     let mut server = Server::open()?;
     let encoder = encode::Encoder::new(server.vocab())?;
     // The default bound on the argument strings: a path, a command or the

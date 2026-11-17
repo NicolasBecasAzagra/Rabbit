@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "rabbit-http",
  "rabbit-infer",
+ "rabbit-policy",
 ]
 
 [[package]]
@@ -16,4 +17,8 @@ version = "0.1.0"
 
 [[package]]
 name = "rabbit-infer"
+version = "0.1.0"
+
+[[package]]
+name = "rabbit-policy"
 version = "0.1.0"

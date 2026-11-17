@@ -16,6 +16,7 @@ publish = false
 [dependencies]
 rabbit-infer = { path = "../rabbit-infer" }
 rabbit-http = { path = "../rabbit-http" }
+rabbit-policy = { path = "../rabbit-policy" }
 
 [[bin]]
 name = "rabbit-agent"
