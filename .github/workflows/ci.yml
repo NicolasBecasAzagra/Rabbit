@@ -74,6 +74,15 @@ jobs:
             --target-dir "$HOME/.cache/rabbit/target/agent-host" \
             adversary::tests::the_adversary_is_bounded_on_linux \
             -- --nocapture --test-threads=1
+          # The compromised binary issues raw system calls, under the tool layer,
+          # in a child restricted by the manifest. The log has one RAW line per
+          # call, the existence probes, and a GAP line for each call that Linux
+          # let through and Rabbit refuses or does not have.
+          cargo test --manifest-path rabbit-agent/Cargo.toml \
+            --target "$(rustc -vV | sed -n 's/^host: //p')" \
+            --target-dir "$HOME/.cache/rabbit/target/agent-host" \
+            compromised::tests::the_compromised_binary_is_bounded_on_linux \
+            -- --nocapture --test-threads=1
 
       - name: Build kernel
         run: make build

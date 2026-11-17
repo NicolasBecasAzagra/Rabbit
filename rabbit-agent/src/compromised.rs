@@ -1465,4 +1465,230 @@ mod tests {
         let case = &cases(&setup(), true)[0];
         assert_eq!(run_case(case).verdict, Raw::Unavailable);
     }
+
+    /// The `ret` a child printed for the case `name`.
+    fn printed_ret(output: &str, name: &str) -> Option<i64> {
+        let line =
+            crate::adversary::tests::marked_line(output, &format!("RAW case={name} syscall="))?;
+        line.split(' ')
+            .find_map(|word| word.strip_prefix("ret="))?
+            .parse()
+            .ok()
+    }
+
+    #[test]
+    fn the_return_of_a_case_is_read_with_the_prefix_of_libtest_before_it() {
+        let output = "test x ... RAW case=open_inside syscall=openat ret=3 verdict=allowed reached=na\nRAW case=open_secret syscall=openat ret=-13 verdict=denied reached=na\n";
+        assert_eq!(printed_ret(output, "open_inside"), Some(3));
+        assert_eq!(printed_ret(output, "open_secret"), Some(-13));
+        assert_eq!(printed_ret(output, "open"), None);
+        assert_eq!(printed_ret(output, "fork"), None);
+    }
+
+    /// The child gets its directory, the four ports and whether `127.0.0.2` is
+    /// routable in this variable.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    const CHILD: &str = "RABBIT_COMPROMISED_CHILD";
+
+    /// The cases that the filter decides, which a kernel without seccomp does
+    /// not refuse.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    const SECCOMP_CASES: [&str; 5] = [
+        "socket_unix",
+        "socket_packet",
+        "listen_stream",
+        "accept_stream",
+        "io_uring_setup",
+    ];
+
+    /// Landlock and seccomp cannot be undone, so the raw calls run in a child:
+    /// the test runs again as a process of its own, restricted by the manifest.
+    /// The parent made the tree and the listeners before that, reads what the
+    /// child printed, and judges it: a call that sent data is allowed when the
+    /// data reached a server, whatever the call returned.
+    ///
+    /// What is asserted is what the documentation of Landlock and of the filter
+    /// says; the rest is printed. A call whose answer is `Any` never fails the
+    /// test, so a kernel that answers differently does not break it.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn the_compromised_binary_is_bounded_on_linux() {
+        use std::process::Command;
+
+        use crate::adversary::tests::{linux_setup, marked_line, Servers};
+        use crate::scratch::{run_child, Scratch};
+
+        if let Ok(parameters) = std::env::var(CHILD) {
+            child(&parameters);
+            return;
+        }
+
+        let scratch = Scratch::new("rabbit-compromised");
+        let directory = scratch.path();
+        std::fs::create_dir_all(format!("{directory}/agent")).unwrap();
+        std::fs::write(format!("{directory}/agent/hello.txt"), "hello").unwrap();
+        std::fs::write(format!("{directory}/secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(
+            format!("{directory}/secret.txt"),
+            format!("{directory}/agent/link.txt"),
+        )
+        .unwrap();
+        let servers = Servers::start();
+        let [udp, other_udp, tcp, other_tcp] = servers.ports;
+
+        let routable = std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 2], tcp)),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+        if !routable {
+            eprintln!("SKIP reason=127.0.0.2 not routable");
+        }
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "compromised::tests::the_compromised_binary_is_bounded_on_linux",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(
+                CHILD,
+                format!(
+                    "{directory},{udp},{other_udp},{tcp},{other_tcp},{}",
+                    u8::from(routable)
+                ),
+            );
+        let output = run_child(command, 60);
+        println!("{}", output.stdout);
+        eprintln!("{}", output.stderr);
+        let everything = format!("{}{}", output.stdout, output.stderr);
+        assert!(
+            !output.timed_out,
+            "the child ran out of time:\n{everything}"
+        );
+        assert!(output.success, "the child failed:\n{everything}");
+        assert!(
+            marked_line(&output.stdout, "CHILD DONE").is_some(),
+            "the child did not finish:\n{everything}"
+        );
+        let line = marked_line(&output.stdout, "CHILD AGENT policy").unwrap_or_else(|| {
+            panic!("the child printed no `CHILD AGENT policy` line:\n{everything}")
+        });
+        if !line.contains(" fs=on") {
+            return;
+        }
+
+        let setup = linux_setup(directory, servers.ports, line.contains("udp-port=on"));
+        let seccomp = line.contains("seccomp=on");
+        let table = cases(&setup, line.contains("tcp-port=on"));
+        let mut results = Vec::new();
+        for case in table {
+            let ret = printed_ret(&output.stdout, &case.name)
+                .unwrap_or_else(|| panic!("the child printed no line for {}", case.name));
+            let reached = case.sends.then(|| servers.reached(&case.name));
+            let outcome = Outcome {
+                ret,
+                verdict: classify(ret, reached),
+            };
+            if case.sends {
+                println!(
+                    "RAW net case={} syscall={} ret={ret} verdict={} reached={}",
+                    case.name,
+                    case.syscall,
+                    outcome.verdict.as_str(),
+                    if reached == Some(true) { "yes" } else { "no" }
+                );
+            }
+            // What the kernel is not asked about, or cannot answer, is skipped
+            // out loud.
+            if case.name.ends_with("_other_ip") && !routable {
+                eprintln!("SKIP {} reason=127.0.0.2 not routable", case.name);
+            } else if !seccomp && SECCOMP_CASES.contains(&case.name.as_str()) {
+                eprintln!("SKIP {} reason=the kernel has no seccomp", case.name);
+            } else {
+                assert!(
+                    case.linux.holds(outcome.verdict),
+                    "{}: {:?} was expected and the call came to {} (ret={ret})",
+                    case.name,
+                    case.linux,
+                    outcome.verdict.as_str()
+                );
+            }
+            // A gap is a call that Rabbit refuses or does not have and that
+            // Linux let through.
+            if outcome.verdict == Raw::Allowed && case.rabbit != Expect::Is(Raw::Allowed) {
+                println!(
+                    "GAP case={} rabbit={:?} linux={} reached={} why={}",
+                    case.name,
+                    case.rabbit,
+                    outcome.verdict.as_str(),
+                    match reached {
+                        Some(true) => "yes",
+                        Some(false) => "no",
+                        None => "na",
+                    },
+                    case.gap.unwrap_or("not asserted"),
+                );
+            }
+            results.push((case, outcome));
+        }
+        for line in existence_lines(&results) {
+            println!("{line}");
+        }
+    }
+
+    /// The part that runs restricted: apply the manifest, make every call, and
+    /// print a line for each as it is made. A call that replaces the process
+    /// leaves the lines before it, and the parent fails the test for the line
+    /// that never comes.
+    ///
+    /// A kernel that reports Landlock and does not enforce it fails the test,
+    /// and so does a kernel with no Landlock when `RABBIT_REQUIRE_LANDLOCK=1`;
+    /// otherwise a kernel with no Landlock skips the calls, on stderr.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn child(parameters: &str) {
+        use crate::adversary::tests::linux_setup;
+
+        // libtest may have left `test name ... ` on this line.
+        println!();
+        let fields: Vec<&str> = parameters.split(',').collect();
+        let port = |index: usize| fields[index].parse::<u16>().unwrap();
+        let directory = fields[0];
+        let mut setup = linux_setup(directory, [port(1), port(2), port(3), port(4)], false);
+        let policy = setup.manifest().unwrap();
+
+        let applied = crate::linux_policy::apply(&policy);
+        let line = applied.line();
+        println!("CHILD {line}");
+        assert!(applied.no_new_privs, "no_new_privs was refused: {line}");
+        setup.linux_udp_ports = applied.udp_port;
+
+        if !applied.fs {
+            assert_eq!(
+                applied.landlock_abi, 0,
+                "the kernel reports Landlock but it is not in force: {line}"
+            );
+            assert!(
+                std::env::var_os("RABBIT_REQUIRE_LANDLOCK").is_none_or(|value| value != "1"),
+                "RABBIT_REQUIRE_LANDLOCK=1 and the kernel has no Landlock: {line}"
+            );
+            eprintln!("SKIP landlock unavailable: the kernel reports no Landlock ABI: {line}");
+            println!("CHILD DONE");
+            return;
+        }
+
+        let mut results = Vec::new();
+        for case in cases(&setup, applied.tcp_port) {
+            let outcome = run_case(&case);
+            println!("{}", case_line(&case, &outcome, None));
+            results.push((case, outcome));
+        }
+        for line in existence_lines(&results) {
+            println!("{line}");
+        }
+        println!("{}", summary_line(&results, "linux"));
+        println!("CHILD DONE");
+    }
 }

@@ -511,7 +511,7 @@ pub fn report(results: &[(Case, Verdict)], kernel: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use rabbit_infer::grammar::Grammar;
 
     use super::*;
@@ -848,7 +848,7 @@ mod tests {
     /// the line. The child is the test binary run again with `--nocapture`, so
     /// libtest may have printed `test name ... ` in front of its first line,
     /// without a newline: a marker is found where it is, not at the start.
-    fn marked_line<'a>(output: &'a str, marker: &str) -> Option<&'a str> {
+    pub(crate) fn marked_line<'a>(output: &'a str, marker: &str) -> Option<&'a str> {
         let start = output.find(marker)?;
         output[start..].lines().next()
     }
@@ -937,18 +937,18 @@ mod tests {
     /// the datagram, or the request line. A call carries its name, so the
     /// record says which calls were let through.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    struct Servers {
+    pub(crate) struct Servers {
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
         threads: Vec<std::thread::JoinHandle<()>>,
         /// The ports: datagram, other datagram, stream, other stream.
-        ports: [u16; 4],
+        pub(crate) ports: [u16; 4],
         /// What reached each of them.
         seen: [std::sync::Arc<std::sync::Mutex<Vec<String>>>; 4],
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     impl Servers {
-        fn start() -> Self {
+        pub(crate) fn start() -> Self {
             use std::io::{Read, Write};
             use std::net::{TcpListener, UdpSocket};
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -1019,7 +1019,7 @@ mod tests {
 
         /// Whether a datagram or a request that carries `name` reached any of
         /// the servers.
-        fn reached(&self, name: &str) -> bool {
+        pub(crate) fn reached(&self, name: &str) -> bool {
             self.seen.iter().any(|record| {
                 record
                     .lock()
@@ -1043,7 +1043,7 @@ mod tests {
     /// The setup of the Linux tree: the root is `agent` under the directory,
     /// the servers are on the loopback, and the tree has the symbolic link.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    fn linux_setup(directory: &str, ports: [u16; 4], udp_ports: bool) -> Setup {
+    pub(crate) fn linux_setup(directory: &str, ports: [u16; 4], udp_ports: bool) -> Setup {
         let [udp, other_udp, tcp, other_tcp] = ports;
         Setup {
             base: directory.to_string(),
