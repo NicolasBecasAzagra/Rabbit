@@ -45,6 +45,23 @@ jobs:
       - name: Host tests
         run: make test
 
+      - name: Linux policy on this runner
+        run: |
+          # The agent restricts itself on a Linux kernel with Landlock and
+          # seccomp. What the runner kernel supports decides what the test can
+          # check, so the log shows it first. The test runs again in a child
+          # process because neither restriction can be undone, and it prints a
+          # SKIP line, to stderr, for what the kernel does not have. A kernel
+          # that reports a protection that is not in force fails the test.
+          uname -r
+          cat /sys/kernel/security/lsm || echo "no /sys/kernel/security/lsm"
+          echo
+          cargo test --manifest-path rabbit-agent/Cargo.toml \
+            --target "$(rustc -vV | sed -n 's/^host: //p')" \
+            --target-dir "$HOME/.cache/rabbit/target/agent-host" \
+            linux_policy::tests::the_manifest_is_enforced_in_a_child_process \
+            -- --nocapture --test-threads=1
+
       - name: Build kernel
         run: make build
 
