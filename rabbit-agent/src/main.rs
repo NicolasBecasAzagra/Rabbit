@@ -89,6 +89,8 @@ mod capability;
 mod encode;
 mod expression;
 mod link;
+#[cfg(test)]
+mod seccomp;
 mod tools;
 
 use std::net::Ipv4Addr;
