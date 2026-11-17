@@ -411,8 +411,7 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
 #[cfg(target_os = "linux")]
 fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
     // The policy of the run is built from the tools the loop declares and the
-    // servers of the task, and it is installed once the model is loaded: the
-    // files of the model are open and mapped by then. Nothing enforces it yet.
+    // servers of the task, and it is installed once the startup is over.
     let address = endpoint.address.octets();
     let servers = [
         PolicyEndpoint {
@@ -434,16 +433,23 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
         .map_err(|reason| format!("policy: {reason:?}"))?;
 
     let mut server = Server::open()?;
-    // The answer goes to stderr. Any answer but a refusal of the call is not
-    // fatal: nothing enforces the policy yet, and a kernel without the call is
-    // a kernel the agent has to run on too. The serial console mixes stderr
-    // into the guest log, so the line shows there; the greps of the gates are
+    let encoder = encode::Encoder::new(server.vocab())?;
+    // The policy goes in here, the earliest safe point. The kernel refuses
+    // every open outside the read root `/agent` once it has the policy, and
+    // the startup opens files elsewhere: `/net.conf` was read before `run`,
+    // `Server::open` opened and mapped the model, and `Encoder::new` has just
+    // read `/merges.txt`. Nothing after this point opens a file of the
+    // startup: the selftest and the tools only open sockets, which the
+    // endpoints of the policy cover, and the files the tools open are the
+    // ones the scope allows. The answer goes to stderr. Any answer but a
+    // refusal of the call is not fatal, and a kernel without the call is a
+    // kernel the agent has to run on too. The serial console mixes stderr into
+    // the guest log, so the line shows there; the greps of the gates are
     // anchored on the other lines and ignore it.
     eprintln!(
         "{}",
         capability::install_line(capability::install(&wire[..bytes]), bytes)
     );
-    let encoder = encode::Encoder::new(server.vocab())?;
     // The default bound on the argument strings: a path, a command or the
     // answer of `done` fits, and an unterminated string stops the call. The
     // grammar carries the keys of each tool too, with the type of value each
