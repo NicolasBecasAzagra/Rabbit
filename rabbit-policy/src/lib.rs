@@ -1011,6 +1011,52 @@ mod tests {
         assert_eq!(Policy::decode(&wrong), Err(Reason::Malformed));
     }
 
+    #[test]
+    fn the_wire_format_is_these_exact_bytes() {
+        const GOLDEN: [u8; 25] = [
+            b'R', b'B', b'P', b'L',   // magic
+            1,      // version
+            0b1011, // FsRead, FsWrite, NetTcp
+            1, 3, b'/', b'i', b'n', // one read root
+            1, 4, b'/', b'o', b'u', b't', // one write root
+            1,    // one endpoint
+            1, 10, 0, 2, 2, 0x1f, 0x90, // TCP 10.0.2.2:8080, port in big endian
+        ];
+        let mut granted = Capabilities::EMPTY;
+        granted.insert(Capability::FsRead);
+        granted.insert(Capability::FsWrite);
+        granted.insert(Capability::NetTcp);
+        let mut expected = Policy::new(granted);
+        expected.add_read_root(b"/in").unwrap();
+        expected.add_write_root(b"/out").unwrap();
+        expected
+            .add_endpoint(Endpoint {
+                protocol: Protocol::Tcp,
+                ip: [10, 0, 2, 2],
+                port: 8080,
+            })
+            .unwrap();
+        assert_eq!(encoded(&expected), GOLDEN);
+        assert_eq!(Policy::decode(&GOLDEN), Ok(expected));
+    }
+
+    #[test]
+    fn the_port_is_big_endian_on_the_wire() {
+        const GOLDEN: [u8; 16] = [
+            b'R', b'B', b'P', b'L', 1, 0b1000, 0, 0, // no roots
+            1, 1, 10, 0, 2, 2, 0x12, 0x34, // TCP 10.0.2.2:0x1234
+        ];
+        let policy = Policy::decode(&GOLDEN).unwrap();
+        assert_eq!(
+            policy.check_connect(Protocol::Tcp, [10, 0, 2, 2], 0x1234),
+            Verdict::Allow
+        );
+        assert_eq!(
+            policy.check_connect(Protocol::Tcp, [10, 0, 2, 2], 0x3412),
+            Verdict::Deny(Reason::EndpointNotListed)
+        );
+    }
+
     /// Every path made of up to four of these components, with and without a
     /// leading slash, and a check that none with a `..` is ever allowed.
     #[test]

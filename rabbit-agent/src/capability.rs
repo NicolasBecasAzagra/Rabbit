@@ -41,7 +41,9 @@ pub struct Scope<'a> {
 ///
 /// A name that is not in [`CAPABILITIES`] is [`Reason::Malformed`]: a tool the
 /// manifest does not know cannot be granted anything, and dropping it
-/// silently would hide a typo behind a policy that is too narrow.
+/// silently would hide a typo behind a policy that is too narrow. A root of
+/// `/` is [`Reason::BadPath`]: the engine accepts it, but a scope that names
+/// the whole tree grants every path, which is no scope at all.
 pub fn manifest(tools: &[&str], scope: &Scope) -> Result<Policy, Reason> {
     let mut granted = Capabilities::EMPTY;
     for tool in tools {
@@ -56,11 +58,13 @@ pub fn manifest(tools: &[&str], scope: &Scope) -> Result<Policy, Reason> {
     let mut policy = Policy::new(granted);
     if granted.contains(Capability::FsRead) {
         for root in scope.read_roots {
+            refuse_whole_tree(root)?;
             policy.add_read_root(root.as_bytes())?;
         }
     }
     if granted.contains(Capability::FsWrite) {
         for root in scope.write_roots {
+            refuse_whole_tree(root)?;
             policy.add_write_root(root.as_bytes())?;
         }
     }
@@ -70,6 +74,14 @@ pub fn manifest(tools: &[&str], scope: &Scope) -> Result<Policy, Reason> {
         }
     }
     Ok(policy)
+}
+
+fn refuse_whole_tree(root: &str) -> Result<(), Reason> {
+    if root == "/" {
+        Err(Reason::BadPath)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +218,22 @@ mod tests {
             endpoints: &endpoints,
         };
         assert_eq!(manifest(&["read_file"], &scope), Err(Reason::Capacity));
+    }
+
+    #[test]
+    fn a_root_of_the_whole_tree_is_refused() {
+        let endpoints = endpoints();
+        let read = Scope {
+            read_roots: &["/in", "/"],
+            write_roots: &[],
+            endpoints: &endpoints,
+        };
+        assert_eq!(manifest(&["read_file"], &read), Err(Reason::BadPath));
+        let write = Scope {
+            read_roots: &[],
+            write_roots: &["/"],
+            endpoints: &endpoints,
+        };
+        assert_eq!(manifest(&["write_file"], &write), Err(Reason::BadPath));
     }
 }

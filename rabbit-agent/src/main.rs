@@ -72,7 +72,9 @@
 //! ```
 //!
 //! The `AGENT policy` line is the one line on stderr: the size of the encoded
-//! capability policy of the run, built by [`capability::manifest`].
+//! capability policy of the run, built by [`capability::manifest`]. The serial
+//! console mixes stderr into the guest log, so the line appears there; the
+//! greps of the gates are anchored on the other lines and ignore it.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 // A host build that is not the guest has no server to drive; the modules and
@@ -406,8 +408,10 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
 #[cfg(target_os = "linux")]
 fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>> {
     // The policy of the run is built from the tools the loop declares and the
-    // servers of the task. Nothing enforces it yet: its size goes to stderr,
-    // so the log the rig parses on stdout does not change.
+    // servers of the task. Nothing enforces it yet: its size goes to stderr.
+    // The serial console mixes stderr into the guest log, so the line shows
+    // there; the greps of the gates are anchored on the other lines and
+    // ignore it.
     let address = endpoint.address.octets();
     let servers = [
         PolicyEndpoint {
@@ -645,9 +649,15 @@ mod tests {
         assert!(Endpoint::from_text("port=99999\n").is_err());
         assert!(Endpoint::from_text("speed=1\n").is_err());
         assert!(Endpoint::from_text("address\n").is_err());
-        assert!(Endpoint::from_text("port=0\n").is_err());
+        assert_eq!(
+            Endpoint::from_text("port=0\n"),
+            Err("config: port must be positive".to_string())
+        );
         assert!(Endpoint::from_text("selftest=perhaps\n").is_err());
-        assert!(Endpoint::from_text("http_port=0\n").is_err());
+        assert_eq!(
+            Endpoint::from_text("http_port=0\n"),
+            Err("config: http_port must be positive".to_string())
+        );
         assert!(Endpoint::from_text("http_port=70000\n").is_err());
         assert!(Endpoint::from_text("scheme=https\n").is_err());
         assert!(Endpoint::from_text("path=index.html\n").is_err());
