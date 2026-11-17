@@ -231,6 +231,7 @@ rabbit-kernel/     the no_std kernel binary
 rabbit-userland/   the test program that runs unmodified in ring 3
 rabbit-net/        Ethernet, ARP, IPv4, UDP and TCP, pure and tested on the host
 rabbit-http/       the HTTP/1.1 messages of the client of the agent
+rabbit-policy/     the capability policy of a program, shared by the agent and the kernel
 rabbit-bench/      the workload that measures the kernel
 rabbit-netclient/  the datagram round trip client, the same binary on both kernels
 rabbit-netstream/  the stream round trip client, the same binary on both kernels

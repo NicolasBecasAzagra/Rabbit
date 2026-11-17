@@ -62,6 +62,61 @@ task for the next milestone:
 - `FUTEX_WAIT_BITSET` timeouts are treated as relative.
 - The futex wait table holds eight waiters.
 
+## What the kernel enforces
+
+The agent declares the tools it uses, and the kernel limits the program to what
+those tools need. The pieces are in `rabbit-policy`, the manifest in
+`rabbit-agent/src/capability.rs` and the enforcement in
+`rabbit-kernel/src/user/policy.rs`.
+
+- **The manifest.** Each tool needs at most one capability: `read_file` and
+  `list_dir` need `FsRead`, `write_file` needs `FsWrite`, `net_send` needs
+  `NetUdp`, `http_get` needs `NetTcp`, and `compute` and `done` need none. The
+  policy grants the union of the capabilities of the declared tools, a read
+  root (`/agent`), no write root, and the endpoints of the task: the address
+  with the datagram port, and the address with the HTTP port.
+- **One install per boot.** The agent encodes the policy and installs it with
+  the private system call 500, after the last open of its startup. The kernel
+  decodes and validates it and keeps it. A second install answers `EPERM`,
+  because the kernel starts one program per boot and has no `execve`. Before an
+  install every request is allowed, as it was before the policy existed; after
+  it, every request that the policy does not list is refused.
+- **Enforced points**, each answering `EACCES` and printing one `POLICY deny`
+  line (at most sixteen per boot):
+  - `openat` (and `open`): the path is copied into the kernel once, normalized,
+    and must lie under a read root, or under a write root when the access mode
+    is not read only. A path with a `..` component, a NUL or more than 255 bytes
+    is refused, not resolved.
+  - `socket`: a stream socket needs `NetTcp` and a datagram socket needs
+    `NetUdp`.
+  - `connect`, and `sendto` with an explicit address on a datagram socket: the
+    protocol, the address and the port must be one of the listed endpoints.
+  - `listen` and `accept`: refused, because the policy has no inbound
+    capability.
+- **Unknown system calls** already return `-ENOSYS`; the policy does not change
+  that.
+- **Log lines.** The names a program chooses are sanitized before the kernel
+  prints them: at most 48 bytes, and any byte that is not printable ASCII is
+  printed as `?`, so a program cannot forge a line of the log.
+
+What is not enforced:
+
+- `bind`, `recvfrom`, `newfstatat` and the other calls that name a path or an
+  address are not checked. A program can still ask whether a file outside the
+  read root exists, and receive datagrams on a socket it may create.
+- The helpers that read user memory have no fault fixup, so a sibling thread
+  that unmaps a range between the check and the copy can fault the kernel. This
+  holds for every system call that reads user memory.
+- There is one policy per boot, for the whole process. The threads of the
+  program share one address space, so a compromised thread is bounded by the
+  same policy as the rest, and the policy cannot separate them.
+- The tools may read any file inside the read root, including a file the model
+  should not repeat. The policy bounds where the program can reach, not what it
+  does with what it reads.
+- The policy gives no protection against prompt injection: text that the agent
+  reads from a server it is allowed to reach can still steer the model into any
+  call the tools allow.
+
 ## The stack of a ring 3 thread
 
 The stack of a user thread inside the kernel is the sixteen kilobytes that the
@@ -188,6 +243,7 @@ A cargo workspace with one crate per concern:
 | `rabbit-bench` | The benchmark workload binary: a static Linux program that runs on both kernels. |
 | `rabbit-infer` | The inference runtime: the reader of the weights, the decoder, the merge encoder, the grammar of a tool call and the chat prompt. |
 | `rabbit-agent` | The agent loop: model, tool call, tool result, and the seven tools it can call. |
+| `rabbit-policy` | The capability policy of a program: what it may open and where it may connect. `no_std`, no allocation, host-tested; the agent builds it and the kernel enforces it. |
 
 Crates are added when the milestone that needs them arrives, not before. A
 crate with one function does not exist yet.
