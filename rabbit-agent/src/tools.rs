@@ -707,7 +707,7 @@ fn error_number(result: i64) -> i64 {
 /// The caller must pass a system call and arguments valid for the running
 /// kernel. The assembly only issues the instruction.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe fn syscall1(number: u64, argument1: u64) -> i64 {
+pub(crate) unsafe fn syscall1(number: u64, argument1: u64) -> i64 {
     let result: i64;
     // SAFETY: the caller upholds the contract above.
     unsafe {
@@ -803,6 +803,41 @@ pub(crate) unsafe fn syscall5(
             in("rdx") argument3,
             in("r10") argument4,
             in("r8") argument5,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result
+}
+
+/// Raw `syscall` with six arguments.
+///
+/// # Safety
+///
+/// See [`syscall1`].
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(crate) unsafe fn syscall6(
+    number: u64,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64,
+    argument5: u64,
+    argument6: u64,
+) -> i64 {
+    let result: i64;
+    // SAFETY: the caller upholds the contract above.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") number as i64 => result,
+            in("rdi") argument1,
+            in("rsi") argument2,
+            in("rdx") argument3,
+            in("r10") argument4,
+            in("r8") argument5,
+            in("r9") argument6,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),

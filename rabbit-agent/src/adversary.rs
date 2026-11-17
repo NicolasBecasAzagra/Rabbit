@@ -159,7 +159,7 @@ impl Setup {
     }
 
     /// A path of the directory that holds the root, `/` on Rabbit.
-    fn outside(&self, name: &str) -> String {
+    pub(crate) fn outside(&self, name: &str) -> String {
         format!("{}/{name}", self.base)
     }
 

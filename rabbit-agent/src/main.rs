@@ -31,6 +31,7 @@
 //! path=/index.html
 //! selftest=1
 //! adversary=1
+//! compromised=1
 //! ```
 //!
 //! `port` is the server of the datagram and `http_port` the server of the
@@ -41,6 +42,10 @@
 //! policy and then run the table of [`adversary`] instead of the loop: calls
 //! that the grammar accepts, each with the verdict the kernel gave it. The model
 //! is not opened.
+//!
+//! `compromised=1`, or the argument `--compromised`, does the same with
+//! [`compromised`]: raw system calls, as code that runs inside the agent would
+//! make them, each with the verdict the kernel gave it.
 //!
 //! `selftest=1` makes the agent call the network tools once before it asks the
 //! model, with the same code path the model uses, and print each result as an
@@ -76,7 +81,10 @@
 //! AGENT steps=<n> tokens=<n> seconds=<f64> tool_calls=<n> [net_us=<n> retries=<n>] [http_us=<n> http_retries=<n>]
 //! AGENT DONE
 //! ADV case=<name> verdict=<allowed|denied|failed>
-//! ADV summary cases=<n> allowed=<n> denied=<n> failed=<n> kernel=<rabbit|linux|unknown>
+//! ADV summary cases=<n> allowed=<n> denied=<n> failed=<n> invalid=<n> kernel=<rabbit|linux|unknown>
+//! RAW case=<name> syscall=<name> ret=<n> verdict=<allowed|denied|unavailable|failed> reached=<yes|no|na>
+//! RAW existence syscall=<name> outside=<n> missing=<n> oracle=<yes|no>
+//! RAW summary cases=<n> allowed=<n> denied=<n> unavailable=<n> failed=<n> kernel=<rabbit|linux|unknown>
 //! ```
 //!
 //! The `AGENT policy` line is the one line on stderr: what the kernel answered
@@ -97,6 +105,7 @@
 mod adversary;
 mod call;
 mod capability;
+mod compromised;
 mod encode;
 mod expression;
 #[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
@@ -172,6 +181,8 @@ pub struct Endpoint {
     pub selftest: bool,
     /// Whether the agent runs the adversary instead of the loop.
     pub adversary: bool,
+    /// Whether the agent runs the compromised binary instead of the loop.
+    pub compromised: bool,
 }
 
 impl Default for Endpoint {
@@ -184,6 +195,7 @@ impl Default for Endpoint {
             path: "/".to_string(),
             selftest: false,
             adversary: false,
+            compromised: false,
         }
     }
 }
@@ -243,6 +255,7 @@ impl Endpoint {
                 }
                 "selftest" => endpoint.selftest = parse_flag(value)?,
                 "adversary" => endpoint.adversary = parse_flag(value)?,
+                "compromised" => endpoint.compromised = parse_flag(value)?,
                 other => return Err(format!("config: unknown key: {other}")),
             }
         }
@@ -454,24 +467,32 @@ fn manifest_of(endpoint: &Endpoint) -> Result<(rabbit_policy::Policy, Vec<u8>), 
     Ok((policy, wire[..bytes].to_vec()))
 }
 
-/// Install the policy the way the loop does, run the calls of the adversary
-/// and print what each came to. The model is not opened.
+/// Install the policy the way the loop does, and say which kernel took it.
+///
+/// A table run with nothing enforcing the policy would print verdicts as if it
+/// were, so a kernel that enforces nothing is an error and the table is not run.
 #[cfg(target_os = "linux")]
-fn run_adversary(endpoint: &Endpoint) -> Result<(), String> {
+fn enforce(endpoint: &Endpoint) -> Result<&'static str, String> {
     let (policy, wire) = manifest_of(endpoint)?;
     let answer = capability::install(&wire);
     let settled = capability::settle(&policy, answer, wire.len());
     eprintln!("{}", settled.line);
-    // A table run with nothing enforcing it would print verdicts as if it
-    // were, so the run stops here and says so.
     if !settled.enforced {
         println!("ADV warning no-enforcement");
         return Err("the policy is not enforced by this kernel: the table was not run".to_string());
     }
+    Ok(capability::kernel(answer))
+}
+
+/// Run the calls of the adversary and print what each came to. The model is
+/// not opened.
+#[cfg(target_os = "linux")]
+fn run_adversary(endpoint: &Endpoint) -> Result<(), String> {
+    let kernel = enforce(endpoint)?;
     let setup =
         adversary::Setup::rabbit(endpoint.address.octets(), endpoint.port, endpoint.http_port);
     let results = adversary::execute(adversary::cases(&setup));
-    for line in adversary::report(&results, capability::kernel(answer)) {
+    for line in adversary::report(&results, kernel) {
         println!("{line}");
     }
     if results
@@ -480,6 +501,27 @@ fn run_adversary(endpoint: &Endpoint) -> Result<(), String> {
     {
         return Err("a call of the table did not parse".to_string());
     }
+    Ok(())
+}
+
+/// Run the raw system calls of the compromised binary and print what each came
+/// to, one line as it is made: a call that replaces the process leaves the
+/// lines before it in the log. The model is not opened.
+#[cfg(target_os = "linux")]
+fn run_compromised(endpoint: &Endpoint) -> Result<(), String> {
+    let kernel = enforce(endpoint)?;
+    let setup =
+        adversary::Setup::rabbit(endpoint.address.octets(), endpoint.port, endpoint.http_port);
+    let mut results = Vec::new();
+    for case in compromised::cases(&setup, false) {
+        let outcome = compromised::run_case(&case);
+        println!("{}", compromised::case_line(&case, &outcome, None));
+        results.push((case, outcome));
+    }
+    for line in compromised::existence_lines(&results) {
+        println!("{line}");
+    }
+    println!("{}", compromised::summary_line(&results, kernel));
     Ok(())
 }
 
@@ -646,9 +688,11 @@ fn main() {
             leave(1);
         }
     };
-    let result = if endpoint.adversary || arguments.iter().any(|argument| argument == "--adversary")
-    {
+    let asked = |flag: &str| arguments.iter().any(|argument| argument == flag);
+    let result = if endpoint.adversary || asked("--adversary") {
         run_adversary(&endpoint).map_err(Into::into)
+    } else if endpoint.compromised || asked("--compromised") {
+        run_compromised(&endpoint).map_err(Into::into)
     } else {
         run(&default_task(&arguments, &endpoint.url()), &endpoint)
     };
@@ -708,6 +752,8 @@ mod tests {
         assert!(!Endpoint::default().selftest);
         assert!(!Endpoint::default().adversary);
         assert!(Endpoint::from_text("adversary=1\n").unwrap().adversary);
+        assert!(Endpoint::from_text("compromised=1\n").unwrap().compromised);
+        assert!(!Endpoint::default().compromised);
     }
 
     #[test]
