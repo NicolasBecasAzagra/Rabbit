@@ -370,7 +370,18 @@ impl Policy {
         Ok(())
     }
 
-    fn endpoints(&self) -> &[Endpoint] {
+    /// The read roots, in the order they were added.
+    pub fn read_roots(&self) -> &[PathRule] {
+        self.read.as_slice()
+    }
+
+    /// The write roots, in the order they were added.
+    pub fn write_roots(&self) -> &[PathRule] {
+        self.write.as_slice()
+    }
+
+    /// The endpoints, in the order they were added.
+    pub fn endpoints(&self) -> &[Endpoint] {
         &self.endpoints[..usize::from(self.endpoint_count)]
     }
 
@@ -659,6 +670,22 @@ mod tests {
             open(&policy, "/etc/passwd", false),
             Verdict::Deny(Reason::OutsideRoots)
         );
+    }
+
+    #[test]
+    fn the_rules_can_be_read_back_in_order() {
+        let mut policy = policy(&["/a", "/b"], &["/c"]);
+        let endpoint = Endpoint {
+            protocol: Protocol::Udp,
+            ip: [1, 2, 3, 4],
+            port: 53,
+        };
+        policy.add_endpoint(endpoint).unwrap();
+        let reads: Vec<&[u8]> = policy.read_roots().iter().map(PathRule::as_bytes).collect();
+        assert_eq!(reads, [b"/a".as_slice(), b"/b".as_slice()]);
+        assert_eq!(policy.write_roots().len(), 1);
+        assert_eq!(policy.write_roots()[0].as_bytes(), b"/c");
+        assert_eq!(policy.endpoints(), [endpoint]);
     }
 
     #[test]

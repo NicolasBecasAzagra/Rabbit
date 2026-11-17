@@ -63,6 +63,10 @@ const NET_CONNECT_TCP: u64 = 1 << 1;
 /// `LANDLOCK_ACCESS_NET_CONNECT_SEND_UDP` (ABI 10).
 const NET_CONNECT_SEND_UDP: u64 = 1 << 3;
 
+/// `LANDLOCK_RESTRICT_SELF_TSYNC` (ABI 8): enforce the ruleset on every thread
+/// of the process, not only on the one that calls.
+const RESTRICT_SELF_TSYNC: u64 = 1 << 3;
+
 /// What a kernel of one ABI version can enforce.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Support {
@@ -157,6 +161,17 @@ impl Support {
     /// such right.
     pub fn udp_access(&self) -> u64 {
         NET_CONNECT_SEND_UDP & self.handled_net
+    }
+
+    /// The flags of `landlock_restrict_self`: the ruleset goes to every thread
+    /// of the process when the kernel can do that, and to the caller alone when
+    /// it cannot (before ABI 8).
+    pub fn restrict_flags(&self) -> u64 {
+        if self.abi >= 8 {
+            RESTRICT_SELF_TSYNC
+        } else {
+            0
+        }
     }
 
     /// `struct landlock_ruleset_attr` for the system call, and the size to
@@ -257,6 +272,13 @@ mod tests {
         // A kernel newer than the module is treated as the newest it knows.
         assert_eq!(Support::for_abi(99).handled_fs, support.handled_fs);
         assert_eq!(Support::for_abi(99).handled_net, support.handled_net);
+    }
+
+    #[test]
+    fn only_abi_8_and_later_restrict_every_thread() {
+        assert_eq!(Support::for_abi(7).restrict_flags(), 0);
+        assert_eq!(Support::for_abi(8).restrict_flags(), 1 << 3);
+        assert_eq!(Support::for_abi(10).restrict_flags(), 1 << 3);
     }
 
     #[test]

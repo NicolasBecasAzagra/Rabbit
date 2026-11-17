@@ -753,7 +753,7 @@ pub(crate) unsafe fn syscall3(number: u64, argument1: u64, argument2: u64, argum
 ///
 /// See [`syscall1`].
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-unsafe fn syscall4(
+pub(crate) unsafe fn syscall4(
     number: u64,
     argument1: u64,
     argument2: u64,
@@ -770,6 +770,39 @@ unsafe fn syscall4(
             in("rsi") argument2,
             in("rdx") argument3,
             in("r10") argument4,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result
+}
+
+/// Raw `syscall` with five arguments.
+///
+/// # Safety
+///
+/// See [`syscall1`].
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(crate) unsafe fn syscall5(
+    number: u64,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64,
+    argument5: u64,
+) -> i64 {
+    let result: i64;
+    // SAFETY: the caller upholds the contract above.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") number as i64 => result,
+            in("rdi") argument1,
+            in("rsi") argument2,
+            in("rdx") argument3,
+            in("r10") argument4,
+            in("r8") argument5,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),

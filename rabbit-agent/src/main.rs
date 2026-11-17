@@ -75,7 +75,9 @@
 //! when the agent installed the capability policy of the run, built by
 //! [`capability::manifest`], through the private call of Rabbit. `installed`
 //! carries the size of the encoded policy, `kernel=without private syscall` says that
-//! the kernel has no such call and `ERR errno=<n>` that it refused. The serial
+//! the kernel has no such call, and on x86-64 Linux it goes on to say which of
+//! Landlock and seccomp are active, and that the address of an endpoint is not
+//! enforced there; `ERR errno=<n>` says that the kernel refused. The serial
 //! console mixes stderr into the guest log, so the line appears there; the
 //! greps of the gates are anchored on the other lines and ignore it.
 
@@ -88,10 +90,12 @@ mod call;
 mod capability;
 mod encode;
 mod expression;
-#[cfg(test)]
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 mod landlock;
 mod link;
-#[cfg(test)]
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
+mod linux_policy;
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 mod seccomp;
 mod tools;
 
@@ -445,14 +449,15 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
     // read `/merges.txt`. Nothing after this point opens a file of the
     // startup: the selftest and the tools only open sockets, which the
     // endpoints of the policy cover, and the files the tools open are the
-    // ones the scope allows. The answer goes to stderr. Any answer but a
-    // refusal of the call is not fatal, and a kernel without the call is a
-    // kernel the agent has to run on too. The serial console mixes stderr into
+    // ones the scope allows. A kernel without the call is not Rabbit, and
+    // there the policy is applied with Landlock and seccomp instead. The line
+    // goes to stderr. Any answer but a refusal of the call is not fatal, and a
+    // kernel without the call is a kernel the agent has to run on too. The serial console mixes stderr into
     // the guest log, so the line shows there; the greps of the gates are
     // anchored on the other lines and ignore it.
     eprintln!(
         "{}",
-        capability::install_line(capability::install(&wire[..bytes]), bytes)
+        capability::settle(&policy, capability::install(&wire[..bytes]), bytes)
     );
     // The default bound on the argument strings: a path, a command or the
     // answer of `done` fits, and an unterminated string stops the call. The

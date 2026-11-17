@@ -133,6 +133,27 @@ pub fn install(bytes: &[u8]) -> i64 {
     }
 }
 
+/// The log line for what the kernel answered to [`install`], after the policy
+/// is applied the way that kernel allows.
+///
+/// A kernel that answers `ENOSYS` has no private call. On x86-64 Linux the
+/// policy is then applied with Landlock and seccomp, and the line says what
+/// became active, which is less than the kernel of Rabbit enforces.
+#[cfg(target_os = "linux")]
+pub fn settle(policy: &Policy, answer: i64, bytes: usize) -> String {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if answer == ENOSYS {
+            return crate::linux_policy::apply(policy).line();
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = policy;
+    }
+    install_line(answer, bytes)
+}
+
 /// The log line for the answer of [`install`] to a policy of `bytes` bytes.
 pub fn install_line(result: i64, bytes: usize) -> String {
     match result {
