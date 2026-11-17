@@ -20,6 +20,7 @@ rabbit-elf = { path = "../rabbit-elf" }
 rabbit-initramfs = { path = "../rabbit-initramfs" }
 rabbit-mm = { path = "../rabbit-mm" }
 rabbit-net = { path = "../rabbit-net" }
+rabbit-policy = { path = "../rabbit-policy" }
 rabbit-sched = { path = "../rabbit-sched" }
 
 # The protocols are a dependency of the kernel before the code that carries a

@@ -91,6 +91,10 @@ jobs:
           # through exit_group; the kernel reports the status it received.
           grep -q "Hello from Rabbit userland" serial-clean.log
           grep -q "USER OK exit=0" serial-clean.log
+          # The program installs a capability policy through the private call:
+          # garbage is refused, a valid policy is accepted once and a second
+          # install is refused.
+          grep -qxF "POLICY OK install=0 again=-1 garbage=-22" serial-clean.log
           grep -q "SCHED OK" serial-clean.log
           # Interleaving proof: every demo thread must appear in the log.
           grep -q "^T1 " serial-clean.log

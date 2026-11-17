@@ -36,6 +36,7 @@ dependencies = [
  "rabbit-initramfs",
  "rabbit-mm",
  "rabbit-net",
+ "rabbit-policy",
  "rabbit-sched",
 ]
 

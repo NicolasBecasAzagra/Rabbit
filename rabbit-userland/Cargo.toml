@@ -13,6 +13,9 @@ publish = false
 # position independent executable in the kernel.
 [workspace]
 
+[dependencies]
+rabbit-policy = { path = "../rabbit-policy" }
+
 [[bin]]
 name = "rabbit-userland"
 path = "src/main.rs"

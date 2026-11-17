@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "rabbit-policy"
+version = "0.1.0"
+
+[[package]]
 name = "rabbit-userland"
 version = "0.1.0"
+dependencies = [
+ "rabbit-policy",
+]

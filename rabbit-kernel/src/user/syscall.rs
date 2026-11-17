@@ -46,7 +46,7 @@ use crate::net;
 use crate::pit;
 
 use super::errno::*;
-use super::{fd, futex, paging, vm};
+use super::{fd, futex, paging, policy, vm};
 
 /// Model specific register that controls extended features.
 const MSR_EFER: u32 = 0xc000_0080;
@@ -216,6 +216,14 @@ const SYS_MEMBARRIER: u64 = 324;
 const SYS_STATX: u64 = 332;
 /// `rseq` system call number.
 const SYS_RSEQ: u64 = 334;
+/// The private call that installs the capability policy of the program.
+///
+/// The number is Rabbit's own: Linux answers `ENOSYS` for it, and the agent
+/// uses that answer to learn which kernel it runs on. 500 is above the last
+/// x86-64 Linux call this repository knows of, but no copy of the Linux
+/// system call table is in the tree, so that it is free there is not verified
+/// here.
+const SYS_RABBIT_POLICY: u64 = 500;
 
 /// `RLIMIT_STACK` resource number.
 const RLIMIT_STACK: u64 = 3;
@@ -465,6 +473,7 @@ pub extern "C" fn rabbit_syscall_dispatch(
         SYS_CLOCK_GETTIME => sys_clock_gettime(argument2),
         SYS_GETTIMEOFDAY => sys_gettimeofday(argument1, argument2),
         SYS_GETRANDOM => sys_getrandom(argument1, argument2),
+        SYS_RABBIT_POLICY => policy::install(argument1, argument2),
         SYS_FUTEX => sys_futex(argument1, argument2, argument3, argument4),
         SYS_CLONE => sys_clone(argument1, argument2, argument3, argument4, argument5),
         SYS_EXIT | SYS_EXIT_GROUP => sys_exit(argument1),
@@ -1545,7 +1554,7 @@ fn sys_getrusage(address: u64) -> i64 {
 }
 
 /// Validate a user range and borrow it as bytes.
-fn user_bytes(address: u64, length: u64) -> Option<&'static [u8]> {
+pub(super) fn user_bytes(address: u64, length: u64) -> Option<&'static [u8]> {
     let length = user_range_faulted(address, length)?;
     if length == 0 {
         return Some(&[]);

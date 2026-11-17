@@ -34,6 +34,7 @@ mod loader;
 mod mappings;
 mod paging;
 mod pins;
+mod policy;
 mod stack;
 mod syscall;
 pub(crate) mod vm;
