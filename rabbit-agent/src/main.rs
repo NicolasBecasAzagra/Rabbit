@@ -104,9 +104,9 @@ mod landlock;
 mod link;
 #[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 mod linux_policy;
-#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 #[cfg(all(test, target_os = "linux"))]
 mod scratch;
+#[cfg(any(test, all(target_os = "linux", target_arch = "x86_64")))]
 mod seccomp;
 mod tools;
 
@@ -367,7 +367,6 @@ use rabbit_infer::chat::{self, Role};
 use rabbit_infer::grammar::Grammar;
 #[cfg(target_os = "linux")]
 use rabbit_infer::runtime::Server;
-#[cfg(target_os = "linux")]
 use rabbit_policy::{Endpoint as PolicyEndpoint, Protocol};
 
 #[cfg(target_os = "linux")]
@@ -432,7 +431,6 @@ fn selftest(endpoint: &Endpoint) -> tools::Samples {
 
 /// The policy of a run and its encoding: the manifest of every tool, the fixed
 /// scope of the agent, and the servers of the task.
-#[cfg(target_os = "linux")]
 fn manifest_of(endpoint: &Endpoint) -> Result<(rabbit_policy::Policy, Vec<u8>), String> {
     let address = endpoint.address.octets();
     let servers = [
@@ -462,12 +460,25 @@ fn manifest_of(endpoint: &Endpoint) -> Result<(rabbit_policy::Policy, Vec<u8>), 
 fn run_adversary(endpoint: &Endpoint) -> Result<(), String> {
     let (policy, wire) = manifest_of(endpoint)?;
     let answer = capability::install(&wire);
-    eprintln!("{}", capability::settle(&policy, answer, wire.len()));
+    let settled = capability::settle(&policy, answer, wire.len());
+    eprintln!("{}", settled.line);
+    // A table run with nothing enforcing it would print verdicts as if it
+    // were, so the run stops here and says so.
+    if !settled.enforced {
+        println!("ADV warning no-enforcement");
+        return Err("the policy is not enforced by this kernel: the table was not run".to_string());
+    }
     let setup =
         adversary::Setup::rabbit(endpoint.address.octets(), endpoint.port, endpoint.http_port);
     let results = adversary::execute(adversary::cases(&setup));
     for line in adversary::report(&results, capability::kernel(answer)) {
         println!("{line}");
+    }
+    if results
+        .iter()
+        .any(|(_, verdict)| *verdict == adversary::Verdict::Invalid)
+    {
+        return Err("a call of the table did not parse".to_string());
     }
     Ok(())
 }
@@ -496,7 +507,7 @@ fn run(task: &str, endpoint: &Endpoint) -> Result<(), Box<dyn std::error::Error>
     // anchored on the other lines and ignore it.
     eprintln!(
         "{}",
-        capability::settle(&policy, capability::install(&wire), wire.len())
+        capability::settle(&policy, capability::install(&wire), wire.len()).line
     );
     // The default bound on the argument strings: a path, a command or the
     // answer of `done` fits, and an unterminated string stops the call. The

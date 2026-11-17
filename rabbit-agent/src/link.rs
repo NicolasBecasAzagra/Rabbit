@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 /// `eth0`: Rabbit names the card it finds, and the reference kernel names it
 /// that way because no program of the guest renames it. A kernel that names it
 /// otherwise refuses the calls with `ENODEV`, and the report says so.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(test)))]
 const INTERFACE: &str = "eth0";
 
 /// What the setup of the interface did.
@@ -63,8 +63,10 @@ pub fn ensure() -> &'static Link {
 ///
 /// The tests of this crate run on the machine of the developer, which already
 /// has a configured interface, and the calls of an interface are not the same
-/// ones there. Nothing is configured and the report says so.
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+/// ones there. A test binary never makes them, whatever the system it runs on:
+/// as root on a machine with an `eth0` they would change its address. Nothing
+/// is configured and the report says so.
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64", not(test))))]
 fn configure() -> Link {
     Link {
         state: "host".to_string(),
@@ -72,7 +74,7 @@ fn configure() -> Link {
 }
 
 /// Configure the interface with the `ioctl` calls of the Linux ABI.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(test)))]
 fn configure() -> Link {
     use std::fmt::Write as _;
 
@@ -168,7 +170,7 @@ fn configure() -> Link {
 }
 
 /// The number of the last failed call, as the kernel reported it.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(test)))]
 fn last_errno() -> i32 {
     // The standard library reads the error of the calling thread, which the
     // failed call has just written. A call that fails without an error number

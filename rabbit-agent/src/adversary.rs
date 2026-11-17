@@ -35,6 +35,9 @@ pub enum Verdict {
     Denied,
     /// The call was let through and failed for another reason.
     Failed,
+    /// The call is not a tool call: the bytes did not parse, which is a defect
+    /// of the table and not a verdict of any kernel.
+    Invalid,
 }
 
 impl Verdict {
@@ -44,23 +47,30 @@ impl Verdict {
             Self::Allowed => "allowed",
             Self::Denied => "denied",
             Self::Failed => "failed",
+            Self::Invalid => "invalid",
         }
     }
 }
 
 /// Read the verdict from the text a tool returned.
 ///
-/// A tool reports a failure as `error ...`. A refusal of the kernel is the
-/// error number 13, which the tools print as `error errno=13` (and may follow
-/// with the state of the link), and a standard library error that carries no
-/// number says `permission denied`. Anything that is not an error worked.
+/// A tool reports a failure as `error ...`, and a failure of the kernel as
+/// `error errno=N`, with the state of the link after it on the network tools.
+/// A refusal of the kernel is the error number 13, and only that token counts:
+/// it has to be the first thing after `error`, as a whole word. Free text that
+/// a tool echoes from the call, such as `permission denied` or `errno=13` in
+/// an address, is not the answer of the kernel and is a failure like any other.
+/// A file whose mode forbids the open answers with the same number as the
+/// policy does, and the table cannot tell them apart, so it uses files that
+/// are readable. Anything that is not an error worked.
 pub fn classify(result: &str) -> Verdict {
     let Some(error) = result.strip_prefix("error") else {
         return Verdict::Allowed;
     };
-    let lower = error.to_ascii_lowercase();
-    let errno_13 = lower.split(' ').any(|word| word == "errno=13");
-    if errno_13 || lower.contains("permission denied") {
+    let refused = error
+        .strip_prefix(" errno=13")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '));
+    if refused {
         Verdict::Denied
     } else {
         Verdict::Failed
@@ -123,6 +133,9 @@ pub struct Setup {
     pub other_tcp_port: u16,
     /// Whether the Linux kernel enforces UDP ports, which needs Landlock ABI 10.
     pub linux_udp_ports: bool,
+    /// Whether the root holds `link.txt`, a symbolic link to the secret. The
+    /// initramfs of Rabbit has no symbolic links, so only a Linux tree has it.
+    pub links: bool,
 }
 
 impl Setup {
@@ -141,6 +154,7 @@ impl Setup {
             other_udp_port: udp_port.wrapping_add(1).max(1),
             other_tcp_port: tcp_port.wrapping_add(1).max(1),
             linux_udp_ports: false,
+            links: false,
         }
     }
 
@@ -197,8 +211,8 @@ fn address(ip: [u8; 4], port: u16) -> String {
     format!("{a}.{b}.{c}.{d}:{port}")
 }
 
-/// Every path made of up to [`FAMILY_DEPTH`] of the [`COMPONENTS`], joined with
-/// a slash.
+/// Every list of up to [`FAMILY_DEPTH`] of the [`COMPONENTS`], joined with a
+/// slash. [`cases`] puts the base and a slash in front of each.
 fn family_paths() -> Vec<String> {
     let mut paths = Vec::new();
     let mut previous: Vec<Vec<&str>> = vec![Vec::new()];
@@ -420,13 +434,24 @@ pub fn cases(setup: &Setup) -> Vec<Case> {
         table.push(same(name, &secret, Verdict::Denied));
     }
 
+    if setup.links {
+        // Landlock checks the resolved path, so the link inside the root does
+        // not lead to the secret. Not a case of Rabbit, which has no links.
+        let link = format!("{root}/link.txt");
+        table.push(read(
+            "read_symlink_to_secret",
+            &link,
+            Verdict::Failed,
+            Verdict::Denied,
+            None,
+        ));
+    }
+
     let oracle = setup.manifest();
     for (index, relative) in family_paths().iter().enumerate() {
-        let path = if setup.base.is_empty() {
-            relative.clone()
-        } else {
-            format!("{}/{relative}", setup.base)
-        };
+        // Every path is absolute: a list that starts with an empty component
+        // gets the doubled slash it spells.
+        let path = format!("{}/{relative}", setup.base);
         // A path the engine lets through names the root or something under it,
         // and nothing of the family is the file that exists there.
         let expected = match &oracle {
@@ -455,7 +480,7 @@ pub fn execute(table: Vec<Case>) -> Vec<(Case, Verdict)> {
                 Ok(call) => match tools::run(&call).outcome {
                     Outcome::Continue(text) | Outcome::Done(text) => classify(&text),
                 },
-                Err(_) => Verdict::Failed,
+                Err(_) => Verdict::Invalid,
             };
             (case, verdict)
         })
@@ -475,11 +500,12 @@ pub fn report(results: &[(Case, Verdict)], kernel: &str) -> Vec<String> {
             .count()
     };
     lines.push(format!(
-        "ADV summary cases={} allowed={} denied={} failed={} kernel={kernel}",
+        "ADV summary cases={} allowed={} denied={} failed={} invalid={} kernel={kernel}",
         results.len(),
         count(Verdict::Allowed),
         count(Verdict::Denied),
         count(Verdict::Failed),
+        count(Verdict::Invalid),
     ));
     lines
 }
@@ -500,7 +526,6 @@ mod tests {
         for result in [
             "error errno=13",
             "error errno=13 link=eth0:addr=25,netmask=25,flags=25",
-            "error Permission denied (os error 13)",
         ] {
             assert_eq!(classify(result), Verdict::Denied, "{result}");
         }
@@ -527,6 +552,35 @@ mod tests {
         ] {
             assert_eq!(classify(result), Verdict::Allowed, "{result}");
         }
+    }
+
+    #[test]
+    fn free_text_that_a_tool_echoes_is_not_the_answer_of_the_kernel() {
+        // The tools put the text of the call into some of their errors.
+        for result in [
+            "error endpoint is not an IPv4 address: permission denied",
+            "error endpoint is not ADDRESS:PORT: errno=13",
+            "error Permission denied",
+            "error endpoint is not a port: x errno=13 y",
+            "error  errno=13",
+            "error errno=13x",
+            "errno=13",
+        ] {
+            assert_ne!(classify(result), Verdict::Denied, "{result}");
+        }
+        // The results that carry content are not errors, whatever they say.
+        assert_eq!(
+            classify("bytes=5 read=5 content=error errno=13"),
+            Verdict::Allowed
+        );
+    }
+
+    #[test]
+    fn a_file_that_the_mode_forbids_looks_like_a_policy_denial() {
+        // Opening a file of mode 000 as an ordinary user answers `EACCES` too:
+        // the table cannot tell the two apart, so it only uses files whose mode
+        // allows the open.
+        assert_eq!(classify("error errno=13"), Verdict::Denied);
     }
 
     #[test]
@@ -698,29 +752,84 @@ mod tests {
             [
                 "ADV case=compute_control verdict=allowed",
                 "ADV case=done_control verdict=allowed",
-                "ADV summary cases=2 allowed=2 denied=0 failed=0 kernel=linux",
+                "ADV summary cases=2 allowed=2 denied=0 failed=0 invalid=0 kernel=linux",
             ]
         );
     }
 
     #[test]
-    fn the_setup_of_rabbit_has_the_manifest_of_the_agent() {
-        use rabbit_policy::Endpoint;
+    fn the_setup_of_rabbit_has_the_manifest_the_agent_installs() {
+        // `manifest_of` is the function the loop and the adversary mode call,
+        // so the oracle is the policy of the real code path.
+        let endpoint = crate::Endpoint {
+            address: std::net::Ipv4Addr::new(10, 0, 2, 2),
+            port: 40000,
+            http_port: 40001,
+            ..crate::Endpoint::default()
+        };
+        let (agent, wire) = crate::manifest_of(&endpoint).unwrap();
+        assert_eq!(setup().manifest().unwrap(), agent);
+        assert_eq!(Policy::decode(&wire), Ok(agent));
+    }
+
+    #[test]
+    fn a_call_that_does_not_parse_is_invalid_and_is_counted() {
+        let broken = Case {
+            name: "broken".to_string(),
+            call: b"{\"tool\":".to_vec(),
+            intent: Intent::Control,
+            rabbit: Verdict::Allowed,
+            linux: Verdict::Allowed,
+            gap: None,
+        };
+        let results = execute(vec![broken]);
+        assert_eq!(results[0].1, Verdict::Invalid);
+        assert_eq!(
+            report(&results, "rabbit"),
+            [
+                "ADV case=broken verdict=invalid",
+                "ADV summary cases=1 allowed=0 denied=0 failed=0 invalid=1 kernel=rabbit"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_family_is_absolute_and_has_paths_the_oracle_allows_and_denies() {
         let setup = setup();
-        let endpoints = [
-            Endpoint {
-                protocol: Protocol::Udp,
-                ip: [10, 0, 2, 2],
-                port: 40000,
-            },
-            Endpoint {
-                protocol: Protocol::Tcp,
-                ip: [10, 0, 2, 2],
-                port: 40001,
-            },
-        ];
-        let agent = capability::manifest(&tools::NAMES, &capability::scope(&endpoints)).unwrap();
-        assert_eq!(setup.manifest().unwrap(), agent);
+        let policy = setup.manifest().unwrap();
+        let (mut allowed, mut denied) = (0, 0);
+        for case in cases(&setup) {
+            let Intent::Open { path, .. } = &case.intent else {
+                continue;
+            };
+            if !case.name.starts_with("enum_") {
+                continue;
+            }
+            assert!(path.starts_with('/'), "{path}");
+            match policy.check_open(path.as_bytes(), false) {
+                Decision::Allow => allowed += 1,
+                Decision::Deny(_) => denied += 1,
+            }
+        }
+        println!("the family: {allowed} paths allowed by the engine, {denied} denied");
+        assert!(allowed > 0, "no path of the family is inside the root");
+        assert!(denied > 0, "no path of the family is outside the root");
+        assert_eq!(allowed + denied, 1554);
+    }
+
+    #[test]
+    fn only_a_tree_with_links_has_the_symlink_case() {
+        let mut with_links = setup();
+        assert!(cases(&with_links)
+            .iter()
+            .all(|case| case.name != "read_symlink_to_secret"));
+        with_links.links = true;
+        let table = cases(&with_links);
+        let case = table
+            .iter()
+            .find(|case| case.name == "read_symlink_to_secret")
+            .unwrap();
+        assert_eq!(case.linux, Verdict::Denied);
     }
 
     #[test]
@@ -790,7 +899,8 @@ mod tests {
                                 Ok((mut stream, _)) => {
                                     counter.fetch_add(1, Ordering::Relaxed);
                                     let _ = stream.set_nonblocking(false);
-                                    let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                                    let _ = stream
+                                        .set_read_timeout(Some(Duration::from_millis(200)));
                                     let mut request = [0u8; 1024];
                                     let _ = stream.read(&mut request);
                                     let _ = stream.write_all(
@@ -826,7 +936,8 @@ mod tests {
         }
     }
 
-    /// The child gets its directory and the four ports in this variable.
+    /// The child gets its directory, the four ports and whether `127.0.0.2` is
+    /// routable in this variable.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     const CHILD: &str = "RABBIT_ADVERSARY_CHILD";
 
@@ -839,7 +950,7 @@ mod tests {
     fn the_adversary_is_bounded_on_linux() {
         use std::process::Command;
 
-        use crate::scratch::Scratch;
+        use crate::scratch::{run_child, Scratch};
 
         if let Ok(parameters) = std::env::var(CHILD) {
             child(&parameters);
@@ -851,10 +962,27 @@ mod tests {
         std::fs::create_dir_all(format!("{directory}/agent")).unwrap();
         std::fs::write(format!("{directory}/agent/hello.txt"), "hello").unwrap();
         std::fs::write(format!("{directory}/secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(
+            format!("{directory}/secret.txt"),
+            format!("{directory}/agent/link.txt"),
+        )
+        .unwrap();
         let servers = Servers::start();
         let [udp, other_udp, tcp, other_tcp] = servers.ports;
 
-        let output = Command::new(std::env::current_exe().unwrap())
+        // A runner in a network namespace without a route for 127.0.0.2 fails
+        // the connection before any policy is asked.
+        let routable = std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 2], tcp)),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+        if !routable {
+            eprintln!("SKIP reason=127.0.0.2 not routable");
+        }
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "adversary::tests::the_adversary_is_bounded_on_linux",
@@ -863,59 +991,84 @@ mod tests {
             ])
             .env(
                 CHILD,
-                format!("{directory},{udp},{other_udp},{tcp},{other_tcp}"),
-            )
-            .output()
-            .unwrap();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("{stdout}");
-        eprintln!("{stderr}");
-        assert!(output.status.success(), "the child failed");
-        assert!(stdout.contains("CHILD DONE"), "the child did not finish");
+                format!(
+                    "{directory},{udp},{other_udp},{tcp},{other_tcp},{}",
+                    u8::from(routable)
+                ),
+            );
+        let output = run_child(command, 60);
+        println!("{}", output.stdout);
+        eprintln!("{}", output.stderr);
+        assert!(
+            !output.timed_out,
+            "the child ran out of time:\n{}{}",
+            output.stdout, output.stderr
+        );
+        assert!(
+            output.success,
+            "the child failed:\n{}{}",
+            output.stdout, output.stderr
+        );
+        assert!(
+            output.stdout.contains("CHILD DONE"),
+            "the child did not finish:\n{}{}",
+            output.stdout,
+            output.stderr
+        );
 
-        // What reached the servers says what the kernel let through: the
-        // allowed call and the call to another address reached the allowed
-        // ports, and the other ports were reached only where the kernel
-        // cannot enforce them.
-        let report = stdout
+        // What reached the servers says what the kernel let through. Tools
+        // retry, so a call that must reach a port is counted with `>=`, and a
+        // call that must be denied reached nothing.
+        let report = output
+            .stdout
             .lines()
             .find(|line| line.starts_with("CHILD AGENT policy"))
-            .unwrap_or_default();
+            .expect("the child printed no `CHILD AGENT policy` line");
         if report.contains(" fs=on") {
-            assert_eq!(
-                servers.seen(0),
-                2,
+            let reached = if routable { 2 } else { 1 };
+            assert!(
+                servers.seen(0) >= reached,
                 "datagrams that reached the allowed port"
             );
-            assert_eq!(
-                servers.seen(2),
-                2,
+            assert!(
+                servers.seen(2) >= reached,
                 "connections that reached the allowed port"
             );
-            let udp_ports = report.contains("udp-port=on");
-            assert_eq!(
-                servers.seen(1),
-                usize::from(!udp_ports),
-                "datagrams to the other port"
-            );
-            let tcp_ports = report.contains("tcp-port=on");
-            assert_eq!(
-                servers.seen(3),
-                usize::from(!tcp_ports),
-                "connections to the other port"
-            );
+            if report.contains("udp-port=on") {
+                assert_eq!(servers.seen(1), 0, "datagrams that reached the other port");
+            } else {
+                assert!(
+                    servers.seen(1) >= 1,
+                    "datagrams to the other port, not enforced"
+                );
+            }
+            if report.contains("tcp-port=on") {
+                assert_eq!(
+                    servers.seen(3),
+                    0,
+                    "connections that reached the other port"
+                );
+            } else {
+                assert!(
+                    servers.seen(3) >= 1,
+                    "connections to the other port, not enforced"
+                );
+            }
         }
     }
 
     /// The part that runs restricted. It prints every line of the report, the
-    /// gaps with the label `GAP`, and fails when a call that must be denied is
-    /// not. A kernel that reports Landlock and does not enforce it fails the
-    /// test; a kernel with no Landlock skips the assertions, on stderr.
+    /// gaps with the label `GAP`, and fails when a call does not come to the
+    /// verdict the tree and the kernel give it.
+    ///
+    /// A kernel that reports Landlock and does not enforce it fails the test,
+    /// and so does a kernel with no Landlock when `RABBIT_REQUIRE_LANDLOCK=1`;
+    /// otherwise a kernel with no Landlock skips the assertions, on stderr.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     fn child(parameters: &str) {
         let fields: Vec<&str> = parameters.split(',').collect();
         let port = |index: usize| fields[index].parse::<u16>().unwrap();
+        let routable = fields[5] == "1";
         let directory = fields[0];
         let mut setup = Setup {
             base: directory.to_string(),
@@ -927,8 +1080,31 @@ mod tests {
             other_udp_port: port(2),
             other_tcp_port: port(4),
             linux_udp_ports: false,
+            links: true,
         };
         let policy = setup.manifest().unwrap();
+
+        // What the family comes to on this tree: a path that does not exist
+        // answers `ENOENT` before Landlock is asked, so it fails; a path that
+        // resolves into the root is let through, and a directory fails to
+        // read; a path that resolves outside the root is refused.
+        let root = std::fs::canonicalize(&setup.root).unwrap();
+        let expected_family: std::collections::HashMap<String, Verdict> = cases(&setup)
+            .into_iter()
+            .filter(|case| case.name.starts_with("enum_"))
+            .filter_map(|case| match case.intent {
+                Intent::Open { path, .. } => {
+                    let expected = match std::fs::canonicalize(&path) {
+                        Err(_) => Verdict::Failed,
+                        Ok(real) if real.starts_with(&root) && real.is_dir() => Verdict::Failed,
+                        Ok(real) if real.starts_with(&root) => Verdict::Allowed,
+                        Ok(_) => Verdict::Denied,
+                    };
+                    Some((case.name, expected))
+                }
+                _ => None,
+            })
+            .collect();
 
         let applied = crate::linux_policy::apply(&policy);
         let line = applied.line();
@@ -946,13 +1122,21 @@ mod tests {
                 applied.landlock_abi, 0,
                 "the kernel reports Landlock but it is not in force: {line}"
             );
+            assert!(
+                std::env::var_os("RABBIT_REQUIRE_LANDLOCK").is_none_or(|value| value != "1"),
+                "RABBIT_REQUIRE_LANDLOCK=1 and the kernel has no Landlock: {line}"
+            );
             eprintln!("SKIP landlock unavailable: the kernel reports no Landlock ABI: {line}");
             println!("CHILD DONE");
             return;
         }
         for (case, verdict) in &results {
-            if case.name.starts_with("enum_") {
-                assert_ne!(*verdict, Verdict::Allowed, "{} was allowed", case.name);
+            if let Some(expected) = expected_family.get(&case.name) {
+                assert_eq!(verdict, expected, "{}", case.name);
+                continue;
+            }
+            if case.name.ends_with("_other_ip") && !routable {
+                eprintln!("SKIP {} reason=127.0.0.2 not routable", case.name);
                 continue;
             }
             if case.name == "http_get_other_port" && !applied.tcp_port {

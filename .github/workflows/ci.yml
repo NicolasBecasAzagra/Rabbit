@@ -694,7 +694,7 @@ jobs:
             echo "a path of the family was allowed"
             exit 1
           fi
-          grep -qE "^ADV summary cases=1575 allowed=7 denied=[0-9]+ failed=[0-9]+ kernel=rabbit$" adversary-boot.log
+          grep -qE "^ADV summary cases=1575 allowed=7 denied=[0-9]+ failed=[0-9]+ invalid=0 kernel=rabbit$" adversary-boot.log
 
       - name: Run the agent against the network
         run: |

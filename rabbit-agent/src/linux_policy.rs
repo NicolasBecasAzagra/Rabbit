@@ -395,7 +395,7 @@ pub use raw::apply;
 #[cfg(test)]
 mod tests {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    use crate::scratch::Scratch;
+    use crate::scratch::{run_child, Scratch};
 
     use super::{Failure, Report};
 
@@ -515,23 +515,34 @@ mod tests {
         std::fs::create_dir_all(format!("{directory}/out")).unwrap();
         std::fs::write(format!("{directory}/in/inside.txt"), "inside").unwrap();
         std::fs::write(format!("{directory}/out/outside.txt"), "outside").unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "linux_policy::tests::the_manifest_is_enforced_in_a_child_process",
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env(CHILD, directory)
-            .output()
-            .unwrap();
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("{stdout}");
-        eprintln!("{stderr}");
-        assert!(output.status.success(), "the child failed");
-        assert!(stdout.contains("CHILD DONE"), "the child did not finish");
+            .env(CHILD, directory);
+        let output = run_child(command, 60);
+        println!("{}", output.stdout);
+        eprintln!("{}", output.stderr);
+        assert!(
+            !output.timed_out,
+            "the child ran out of time:\n{}{}",
+            output.stdout, output.stderr
+        );
+        assert!(
+            output.success,
+            "the child failed:\n{}{}",
+            output.stdout, output.stderr
+        );
+        assert!(
+            output.stdout.contains("CHILD DONE"),
+            "the child did not finish:\n{}{}",
+            output.stdout,
+            output.stderr
+        );
     }
 
     /// The part of the test that runs restricted: the manifest grants reads
@@ -584,6 +595,10 @@ mod tests {
             assert_eq!(
                 report.landlock_abi, 0,
                 "the kernel reports Landlock but it is not in force: {line}"
+            );
+            assert!(
+                std::env::var_os("RABBIT_REQUIRE_LANDLOCK").is_none_or(|value| value != "1"),
+                "RABBIT_REQUIRE_LANDLOCK=1 and the kernel has no Landlock: {line}"
             );
             eprintln!("SKIP landlock unavailable: the kernel reports no Landlock ABI: {line}");
         }
