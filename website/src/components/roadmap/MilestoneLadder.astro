@@ -1,5 +1,6 @@
 ---
 import { milestones } from '../../data/project';
+import Mark from '../Mark.astro';
 
 const stateLabel: Record<string, string> = {
   done: 'Done',
@@ -12,10 +13,11 @@ const groups = [
   { title: 'Userspace', ids: ['M4', 'M4b', 'M4c', 'E1', 'E2', 'E2b', 'E3a', 'E3b'] },
   { title: 'SMP', ids: ['M9'] },
   { title: 'Network', ids: ['M10', 'M12'] },
+  { title: 'Tool policy', ids: ['M14'] },
   { title: 'Inference runtime', ids: ['E4', 'E5'] },
   { title: 'Agent', ids: ['E6', 'E7', 'E8'] },
   { title: 'Measurement rig', ids: ['M8'] },
-  { title: 'Next', ids: ['M11', 'M13'] },
+  { title: 'Quantization and TLS', ids: ['M11', 'M13'] },
   { title: 'Deferred', ids: ['M5', 'M6', 'M7'] },
 ];
 
@@ -40,15 +42,15 @@ const byId = new Map(milestones.map((m) => [m.id, m]));
               {group.ids.map((id) => {
                 const m = byId.get(id);
                 if (!m) return null;
-                const stateIcon = m.state === 'done' ? '✓' : m.state === 'next' ? '→' : '—';
+                const kind = m.state === 'done' ? 'solid' : m.state === 'next' ? 'hollow' : 'hatch';
                 return (
                   <li class={`milestone-item state-${m.state}`}>
                     <details class="milestone-details">
                       <summary>
                         <span class="milestone-id">{m.id}</span>
                         <span class="milestone-name">{m.name}</span>
-                        <span class="milestone-state" aria-label={`State: ${stateLabel[m.state]}`}>
-                          <span class="state-icon" aria-hidden="true">{stateIcon}</span>
+                        <span class="milestone-state">
+                          <Mark kind={kind} label="State:" />
                           <span class="state-text">{stateLabel[m.state]}</span>
                         </span>
                       </summary>
@@ -119,7 +121,6 @@ const byId = new Map(milestones.map((m) => [m.id, m]));
 
   .milestone-item.state-next {
     background: var(--surface);
-    border-inline-start: 3px solid var(--accent);
   }
 
   .milestone-details summary {
@@ -150,7 +151,7 @@ const byId = new Map(milestones.map((m) => [m.id, m]));
 
   .milestone-id {
     font-family: var(--font-mono);
-    color: var(--muted);
+    color: var(--ink-secondary);
     font-variant-numeric: tabular-nums;
   }
 
@@ -163,28 +164,17 @@ const byId = new Map(milestones.map((m) => [m.id, m]));
     align-items: center;
     gap: var(--space-xs);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-size: var(--text-sm);
     font-weight: var(--font-medium);
-    color: var(--muted);
-  }
-
-  .state-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1rem;
-    height: 1rem;
-  }
-
-  .milestone-item.state-done .state-icon {
     color: var(--ink-secondary);
   }
 
-  .milestone-item.state-next .state-icon,
+  .milestone-state {
+    gap: var(--space-sm);
+  }
+
   .milestone-item.state-next .milestone-state {
-    color: var(--accent);
+    color: var(--ink);
   }
 
   .milestone-body {
@@ -204,7 +194,8 @@ const byId = new Map(milestones.map((m) => [m.id, m]));
   }
 
   .criterion span {
-    color: var(--muted);
+    color: var(--ink);
+    font-weight: var(--font-medium);
   }
 
   @media (max-width: 760px) {

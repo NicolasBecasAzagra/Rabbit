@@ -292,6 +292,15 @@ export const milestones: Milestone[] = [
     verification: 'The runtime against the reference, with the digest of the checkpoint.',
   },
   {
+    id: 'M14',
+    name: 'The tool policy',
+    delivers:
+      'The manifest of the tools of the agent, enforced by the kernel, and measured against Landlock and seccomp on Linux with the same binary.',
+    state: 'done',
+    exit: 'The kernel refuses a call outside the manifest and lets a call inside it through, checked in a boot with a network card in the CI.',
+    verification: 'The CI steps print the tables, and bench/results/policy/ holds the raw lines of the run.',
+  },
+  {
     id: 'M13',
     name: 'TLS',
     delivers: 'TLS in the kernel, so the agent can read the certificate of an API.',
@@ -331,6 +340,10 @@ export const nextSteps: NextStep[] = [
   {
     title: 'A host with hardware acceleration',
     why: 'The only thing missing for the timings to describe a machine instead of an emulator, and the first test of every ratio.',
+  },
+  {
+    title: 'Policy hardening',
+    why: 'The gaps the policy report names: bind, the copies of user memory, the descriptors open before the install, the log of denials, and the same tables on a kernel with Landlock ABI 10 (issues 21 to 25).',
   },
   {
     title: 'A checkpoint that closes the conversation',
