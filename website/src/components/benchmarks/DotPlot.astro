@@ -175,7 +175,7 @@ const compactPanels = [
 const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
 ---
 
-<section class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
+<section id="benchmarks" class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
   <div class="wrapper">
     <header class="section-header">
       <h2 id="benchmarks-chart-title" class="text-title">Under QEMU TCG, an emulator, Rabbit costs less in all {timingWord} measured timings</h2>

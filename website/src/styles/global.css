@@ -541,6 +541,11 @@ th.numeric {
   text-align: right;
 }
 
+/* Anchored sections clear the sticky bar */
+section[id] {
+  scroll-margin-top: 4rem;
+}
+
 /* Visually hidden */
 .sr-only {
   position: absolute;

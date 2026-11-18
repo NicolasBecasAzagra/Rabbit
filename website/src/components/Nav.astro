@@ -4,14 +4,20 @@ import { meta } from '../data/project';
 import EarsMark from './EarsMark.astro';
 
 const pathname = Astro.url.pathname.replace(/\/$/, '') || url('');
+const home = url('/');
+// Sections of the home page are anchors; the pages mark themselves current.
 const links = [
-  { label: 'Roadmap', href: url('/roadmap') },
-  { label: 'Benchmarks', href: url('/benchmarks') },
-  { label: 'Docs', href: url('/docs') },
-  { label: 'Download', href: url('/download') },
-  { label: 'FAQ', href: url('/faq') },
-  { label: 'Changelog', href: url('/changelog') },
+  { label: 'Aim', href: `${home}#aim`, section: 'aim' },
+  { label: 'Tool policy', href: `${home}#policy`, section: 'policy' },
+  { label: 'Layers', href: `${home}#layers`, section: 'layers' },
+  { label: 'Benchmarks', href: `${home}#benchmarks`, section: 'benchmarks', page: url('/benchmarks') },
+  { label: 'Roadmap', href: `${home}#roadmap`, section: 'roadmap', page: url('/roadmap') },
+  { label: 'Docs', href: url('/docs'), page: url('/docs') },
+  { label: 'Download', href: url('/download'), page: url('/download') },
+  { label: 'FAQ', href: url('/faq'), page: url('/faq'), mobileOnly: true },
+  { label: 'Changelog', href: url('/changelog'), page: url('/changelog'), mobileOnly: true },
 ];
+const isPage = (link: { page?: string }) => Boolean(link.page && pathname.startsWith(link.page));
 ---
 
 <header class="site-header on-ink">
@@ -24,44 +30,36 @@ const links = [
     <nav class="site-nav" aria-label="Primary">
       <ul class="nav-list">
         {
-          links.map((link) => {
-            const isCurrent = pathname === link.href || (link.href !== url('/') && pathname.startsWith(link.href));
-            return (
-              <li>
-                <a href={link.href} aria-current={isCurrent ? 'page' : undefined}>{link.label}</a>
-              </li>
-            );
-          })
+          links.filter((link) => !link.mobileOnly).map((link) => (
+            <li>
+              <a href={link.href} data-section={link.section} aria-current={isPage(link) ? 'page' : undefined}>{link.label}</a>
+            </li>
+          ))
         }
       </ul>
     </nav>
 
     <div class="header-actions">
-      <a class="button button-secondary button-small" href={url('/docs')}>Docs</a>
       <a class="button button-primary button-small" href={meta.repo}>GitHub</a>
     </div>
 
     <details class="mobile-menu">
-      <summary class="menu-toggle" aria-label="Menu">
-        <span aria-hidden="true"></span>
-        <span aria-hidden="true"></span>
+      <summary class="menu-toggle">
+        <span class="menu-open">Menu</span>
+        <span class="menu-close">Close</span>
       </summary>
       <div class="mobile-menu-panel">
         <div class="wrapper">
           <ul class="mobile-nav-list">
             {
-              links.map((link) => {
-                const isCurrent = pathname === link.href || (link.href !== url('/') && pathname.startsWith(link.href));
-                return (
-                  <li>
-                    <a href={link.href} aria-current={isCurrent ? 'page' : undefined}>{link.label}</a>
-                  </li>
-                );
-              })
+              links.map((link) => (
+                <li>
+                  <a href={link.href} data-section={link.section} aria-current={isPage(link) ? 'page' : undefined}>{link.label}</a>
+                </li>
+              ))
             }
           </ul>
           <div class="mobile-actions">
-            <a class="button button-secondary" href={url('/docs')}>Docs</a>
             <a class="button button-primary" href={meta.repo}>GitHub</a>
           </div>
         </div>
@@ -79,8 +77,6 @@ const links = [
     height: 4rem;
     background: #000000;
     border-bottom: 1px solid var(--hairline);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
   }
 
   .header-inner {
@@ -122,7 +118,7 @@ const links = [
   .nav-list {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: 0;
     list-style: none;
     padding: 0;
   }
@@ -133,7 +129,7 @@ const links = [
     border-radius: var(--radius-sm);
     color: var(--ink-secondary);
     font-family: var(--font-body);
-    font-size: var(--text-caption);
+    font-size: var(--text-sm);
     text-decoration: none;
     transition: color var(--transition-fast), background-color var(--transition-fast);
   }
@@ -143,7 +139,8 @@ const links = [
     background: var(--surface);
   }
 
-  .nav-list a[aria-current="page"] {
+  .nav-list a[aria-current="page"],
+  .nav-list a[aria-current="location"] {
     color: var(--ink);
     text-decoration: underline;
     text-underline-offset: 0.2em;
@@ -162,35 +159,30 @@ const links = [
 
   .menu-toggle {
     display: none;
-    flex-direction: column;
-    justify-content: center;
     align-items: center;
-    gap: 5px;
-    width: 2.25rem;
     height: 2.25rem;
-    padding: 0;
-    background: transparent;
-    border: 1px solid var(--hairline);
+    padding-inline: 0.875rem;
+    border: 1px solid var(--rule);
     border-radius: var(--radius);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--ink);
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
   }
 
   .menu-toggle:hover {
-    background: var(--surface);
-  }
-
-  .menu-toggle:active {
     background: var(--surface-2);
   }
 
-  .menu-toggle span {
-    display: block;
-    width: 1.1rem;
-    height: 1.5px;
-    background: var(--ink);
-    transition: transform 150ms ease;
+  .menu-close,
+  .mobile-menu[open] .menu-open {
+    display: none;
+  }
+
+  .mobile-menu[open] .menu-close {
+    display: inline;
   }
 
   .mobile-menu {
@@ -208,12 +200,10 @@ const links = [
   .mobile-menu-panel {
     position: absolute;
     inset-block-start: 4rem;
-    inset-inline: var(--space-md);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-card);
-    background: var(--canvas);
-    box-shadow: var(--shadow-float);
-    padding: var(--space-md);
+    inset-inline: 0;
+    border-block: 1px solid var(--rule);
+    background: #000000;
+    padding: var(--space-md) 0 var(--space-lg);
   }
 
   .mobile-nav-list {
@@ -236,13 +226,16 @@ const links = [
     transition: color var(--transition-fast);
   }
 
-  .mobile-nav-list a:hover,
-  .mobile-nav-list a[aria-current="page"] {
+  .mobile-nav-list a:hover {
     color: var(--ink);
   }
 
-  .mobile-nav-list a:active {
-    color: var(--accent);
+  .mobile-nav-list a[aria-current="page"],
+  .mobile-nav-list a[aria-current="location"] {
+    color: var(--ink);
+    font-weight: var(--font-medium);
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
   }
 
   .mobile-actions {
@@ -269,21 +262,53 @@ const links = [
 <script>
   (function () {
     const details = document.querySelector<HTMLDetailsElement>('.mobile-menu');
-    const summary = details?.querySelector('.menu-toggle');
-    if (!details || !summary) return;
-
-    details.querySelectorAll('a').forEach((link) => {
-      link.addEventListener('click', () => {
-        details.open = false;
+    const summary = details?.querySelector<HTMLElement>('.menu-toggle');
+    if (details && summary) {
+      details.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', () => {
+          details.open = false;
+        });
       });
-    });
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && details.open) {
-        e.preventDefault();
-        details.open = false;
-        (summary as HTMLElement).focus();
-      }
-    });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && details.open) {
+          e.preventDefault();
+          details.open = false;
+          summary.focus();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (details.open && !details.contains(e.target as Node)) details.open = false;
+      });
+    }
+
+    // Current section on the home page, shown without colour: aria-current
+    // moves to the link of the section in view, and the style underlines it.
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('a[data-section]')];
+    const sections = links
+      .map((link) => document.getElementById(link.dataset.section ?? ''))
+      .filter((el): el is HTMLElement => Boolean(el) && document.querySelector('main')?.contains(el) === true);
+    if (!sections.length || !('IntersectionObserver' in window)) return;
+    const visible = new Set<string>();
+    const setCurrent = () => {
+      const current = sections.find((el) => visible.has(el.id));
+      links.forEach((link) => {
+        if (link.getAttribute('aria-current') === 'page') return;
+        if (current && link.dataset.section === current.id) link.setAttribute('aria-current', 'location');
+        else if (link.getAttribute('aria-current') === 'location') link.removeAttribute('aria-current');
+      });
+    };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) visible.add(entry.target.id);
+          else visible.delete(entry.target.id);
+        });
+        setCurrent();
+      },
+      { rootMargin: '-45% 0px -50% 0px' },
+    );
+    sections.forEach((el) => observer.observe(el));
   })();
 </script>
