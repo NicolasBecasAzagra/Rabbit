@@ -1,0 +1,451 @@
+---
+import Mark from './Mark.astro';
+import { meta } from '../data/project';
+import { loadPolicy } from '../lib/policy';
+
+const policy = loadPolicy();
+const { headline, counts, environment } = policy;
+
+// Plain words for the cases of the dataset. A row without a label fails the
+// build, so the table cannot drift from summary.csv. `udpPort` marks the rows
+// that depend on the UDP port rules of Landlock.
+const labels: Record<string, { text: string; udpPort?: boolean }> = {
+  read_long_outside: { text: 'read a very long path outside the read root' },
+  net_send_other_ip: { text: 'send a datagram to another IP on the allowed port' },
+  net_send_other_port: { text: 'send a datagram to the allowed IP on another UDP port', udpPort: true },
+  http_get_other_ip: { text: 'make an HTTP request to another IP on the allowed port' },
+  newfstatat_secret: { text: 'stat a file outside the read root' },
+  newfstatat_missing: { text: 'stat a path that does not exist outside the read root' },
+  connect_tcp_other_ip: { text: 'connect to another IP on the allowed port' },
+  connect_udp_other_ip: { text: 'connect a UDP socket to another IP' },
+  connect_udp_other_port: { text: 'connect a UDP socket to another UDP port', udpPort: true },
+  sendto_other_ip: { text: 'send a datagram with sendto to another IP' },
+};
+
+const verdictText: Record<string, string> = {
+  denied: 'Refused',
+  allowed: 'Let through',
+  failed: 'Answered an error',
+};
+
+const items = headline.map((row) => {
+  const label = labels[row.case];
+  if (!label) throw new Error(`[policy] no plain label for the case "${row.case}"; add it to the table of PolicyLedger.astro`);
+  const rabbit = verdictText[row.rabbit];
+  const linux = verdictText[row.linux];
+  if (!rabbit || !linux) throw new Error(`[policy] unknown verdict on "${row.case}": ${row.rabbit} / ${row.linux}`);
+  return {
+    text: label.text,
+    udpPort: Boolean(label.udpPort),
+    rabbit,
+    rabbitKind: row.rabbit === 'denied' ? 'solid' : 'hollow',
+    linux,
+    linuxKind: row.linux === 'denied' ? 'solid' : 'hollow',
+    reached: row.reachedLinux,
+  } as const;
+});
+
+// The port that the UDP rules need is read from the note of the dataset.
+const udpNote = headline.find((row) => row.case === 'net_send_other_port')?.note ?? '';
+const udpAbi = udpNote.match(/ABI (\d+)/)?.[1];
+if (!udpAbi) throw new Error('[policy] the note of net_send_other_port no longer names a Landlock ABI');
+
+const reachedText = { yes: 'yes', no: 'no', na: 'not a network call' } as const;
+
+const repoFile = (path: string) => `${meta.repo}/blob/main/${path}`;
+const links = [
+  { label: 'The section of REPORT.md', href: `${repoFile('REPORT.md')}#the-tool-policy-enforced-by-the-kernel` },
+  { label: 'The dataset, bench/results/policy/', href: `${meta.repo}/tree/main/bench/results/policy` },
+  { label: 'The script, bench/policy/build_table.py', href: repoFile('bench/policy/build_table.py') },
+];
+---
+
+<section class="policy on-ink" aria-labelledby="policy-title" data-policy>
+  <div class="wrapper">
+    <header class="policy-head">
+      <h2 id="policy-title" class="policy-title">
+        The Rabbit kernel refused calls that Linux with Landlock and seccomp did not.
+      </h2>
+      <p class="policy-lead">
+        {counts.refusedByPolicy} cases of the compromised agent and the adversary, counted from the dataset. Linux let {counts.linuxLetThrough} of
+        them through and answered an error to the rest.
+      </p>
+    </header>
+
+    <div class="verdicts" role="list" aria-label="Cases refused by the policy of Rabbit">
+      <div class="verdict verdict-head" aria-hidden="true">
+        <span>Case</span>
+        <span>Rabbit</span>
+        <span>Linux</span>
+        <span>Reached Linux</span>
+      </div>
+      {
+        items.map((item, i) => (
+          <div class="verdict" role="listitem">
+            <p class="verdict-case">{item.text}</p>
+            <p class="verdict-cell">
+              <span class="cell-label">Rabbit </span>
+              <span class="vm" style={`--n:${i * 2}`}>
+                <Mark kind={item.rabbitKind} label={item.rabbit} visible />
+              </span>
+            </p>
+            <p class="verdict-cell">
+              <span class="cell-label">Linux </span>
+              <span class="vm" style={`--n:${i * 2 + 1}`}>
+                <Mark kind={item.linuxKind} label={item.linux} visible />
+              </span>
+              {item.udpPort && <span class="verdict-flag">needs Landlock ABI {udpAbi}</span>}
+            </p>
+            <p class="verdict-reached">
+              <span class="verdict-reached-label">Reached Linux{' '}</span>
+              <span class="data">{reachedText[item.reached]}</span>
+            </p>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="limits">
+      <h3 class="limits-title">What this does not show</h3>
+      <div class="limits-body">
+        <p class="limit">
+          <Mark kind="hatch" label="Unavailable" />
+          <span>
+            Rabbit answers <span class="data">{counts.rabbitUnavailable}</span> of the <span class="data">{counts.compromisedCalls}</span> raw calls of the compromised
+            binary with unavailable (ENOSYS). An unavailable call is a missing system call, not protection.
+          </span>
+        </p>
+        <p class="limit">
+          <span class="limit-gap" aria-hidden="true"></span>
+          <span>
+            The Linux side ran on kernel <span class="data">{environment.linuxRelease}</span> with Landlock ABI{' '}
+            <span class="data">{environment.landlockAbi}</span> and seccomp, in CI run{' '}
+            <span class="data">{environment.ciRunId}</span> at commit <span class="data">{environment.commit}</span>.
+          </span>
+        </p>
+        <p class="limit">
+          <span class="limit-gap" aria-hidden="true"></span>
+          <span>
+            The UDP port rows depend on Landlock ABI <span class="data">{udpAbi}</span>, which that runner does not have. The rows about the destination
+            address do not.
+          </span>
+        </p>
+        <p class="limit">
+          <span class="limit-gap" aria-hidden="true"></span>
+          <span>
+            Rabbit is not the first to enforce a policy on the tool calls of an agent. See{' '}
+            <a href="https://arxiv.org/abs/2604.16870">Governed MCP</a>, Agate (AgenticOS workshop of SOSP 2026) and{' '}
+            <a href="https://arxiv.org/abs/2603.20953">Before the Tool Call</a>.
+          </span>
+        </p>
+      </div>
+      <ul class="verify" role="list">
+        {
+          links.map((link) => (
+            <li>
+              <a href={link.href}>{link.label}</a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Fallback for browsers without scroll-driven animations: the markers fill
+  // once, in sequence, the first time the ledger scrolls into view. Without
+  // JavaScript the section is never armed and every marker is simply visible.
+  const section = document.querySelector<HTMLElement>('[data-policy]');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (section && !reduce && !CSS.supports('animation-timeline: view()')) {
+    section.dataset.armed = '';
+    new IntersectionObserver(
+      (entries, io) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          section.dataset.in = '';
+          io.disconnect();
+        }
+      },
+      { threshold: 0.2 },
+    ).observe(section.querySelector('.verdicts')!);
+  }
+</script>
+
+<style>
+  .policy {
+    padding-block: var(--space-3xl);
+  }
+
+  .policy-head {
+    max-width: 52rem;
+    margin-block-end: var(--space-2xl);
+  }
+
+  .policy-title {
+    font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
+    line-height: 1.05;
+    font-weight: var(--font-medium);
+    letter-spacing: -0.03em;
+  }
+
+  .policy-lead {
+    margin-block-start: var(--space-lg);
+    max-width: var(--measure);
+    font-size: var(--text-lg);
+    line-height: var(--leading-snug);
+    color: var(--ink-secondary);
+    text-wrap: pretty;
+  }
+
+  .data {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  /* The verdict ledger */
+  .verdicts {
+    border-block-start: 1px solid var(--ink);
+  }
+
+  .verdict {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 11rem 15rem 11rem;
+    gap: var(--space-xs) var(--space-md);
+    align-items: baseline;
+    padding-block: var(--space-md);
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .verdict-head {
+    padding-block: var(--space-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+
+  .verdict p {
+    margin: 0;
+  }
+
+  .verdict-case {
+    font-size: var(--text-md);
+    font-weight: var(--font-medium);
+    line-height: var(--leading-snug);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .verdict-cell {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-xs) var(--space-sm);
+  }
+
+  .verdict-cell :global(.mark-text) {
+    color: var(--ink);
+  }
+
+  .cell-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .verdict-flag {
+    font-size: var(--text-xs);
+    color: var(--muted);
+  }
+
+  .verdict-reached {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .verdict-reached-label {
+    display: none;
+  }
+
+  .vm {
+    display: inline-flex;
+  }
+
+  /* The one authored moment: the markers fill in sequence as the ledger
+     scrolls in. Transform and opacity only, from a visible default. */
+  @keyframes fill {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @supports (animation-timeline: view()) {
+      .verdict:not(.verdict-head) .vm {
+        animation: fill linear both;
+        animation-timeline: view();
+        animation-range: entry calc(var(--n) * 3%) entry calc(60% + var(--n) * 3%);
+        transform-origin: left center;
+      }
+    }
+
+    @supports not (animation-timeline: view()) {
+      .policy[data-armed] .vm {
+        opacity: 0;
+        transform: scale(0.4);
+        transform-origin: left center;
+      }
+
+      .policy[data-armed][data-in] .vm {
+        opacity: 1;
+        transform: none;
+        transition:
+          opacity 500ms cubic-bezier(0.16, 1, 0.3, 1),
+          transform 500ms cubic-bezier(0.16, 1, 0.3, 1);
+        transition-delay: calc(var(--n) * 70ms);
+      }
+    }
+  }
+
+  /* The honest limits */
+  .limits {
+    margin-block-start: var(--space-3xl);
+    padding-block-start: var(--space-xl);
+    border-block-start: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: var(--space-xl) var(--space-2xl);
+  }
+
+  .limits-title {
+    font-size: var(--text-lg);
+    line-height: var(--leading-snug);
+  }
+
+  .limit {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    gap: var(--space-md);
+    max-width: var(--measure);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+    text-wrap: pretty;
+  }
+
+  .limit + .limit {
+    margin-block-start: var(--space-md);
+  }
+
+  .limit :global(.mark) {
+    --mark-size: 1rem;
+    margin-block-start: 0.3em;
+    align-items: flex-start;
+  }
+
+  .limit a {
+    color: var(--ink);
+  }
+
+  .verify {
+    grid-column: 2;
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-lg);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+  }
+
+  @media (max-width: 960px) {
+    .verdict {
+      grid-template-columns: minmax(0, 1fr) 10rem 13rem;
+    }
+
+    .verdict-head span:last-child {
+      display: none;
+    }
+
+    .verdict-reached {
+      grid-column: 1 / -1;
+    }
+
+    .verdict-reached-label {
+      display: inline;
+    }
+
+    .limits {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .verify {
+      grid-column: 1;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .policy {
+      padding-block: var(--space-2xl);
+    }
+
+    .verdict-head {
+      display: none;
+    }
+
+    .verdict {
+      grid-template-columns: auto minmax(0, 1fr);
+      column-gap: var(--space-lg);
+      row-gap: var(--space-sm);
+    }
+
+    .verdict-case {
+      grid-column: 1 / -1;
+    }
+
+    .verdict-cell {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+    }
+
+    .cell-label {
+      position: static;
+      width: auto;
+      height: auto;
+      margin: 0;
+      overflow: visible;
+      clip: auto;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    .verdict-cell:nth-of-type(3) {
+      grid-column: 2;
+    }
+
+    .verdict-reached {
+      grid-column: 1 / -1;
+    }
+
+    .limits {
+      margin-block-start: var(--space-2xl);
+    }
+  }
+</style>
