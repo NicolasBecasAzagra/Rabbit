@@ -1,0 +1,64 @@
+---
+// The marker of the ledger. One system carries state without colour:
+//   solid  = measured or refused
+//   hollow = open or let through
+//   hatch  = unavailable or not measured
+// The shape is never alone: every marker has a text label, hidden for the
+// eye and read by screen readers, or shown with `visible` (the legend).
+export type MarkKind = 'solid' | 'hollow' | 'hatch';
+
+export interface Props {
+  kind: MarkKind;
+  /** Text that names the state; defaults to the meaning of the kind. */
+  label?: string;
+  /** Show the label next to the square instead of hiding it for the eye. */
+  visible?: boolean;
+  class?: string;
+}
+
+const meanings: Record<MarkKind, string> = {
+  solid: 'Measured or refused',
+  hollow: 'Open or let through',
+  hatch: 'Unavailable or not measured',
+};
+
+const { kind, label, visible = false, class: className } = Astro.props;
+const text = label ?? meanings[kind];
+---
+
+<span class:list={['mark', `mark-${kind}`, visible && 'mark-legend', className]} data-kind={kind}>
+  <svg class="mark-shape" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    {kind === 'solid' && <rect x="0" y="0" width="10" height="10" fill="currentColor" />}
+    {kind !== 'solid' && (
+      <rect x="0.75" y="0.75" width="8.5" height="8.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+    )}
+    {kind === 'hatch' && (
+      <path d="M1 6 L6 1 M1 9 L9 1 M4 9 L9 4 M7 9 L9 7" fill="none" stroke="currentColor" stroke-width="1" />
+    )}
+  </svg>
+  <span class:list={[visible ? 'mark-text' : 'sr-only']}>{text}</span>
+</span>
+
+<style>
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    vertical-align: middle;
+    color: var(--ink);
+    line-height: 1;
+  }
+
+  .mark-shape {
+    flex: none;
+    width: var(--mark-size, 0.875rem);
+    height: var(--mark-size, 0.875rem);
+    display: block;
+  }
+
+  .mark-text {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+    line-height: var(--leading-normal);
+  }
+</style>
