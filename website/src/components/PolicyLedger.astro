@@ -56,7 +56,7 @@ const reachedText = { yes: 'yes', no: 'no', na: 'not a network call' } as const;
 const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
 const countWord = words[counts.differByPolicy] ?? String(counts.differByPolicy);
 
-const leadText = `They come from two adversaries written for this dataset. Of the ${counts.totalCases} cases they ran, ${counts.sameOnBothSides} were the same on both sides and ${counts.differByPolicy} differ by policy; the other ${counts.differForOtherReasons} differ for other reasons and are not claimed here. None of the ${countWord.toLowerCase()} is a missing system call: Rabbit answered each one with a refusal by its policy.`;
+const leadText = `Two adversaries written for this dataset ran ${counts.totalCases} cases on Rabbit and on Linux ${environment.linuxRelease}, with Landlock ABI ${environment.landlockAbi} and seccomp. ${counts.sameOnBothSides} were the same on both sides, ${counts.differByPolicy} differ by policy and the other ${counts.differForOtherReasons} differ for other reasons and are not claimed here. None of the ${countWord.toLowerCase()} is a missing system call: Rabbit answered each one with a refusal by its policy.`;
 const unavailableText = `Not in the table: Rabbit answers ${counts.rabbitUnavailable} of the ${counts.compromisedCalls} raw calls of the compromised binary with unavailable (ENOSYS). An unavailable call is a missing system call, not protection.`;
 
 const repoFile = (path: string) => `${meta.repo}/blob/main/${path}`;
@@ -92,26 +92,34 @@ const links = [
           <div class="verdict" role="listitem">
             <p class="verdict-case">{item.text}</p>
             <p class="verdict-cell">
-              <span class="cell-label">Rabbit</span>
               <span class="vm" style={`--n:${i * 2}`}>
-                <Mark class="verdict-mark" kind={item.rabbitKind} label={item.rabbit} visible />
+                <Mark class="verdict-mark" kind={item.rabbitKind} label={`Rabbit: ${item.rabbit}`} />
+                <span class="vt" aria-hidden="true">
+                  <span class="vt-long">{item.rabbit}</span>
+                  <span class="vt-name">Rabbit</span>
+                </span>
               </span>
             </p>
             <p class="verdict-cell">
-              <span class="cell-label">Linux</span>
               <span class="vm" style={`--n:${i * 2 + 1}`}>
-                <Mark class="verdict-mark" kind={item.linuxKind} label={item.linux} visible />
-              </span>
-              {item.udpPort && (
-                <span class="verdict-flag">
-                  on this runner, Landlock ABI {environment.landlockAbi}; ABI {udpAbi} adds UDP port rules
+                <Mark class="verdict-mark" kind={item.linuxKind} label={`Linux: ${item.linux}`} />
+                <span class="vt" aria-hidden="true">
+                  <span class="vt-long">{item.linux}</span>
+                  <span class="vt-name">Linux</span>
                 </span>
-              )}
+              </span>
             </p>
             <p class="verdict-reached">
-              <span class="verdict-reached-label">Reached Linux: </span>
-              <span class="data">{reachedText[item.reached]}</span>
+              <span class="sr-only">Reached Linux: </span>
+              <span class="verdict-reached-label" aria-hidden="true">Reached: </span>
+              <span class="data rt-long">{reachedText[item.reached]}</span>
+              <span class="data rt-short" aria-hidden="true">{item.reached === 'na' ? 'n/a' : reachedText[item.reached]}</span>
             </p>
+            {item.udpPort && (
+              <p class="verdict-flag">
+                on this runner, Landlock ABI {environment.landlockAbi}; ABI {udpAbi} adds UDP port rules
+              </p>
+            )}
           </div>
         ))
       }
@@ -151,16 +159,17 @@ const links = [
         <a href="https://arxiv.org/abs/2604.16870">Governed MCP</a>, Agate (AgenticOS workshop of SOSP 2026) and{' '}
         <a href="https://arxiv.org/abs/2603.20953">Before the Tool Call</a>.
       </p>
-      <ul class="verify" role="list">
-        {
-          links.map((link) => (
-            <li>
-              <a href={link.href}>{link.label}</a>
-            </li>
-          ))
-        }
-      </ul>
     </div>
+
+    <ul class="verify" role="list">
+      {
+        links.map((link) => (
+          <li>
+            <a href={link.href}>{link.label}</a>
+          </li>
+        ))
+      }
+    </ul>
   </div>
 </section>
 
@@ -229,7 +238,7 @@ const links = [
 
   .data {
     font-family: var(--font-mono);
-    font-size: 0.9em;
+    font-size: max(0.9em, 13px);
     font-variant-numeric: tabular-nums;
     color: var(--ink);
   }
@@ -250,7 +259,7 @@ const links = [
 
   .verdict-head {
     padding-block: var(--space-sm);
-    font-size: var(--text-caption);
+    font-size: var(--text-sm);
     font-weight: var(--font-medium);
     color: var(--ink-secondary);
   }
@@ -279,14 +288,13 @@ const links = [
     gap: 0.625rem;
   }
 
-  .verdict-cell :global(.mark-text) {
-    color: var(--ink);
-    font-size: var(--text-base);
-    line-height: 1.5rem;
+  .rt-short {
+    display: none;
   }
 
   .verdict-flag {
-    font-size: var(--text-caption);
+    grid-column: 3;
+    font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--ink-secondary);
   }
@@ -301,14 +309,22 @@ const links = [
     display: none;
   }
 
-  .cell-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+  .verdict-cell :global(.verdict-mark) {
+    --mark-size: 1.5rem;
+  }
+
+  .vt {
+    font-size: var(--text-base);
+    line-height: 1.5rem;
+    color: var(--ink);
+  }
+
+  .vt-name {
+    display: none;
+  }
+
+  .verdict-cell > .vm {
+    gap: 0.625rem;
   }
 
   .vm {
@@ -412,7 +428,9 @@ const links = [
   .verify {
     list-style: none;
     padding: 0;
-    margin-block-start: var(--space-lg);
+    margin-block-start: var(--space-xl);
+    padding-block-start: var(--space-md);
+    border-block-start: 1px solid var(--rule);
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-sm) var(--space-lg);
@@ -433,6 +451,10 @@ const links = [
       grid-column: 1 / -1;
     }
 
+    .verdict-flag {
+      grid-column: 2 / -1;
+    }
+
     .verdict-reached-label {
       display: inline;
     }
@@ -447,40 +469,85 @@ const links = [
       margin-block-end: var(--space-lg);
     }
 
-    /* one header for the two columns of marks replaces a label on every row */
-    .verdict-head {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: var(--space-md);
+    .policy-lead,
+    .policy-unavailable {
+      font-size: var(--text-sm);
+      line-height: 1.5;
     }
 
-    .verdict-head span:first-child,
-    .verdict-head span:last-child {
+    .limits {
+      margin-block-start: var(--space-lg);
+      font-size: var(--text-sm);
+    }
+
+    .verify {
+      margin-block-start: var(--space-lg);
+    }
+
+    .verdict-head {
       display: none;
     }
 
+    /* one line per row: both squares, one word each, and the evidence tag */
     .verdict {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: var(--space-xs) var(--space-md);
-      padding-block: var(--space-sm) 0.75rem;
+      grid-template-columns: auto auto minmax(0, 1fr);
+      gap: var(--space-xs) var(--space);
+      padding-block: var(--space-sm);
     }
 
     .verdict-case {
       grid-column: 1 / -1;
-      font-size: var(--text-md);
+      font-size: var(--text-base);
+    }
+
+    .vt-long {
+      display: none;
+    }
+
+    .vt-name {
+      display: inline;
+    }
+
+    .verdict-cell {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .verdict-cell > .vm {
+      gap: var(--space-sm);
+      align-items: center;
     }
 
     .verdict-cell :global(.verdict-mark) {
-      gap: 0.5rem;
+      --mark-size: 1.5rem;
     }
 
-    .verdict-cell :global(.mark-text) {
-      font-size: var(--text-sm);
-      line-height: 1.5rem;
+    .verdict-flag {
+      grid-column: 1 / -1;
+    }
+
+    .rt-long {
+      display: none;
+    }
+
+    .rt-short {
+      display: inline;
+    }
+
+    .policy-title {
+      font-size: 1.875rem;
     }
 
     .verdict-reached {
-      font-size: var(--text-caption);
-      line-height: 1.4;
+      grid-column: auto;
+      text-align: end;
+      white-space: nowrap;
+      line-height: 1.5rem;
+    }
+
+    .verdict-reached-label {
+      display: inline;
     }
 
     .legend {

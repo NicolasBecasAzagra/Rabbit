@@ -1,14 +1,22 @@
 ---
 import { layers } from '../data/project';
-import EarsMark from './EarsMark.astro';
+
+// One fact per layer, quoted from the data of the project and the README.
+// The agent row is open on purpose: it does not finish a task yet.
+const facts: Record<string, { kind: 'solid' | 'hollow'; state: string; text: string }> = {
+  kernel: { kind: 'solid', state: 'Measured', text: '59 Linux system calls' },
+  runtime: { kind: 'solid', state: 'Measured', text: 'Token for token against the reference' },
+  agent: { kind: 'hollow', state: 'Open', text: 'Does not finish a task yet: the model repeats a call' },
+  network: { kind: 'solid', state: 'Measured', text: 'IPv4, UDP and TCP in the kernel' },
+};
+import Mark from './Mark.astro';
 ---
 
 <section class="layers-section on-paper" aria-labelledby="layers-title">
   <div class="wrapper">
     <header class="section-header">
       <h2 id="layers-title" class="text-title">
-        <EarsMark class="layers-ears" />
-        <span>Four layers, one system</span>
+        Four layers, one system
       </h2>
       <p class="text-lead">
         Each layer owns a single responsibility. Together they run a local model and let it act.
@@ -22,6 +30,10 @@ import EarsMark from './EarsMark.astro';
             <div class="layer-slab on-ink">
               <h3 class="layer-name">{layer.name}</h3>
               <p class="layer-role">{layer.role}</p>
+              <p class="layer-fact">
+                <Mark kind={facts[layer.id].kind} label={facts[layer.id].state} />
+                <span>{facts[layer.id].text}</span>
+              </p>
             </div>
             <div class="layer-text">
               <p class="layer-body">{layer.body}</p>
@@ -46,16 +58,7 @@ import EarsMark from './EarsMark.astro';
   }
 
   .section-header h2 {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
     margin-block-end: var(--space-sm);
-  }
-
-  .section-header :global(.layers-ears) {
-    width: 1.25em;
-    height: 1.25em;
-    flex: none;
   }
 
   /* The stack: four slabs, each a black block of the name and its text beside it */
@@ -63,22 +66,38 @@ import EarsMark from './EarsMark.astro';
     list-style: none;
     padding: 0;
     display: grid;
-    gap: 4px;
+    gap: 0;
   }
 
   .layer {
     display: grid;
-    grid-template-columns: 16rem minmax(0, 1fr);
+    grid-template-columns: 19rem minmax(0, 1fr);
     border-block-end: 1px solid var(--hairline);
   }
 
   .layer-slab {
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: var(--space-xs);
     padding: var(--space-md);
     min-height: 100%;
+    border-block-end: 1px solid rgba(255, 255, 255, 0.24);
+  }
+
+  .layer-fact {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: flex-start;
+    margin-block-start: var(--space-md);
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--ink);
+  }
+
+  .layer-fact :global(.mark) {
+    --mark-size: 1rem;
+    margin-block-start: 0.2rem;
   }
 
   .layer-name {
@@ -118,7 +137,7 @@ import EarsMark from './EarsMark.astro';
 
   .layer-crates {
     font-family: var(--font-mono);
-    font-size: var(--text-caption);
+    font-size: var(--text-sm);
     line-height: var(--leading-normal);
     color: var(--ink-secondary);
   }
@@ -138,12 +157,12 @@ import EarsMark from './EarsMark.astro';
     }
 
     .layer-slab {
-      flex-direction: row;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: var(--space-sm);
       padding: var(--space-sm) var(--space);
       min-height: 0;
+    }
+
+    .layer-fact {
+      margin-block-start: var(--space-xs);
     }
 
     .layer-text {

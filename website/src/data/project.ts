@@ -48,7 +48,8 @@ export const layers: Layer[] = [
       'rabbit-bootinfo',
       'rabbit-drivers',
     ],
-    differentiator: 'Fewer milliseconds of work per operation, in a private single tenant guest.',
+    differentiator:
+      'Fewer milliseconds of work per operation, in a private single tenant guest, measured under QEMU TCG against Linux 7.3.0.',
   },
   {
     id: 'runtime',
@@ -64,7 +65,7 @@ export const layers: Layer[] = [
     role: 'An agent that acts',
     body: 'The model answers with a tool call, the kernel runs the tool, and the model answers again. The shape of the call is not a request in the prompt but an automaton over bytes: the answer cannot be anything but a well formed call of a declared tool, with the keys that tool needs, each of them once, with the type the tool expects.',
     crates: ['rabbit-agent', 'rabbit-http'],
-    differentiator: 'A grammar that makes a malformed tool call impossible.',
+    differentiator: 'A grammar that forces the answer to be a well formed call of a declared tool.',
   },
   {
     id: 'network',

@@ -142,13 +142,43 @@ const eeRowHeight = 56;
 const eeBottom = eeTop + endToEndRows.length * eeRowHeight + 40;
 const svgHeight = eeBottom + 24;
 
+const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const timingRows = [...operationRows, ...endToEndRows];
+const timingWord = words[timingRows.length] ?? String(timingRows.length);
+// The heading says "in all N timings": the build fails if that stops being true.
+for (const { row, parsed } of timingRows) {
+  const r = toSeconds(parsed.rabbit.value, parsed.rabbit.unit);
+  const m = toSeconds(parsed.mainline.value, parsed.mainline.unit);
+  if (!(r < m)) throw new Error(`[benchmarks] "${row.metric}" is not faster on Rabbit; the heading would be false`);
+}
+
+const seriesKeys: SeriesKey[] = ['mainline', 'mainlineNoMitigations', 'rabbit'];
+const compactPanels = [
+  {
+    title: 'Kernel operations (log time, 100 ns – 100 ms)',
+    rows: operationRows,
+    min: opMin,
+    max: opMax,
+    ticks: [1e-7, 1e-5, 1e-3, 1e-1].map((t) => ({ t, label: opTickLabels[t] })),
+    grid: opTicks,
+  },
+  {
+    title: 'End-to-end (log time, 1 s – 10000 s)',
+    rows: endToEndRows,
+    min: eeMin,
+    max: eeMax,
+    ticks: [1, 100, 10000].map((t) => ({ t, label: eeTickLabels[t] })),
+    grid: eeTicks,
+  },
+];
+
 const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
 ---
 
 <section class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
   <div class="wrapper">
     <header class="section-header">
-      <h2 id="benchmarks-chart-title" class="text-title">On the same emulator, Rabbit costs less in every measured operation</h2>
+      <h2 id="benchmarks-chart-title" class="text-title">Under QEMU TCG, an emulator, Rabbit costs less in all {timingWord} measured timings</h2>
       <p class="text-lead">
         Lower is faster. {benchmarkContext}, on the same rig, without hardware acceleration. The
         raw table is one click below and contains every measurement, including the losses.
@@ -161,12 +191,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
       </figcaption>
       <p id="dotplot-desc" class="sr-only">{ariaDescription}</p>
 
-      <p class="dotplot-hint">
-        The chart continues to the right: scroll it sideways for the two mainline series and their
-        values.
-      </p>
-
-      <div class="dotplot-scroll" tabindex="0" role="region" aria-label="Benchmark chart, scrollable on small screens">
+      <div class="dotplot-scroll">
         <svg
           class="dotplot-svg"
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
@@ -201,7 +226,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
                   {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}</text>
+                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}, {benchmarkContext}</text>
                   )}
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
@@ -264,7 +289,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
                   {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}</text>
+                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}, {benchmarkContext}</text>
                   )}
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
@@ -302,6 +327,53 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
             })}
           </g>
         </svg>
+      </div>
+
+      <div class="compact">
+        {
+          compactPanels.map((panel) => (
+            <div class="cpanel">
+              <p class="cpanel-title">{panel.title}</p>
+              <div class="cruler" aria-hidden="true">
+                {panel.ticks.map(({ t, label }, i) => {
+                  const pct = logPos(t, panel.min, panel.max, 0, 100);
+                  const edge = i === 0 ? 'first' : i === panel.ticks.length - 1 ? 'last' : '';
+                  return <span class={`cruler-tick ${edge}`} style={`left:${pct}%`}>{label}</span>;
+                })}
+              </div>
+              <ul class="crows" role="list">
+                {panel.rows.map(({ row, parsed }) => (
+                  <li class="crow">
+                    <p class="crow-head">
+                      <span class="crow-label">{row.metric}</span>
+                      <span class="crow-ratio">{ratioText(row)}, {benchmarkContext}</span>
+                    </p>
+                    <div class="ctrack" aria-hidden="true">
+                      {panel.grid.map((g) => (
+                        <i class="cgrid" style={`left:${logPos(g, panel.min, panel.max, 0, 100)}%`} />
+                      ))}
+                      {seriesKeys.map((key) => (
+                        <i
+                          class={`m m-${key} cm`}
+                          style={`left:${logPos(toSeconds(parsed[key].value, parsed[key].unit), panel.min, panel.max, 0, 100)}%`}
+                        />
+                      ))}
+                    </div>
+                    <p class="cvals">
+                      {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => (
+                        <span class="cv">
+                          <i class={`m m-${key}`} aria-hidden="true" />
+                          <span class="sr-only">{seriesNames[key]}: </span>
+                          <span class="cv-num">{row[key]}</span>
+                        </span>
+                      ))}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        }
       </div>
 
       <div class="legend">
@@ -383,10 +455,8 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     </figure>
 
     <p class="section-footer">
-      <a class="button button-secondary" href={`${meta.repo}/blob/main/REPORT.md`}>
-        Read the full report
-      </a>
-      <a class="button button-secondary" href={url('/docs/benchmarking')}>Methodology</a>
+      <a href={`${meta.repo}/blob/main/REPORT.md`}>Read the full report</a>
+      <a href={url('/docs/benchmarking')}>Methodology</a>
     </p>
   </div>
 </section>
@@ -426,22 +496,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     stroke: rgba(255, 255, 255, 0.32);
   }
 
-  .dotplot-hint {
-    display: none;
-    margin-block-start: var(--space-xs);
-    font-family: var(--font-body);
-    font-size: var(--text-caption);
-    color: var(--ink-secondary);
-  }
-
-  @media (max-width: 700px) {
-    .dotplot-hint {
-      display: block;
-    }
-  }
-
   .dotplot-svg {
-    min-width: 1160px;
     width: 100%;
     height: auto;
     font-family: var(--font-body);
@@ -672,8 +727,151 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   .section-footer {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-sm);
+    gap: var(--space-sm) var(--space-lg);
     margin-block-start: var(--space-xl);
+    font-size: var(--text-base);
+    font-weight: var(--font-medium);
+  }
+
+  /* The compact chart: one row per timing, on the same log scale */
+  .compact {
+    display: none;
+  }
+
+  .m {
+    display: inline-block;
+    flex: none;
+    width: 12px;
+    height: 12px;
+  }
+
+  .m-rabbit {
+    border-radius: 50%;
+    background: var(--ink);
+  }
+
+  .m-mainline {
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-secondary);
+  }
+
+  .m-mainlineNoMitigations {
+    background: var(--ink-secondary);
+    transform: scale(0.8);
+  }
+
+  .cpanel + .cpanel {
+    margin-block-start: var(--space-xl);
+  }
+
+  .cpanel-title {
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    font-weight: var(--font-medium);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+
+  .cruler {
+    position: relative;
+    height: 1.5rem;
+    margin-block-start: var(--space-sm);
+    margin-inline: 0.5rem;
+  }
+
+  .cruler-tick {
+    position: absolute;
+    inset-block-start: 0;
+    transform: translateX(-50%);
+    font-size: var(--text-caption);
+    line-height: 1.5rem;
+    white-space: nowrap;
+    color: var(--ink-secondary);
+  }
+
+  .cruler-tick.first {
+    transform: translateX(-0.5rem);
+  }
+
+  .cruler-tick.last {
+    transform: translateX(calc(-100% + 0.5rem));
+  }
+
+  .crows {
+    list-style: none;
+    padding: 0;
+  }
+
+  .crow {
+    padding-block: var(--space-sm) var(--space);
+    border-block-start: 1px solid var(--hairline);
+  }
+
+  .crow-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0 var(--space-md);
+  }
+
+  .crow-label {
+    font-size: var(--text-md);
+    font-weight: var(--font-medium);
+    color: var(--ink);
+  }
+
+  .crow-ratio {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .ctrack {
+    position: relative;
+    height: 1.5rem;
+    margin: var(--space-xs) 0.5rem;
+    border-block: 1px solid rgba(255, 255, 255, 0.3);
+  }
+
+  .cgrid {
+    position: absolute;
+    inset-block: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .cm {
+    position: absolute;
+    inset-block-start: 50%;
+    margin-block-start: -6px;
+    margin-inline-start: -6px;
+  }
+
+  .cvals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
+
+  .cv {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  @media (max-width: 1220px) {
+    .dotplot-scroll {
+      display: none;
+    }
+
+    .compact {
+      display: block;
+      max-width: 48rem;
+    }
   }
 
   @media (max-width: 760px) {

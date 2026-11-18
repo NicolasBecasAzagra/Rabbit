@@ -49,14 +49,14 @@ const rows = [
       <p class="aim-caveat">
         It is an aim, not a result. The ledger beside it says where the evidence stands.
       </p>
-      <p class="ledger-legend legend-key" aria-label="Legend">
+    </div>
+
+    <div class="aim-ledger">
+      <p class="ledger-legend" aria-label="Legend">
         <Mark kind="solid" visible />
         <Mark kind="hollow" visible />
         <Mark kind="hatch" visible />
       </p>
-    </div>
-
-    <div class="aim-ledger">
       <ul class="ledger" role="list">
         {
           rows.map((row) => (
@@ -86,7 +86,7 @@ const rows = [
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     gap: var(--space-2xl);
-    align-items: stretch;
+    align-items: start;
   }
 
   .aim-statement {
@@ -104,11 +104,12 @@ const rows = [
   }
 
   .aim-caveat {
-    max-width: 36ch;
-    font-size: var(--text-lg);
+    max-width: 30ch;
+    font-size: 1.5rem;
+    font-weight: var(--font-medium);
     line-height: var(--leading-snug);
-    letter-spacing: -0.01em;
-    color: var(--ink-secondary);
+    letter-spacing: -0.02em;
+    color: var(--ink);
     text-wrap: pretty;
   }
 
@@ -182,11 +183,9 @@ const rows = [
 
   .ledger-legend {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    margin-block-start: auto;
-    padding-block-start: var(--space-md);
-    border-block-start: 1px solid var(--hairline);
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-lg);
+    margin-block-end: var(--space-md);
   }
 
   @media (max-width: 960px) {
