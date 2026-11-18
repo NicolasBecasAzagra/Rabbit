@@ -125,33 +125,33 @@ const eeTickLabels: Record<number, string> = {
   [10000]: '10000 s',
 };
 
-const rowLabelX = 210;
-const chartLeft = 240;
-const chartRight = 640;
+const rowLabelX = 250;
+const chartLeft = 280;
+const chartRight = 700;
 const valueColX: Record<SeriesKey, number> = {
-  rabbit: 660,
-  mainline: 790,
-  mainlineNoMitigations: 920,
+  rabbit: 735,
+  mainline: 860,
+  mainlineNoMitigations: 1000,
 };
 const svgWidth = 1160;
-const opTop = 64;
-const opRowHeight = 48;
+const opTop = 72;
+const opRowHeight = 56;
 const opBottom = opTop + operationRows.length * opRowHeight + 40;
 const eeTop = opBottom + 48;
-const eeRowHeight = 48;
+const eeRowHeight = 56;
 const eeBottom = eeTop + endToEndRows.length * eeRowHeight + 40;
 const svgHeight = eeBottom + 24;
 
 const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
 ---
 
-<section class="dotplot-section" aria-labelledby="benchmarks-chart-title">
+<section class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
   <div class="wrapper">
     <header class="section-header">
       <h2 id="benchmarks-chart-title" class="text-title">On the same emulator, Rabbit costs less in every measured operation</h2>
       <p class="text-lead">
-        Lower is faster on the same QEMU rig, without hardware acceleration. The raw table below
-        contains every measurement, including the losses.
+        Lower is faster. {benchmarkContext}, on the same rig, without hardware acceleration. The
+        raw table is one click below and contains every measurement, including the losses.
       </p>
     </header>
 
@@ -199,9 +199,9 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
               const ratio = ratioText(row);
               return (
                 <g class="row">
-                  <text class="row-label" x={rowLabelX} y={y - 4} text-anchor="end">{row.metric}</text>
+                  <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
                   {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
+                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}</text>
                   )}
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
@@ -262,9 +262,9 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
               const ratio = ratioText(row);
               return (
                 <g class="row">
-                  <text class="row-label" x={rowLabelX} y={y - 4} text-anchor="end">{row.metric}</text>
+                  <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
                   {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 12} text-anchor="end">{ratio}</text>
+                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}</text>
                   )}
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
@@ -304,34 +304,6 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
         </svg>
       </div>
 
-      {otherRows.length > 0 && (
-        <div class="other-comparisons">
-          <p class="other-title">Memory and throughput</p>
-          <div class="other-grid">
-            <div class="other-row other-header" aria-hidden="true">
-              <span class="other-metric">Metric</span>
-              <span class="other-values">
-                <span class="series-rabbit">Rabbit</span>
-                <span class="series-mainline">Linux 7.3.0</span>
-                <span class="series-nomit">Linux, mitigations off</span>
-              </span>
-              <span class="other-ratio">Ratio</span>
-            </div>
-            {otherRows.map(({ row }) => (
-              <div class="other-row">
-                <span class="other-metric">{row.metric}</span>
-                <span class="other-values">
-                  <span class="series-rabbit">{row.rabbit}</span>
-                  <span class="series-mainline">{row.mainline}</span>
-                  <span class="series-nomit">{row.mainlineNoMitigations}</span>
-                </span>
-                {ratioText(row) && <span class="other-ratio">{ratioText(row)}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div class="legend">
         <span class="legend-item">
           <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--accent)" /></svg>
@@ -354,7 +326,37 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
       </p>
 
       <details class="raw-table" open={openTable}>
-        <summary>Raw measurements</summary>
+        <summary>The numbers behind the chart: memory, throughput and all {benchmarks.length} raw measurements</summary>
+        {otherRows.length > 0 && (
+          <div class="other-comparisons">
+            <p class="other-title">Memory and throughput</p>
+            <div class="other-grid">
+              <div class="other-row other-header" aria-hidden="true">
+                <span class="other-metric">Metric</span>
+                <span class="other-values">
+                  <span class="series-rabbit">Rabbit</span>
+                  <span class="series-mainline">Linux 7.3.0</span>
+                  <span class="series-nomit">Linux, mitigations off</span>
+                </span>
+                <span class="other-ratio">Ratio</span>
+              </div>
+              {otherRows.map(({ row }) => (
+                <div class="other-row">
+                  <span class="other-metric">{row.metric}</span>
+                  <span class="other-values">
+                    <span class="series-rabbit">{row.rabbit}</span>
+                    <span class="series-mainline">{row.mainline}</span>
+                    <span class="series-nomit">{row.mainlineNoMitigations}</span>
+                  </span>
+                  {ratioText(row) && <span class="other-ratio">{ratioText(row)}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+
+        <p class="raw-title">Raw measurements, {benchmarkContext}</p>
         <div class="table-wrap" tabindex="0" role="region" aria-label="Raw benchmark measurements table">
           <table>
             <thead>
@@ -392,8 +394,6 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 <style>
   .dotplot-section {
     padding-block: var(--space-3xl);
-    background: var(--surface);
-    border-block: 1px solid var(--hairline);
   }
 
   .section-header {
@@ -402,7 +402,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .section-header h2 {
-    margin-block-end: var(--space-sm);
+    margin-block-end: var(--space-md);
   }
 
   .dotplot-figure {
@@ -412,19 +412,26 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   .dotplot-scroll {
     overflow-x: auto;
     padding-block-end: var(--space-sm);
-    background:
-      linear-gradient(to right, var(--surface) 40%, transparent) left center / 32px 100% no-repeat local,
-      linear-gradient(to left, var(--surface) 40%, transparent) right center / 32px 100% no-repeat local,
-      radial-gradient(farthest-side at 0 50%, var(--rule), transparent) left center / 14px 100% no-repeat scroll,
-      radial-gradient(farthest-side at 100% 50%, var(--rule), transparent) right center / 14px 100% no-repeat scroll;
+  }
+
+  .dotplot-scroll:focus-visible {
+    outline-offset: 2px;
+  }
+
+  .tick line {
+    stroke: rgba(255, 255, 255, 0.3);
+  }
+
+  .series line {
+    stroke: rgba(255, 255, 255, 0.32);
   }
 
   .dotplot-hint {
     display: none;
     margin-block-start: var(--space-xs);
     font-family: var(--font-body);
-    font-size: var(--text-xs);
-    color: var(--muted);
+    font-size: var(--text-caption);
+    color: var(--ink-secondary);
   }
 
   @media (max-width: 700px) {
@@ -441,13 +448,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .dotplot-svg text {
-    font-size: 11px;
+    font-size: 13px;
     fill: var(--ink-secondary);
   }
 
   .panel-title {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: var(--font-medium);
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -455,29 +462,27 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .column-header {
-    font-family: var(--font-mono);
-    font-size: 9px;
+    font-family: var(--font-body);
+    font-size: 13px;
     font-weight: var(--font-medium);
-    fill: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    fill: var(--ink-secondary);
   }
 
   .row-label {
     font-family: var(--font-body);
-    font-size: 12px;
+    font-size: 14px;
     fill: var(--ink);
   }
 
   .row-ratio {
     font-family: var(--font-body);
-    font-size: 10px;
-    fill: var(--accent);
+    font-size: 13px;
+    fill: var(--ink-secondary);
   }
 
   .value-label {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 13px;
     fill: var(--ink-secondary);
     font-variant-numeric: tabular-nums;
   }
@@ -488,18 +493,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 
   .other-comparisons {
     margin-block-start: var(--space-md);
-    padding: var(--space-md);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-card);
-    background: var(--canvas);
+    padding-block: var(--space-md);
   }
 
   .other-title {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-family: var(--font-body);
+    font-size: var(--text-caption);
     font-weight: var(--font-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--ink);
     margin-block-end: var(--space-sm);
   }
@@ -527,10 +527,10 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   .other-header {
     font-family: var(--font-mono);
     font-weight: var(--font-medium);
-    color: var(--muted);
+    color: var(--ink-secondary);
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    font-size: var(--text-xs);
+    font-size: var(--text-caption);
   }
 
   .other-metric {
@@ -554,13 +554,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .series-nomit {
-    color: var(--muted);
+    color: var(--ink-secondary);
   }
 
   .other-ratio {
     text-align: end;
     color: var(--accent);
-    font-size: var(--text-xs);
+    font-size: var(--text-caption);
   }
 
   .legend {
@@ -576,7 +576,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   .legend-context {
     margin-inline-start: auto;
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-size: var(--text-caption);
     color: var(--ink-secondary);
   }
 
@@ -590,21 +590,25 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     margin-block-start: var(--space-sm);
     font-family: var(--font-body);
     font-size: var(--text-sm);
-    color: var(--muted);
+    color: var(--ink-secondary);
   }
 
   .raw-table {
     margin-block-start: var(--space-lg);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-card);
-    background: var(--canvas);
-    overflow: hidden;
+    border-block: 1px solid var(--rule);
+  }
+
+  .raw-title {
+    margin-block: var(--space-lg) var(--space-xs);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--ink);
   }
 
   .raw-table summary {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space) 0;
     font-family: var(--font-body);
-    font-size: var(--text-sm);
+    font-size: var(--text-base);
     font-weight: var(--font-medium);
     color: var(--ink);
     cursor: pointer;
@@ -622,11 +626,6 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   .raw-table .table-wrap {
     overflow-x: auto;
     padding-block-end: var(--space-sm);
-    background:
-      linear-gradient(to right, var(--canvas) 40%, transparent) left center / 32px 100% no-repeat local,
-      linear-gradient(to left, var(--canvas) 40%, transparent) right center / 32px 100% no-repeat local,
-      radial-gradient(farthest-side at 0 50%, var(--rule), transparent) left center / 14px 100% no-repeat scroll,
-      radial-gradient(farthest-side at 100% 50%, var(--rule), transparent) right center / 14px 100% no-repeat scroll;
   }
 
   .raw-table .table-wrap:focus-visible {
@@ -653,9 +652,9 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .raw-table th {
-    color: var(--muted);
+    color: var(--ink-secondary);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    font-size: var(--text-caption);
     font-weight: var(--font-medium);
     text-transform: uppercase;
     letter-spacing: 0.04em;
