@@ -83,6 +83,7 @@ sides. Every number of the table comes from a committed dataset:
 | the model | `bench/results/inference-native/` |
 | the agent | `bench/results/agent/` |
 | the network | `bench/results/net/` |
+| the policy | `bench/results/policy/` |
 
 ![Selected Rabbit benchmark measurements](docs/stats.svg)
 

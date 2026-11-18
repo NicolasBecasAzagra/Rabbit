@@ -401,6 +401,11 @@ of the network (the `net` row is the round trip of one datagram on an emulated
 device), no security claims ("more secure", "safer"), no "production ready", and no
 comparison where one side runs features the other side does not have.
 
+The dataset of the policy, `bench/results/policy/`, supports no performance claim
+and no claim about the security of a real deployment: it counts the verdicts of a
+fixed table of calls in one run, and a call that answers `ENOSYS` there is a
+missing system call, not an enforced policy.
+
 ## Published artifacts
 
 ```text

@@ -361,6 +361,163 @@ vectorised, so the tokens per second go from 1.51 to 0.65 on Rabbit and
 from 1.25 to 0.20 on the reference kernel. The format buys memory, and the
 rows say so.
 
+## The tool policy enforced by the kernel
+
+### The question and the setup
+
+Can a kernel enforce what a tool-calling agent is allowed to do, so that the
+limit holds even when the model, or the binary, does something else? The
+manifest is derived from the tools the agent declares: `read_file` and
+`list_dir` need a read capability, `write_file` a write capability, `net_send`
+and `http_get` the capability of UDP and of TCP, and `compute` and `done`
+none. The agent installs the policy once per boot with a private system call
+(500), and Rabbit enforces it at `openat`, `newfstatat` by path, `socket`,
+`connect`, `sendto`, `listen` and `accept`. The same binary applies the same
+manifest on Linux with Landlock and seccomp when the kernel answers `ENOSYS`
+to that call. Two adversaries run against both: one makes only the calls the
+grammar of the agent accepts, and one is a compromised binary that issues raw
+system calls under the tool layer. The data is in `bench/results/policy/`, cut
+from one CI run (44357746548, commit `759128d`); every number below is derived
+from it by `bench/policy/build_table.py`.
+
+### Results
+
+The class of a case is computed from the two verdicts. `same`: the same verdict
+on both sides. `policy`: Rabbit refused the call with its policy and Linux
+allowed it or failed it for another reason, a difference of enforcement.
+`surface`: Rabbit answered `unavailable` (`ENOSYS`, it has no such call) and
+Linux allowed the call, which is a missing call and not enforcement.
+`linux-denies`: Linux denied the call and Rabbit answered `unavailable`.
+`other`: anything else, among them a case that only one side ran.
+
+| table | same | policy | surface | linux-denies | other | cases |
+|---|---|---|---|---|---|---|
+| adversary (the grammar) | 16 | 4 | 0 | 0 | 2 | 22 |
+| compromised (raw system calls) | 12 | 6 | 10 | 8 | 7 | 43 |
+
+The verdicts behind the classes:
+
+| run | allowed | denied | unavailable | failed | cases |
+|---|---|---|---|---|---|
+| Rabbit, adversary | 7 | 12 | - | 2 | 21 |
+| Linux, adversary | 11 | 9 | - | 2 | 22 |
+| Rabbit, compromised | 7 | 11 | 22 | 3 | 43 |
+| Linux, compromised | 23 | 15 | 0 | 5 | 43 |
+
+The adversary on Linux has one case more, `read_symlink_to_secret`, because the
+initramfs of Rabbit has no symbolic links. On Linux a network call counts as
+allowed when its data reached the server of the test, whatever the tool then
+read. The enumerated family of the adversary, 1554 paths made of six
+components, had no allowed path on Linux (185 denied, 1369 failed). The log of
+that boot on Rabbit is partial, because the CI step printed only its first 60
+lines: it has 21 of the rows, none allowed, and no summary.
+
+The rows of class `policy`, copied from `summary.csv`:
+
+| table | case | Rabbit | Linux | reached on Linux | note from the log |
+|---|---|---|---|---|---|
+| adversary | `read_long_outside` | denied | failed | na | a path that does not exist answers ENOENT before Landlock is asked |
+| adversary | `net_send_other_ip` | denied | allowed | yes | Landlock network rules name a port and no address |
+| adversary | `net_send_other_port` | denied | allowed | yes | Landlock enforces UDP ports from ABI 10 |
+| adversary | `http_get_other_ip` | denied | allowed | yes | Landlock network rules name a port and no address |
+| compromised | `newfstatat_secret` | denied | allowed | na | Landlock cannot restrict stat or access |
+| compromised | `newfstatat_missing` | denied | failed | na | - |
+| compromised | `connect_tcp_other_ip` | denied | allowed | yes | Landlock network rules name a port and no address |
+| compromised | `connect_udp_other_ip` | denied | allowed | yes | Landlock network rules name a port and no address |
+| compromised | `connect_udp_other_port` | denied | allowed | yes | the test does not assert this answer |
+| compromised | `sendto_other_ip` | denied | allowed | yes | Landlock network rules name a port and no address |
+
+The existence probes are in the same file. `newfstatat` of a path outside the
+root answered `denied` for the secret and for a path that does not exist on
+Rabbit, and `0` and `ENOENT` on Linux, which is a way to learn which files
+exist. The other four probes (`stat`, `access`, `faccessat`, `statx`) answer
+`ENOSYS` on Rabbit and the same `0` and `ENOENT` on Linux: Rabbit has no
+oracle there because it has no such calls.
+
+### What this shows
+
+On Linux 7.0.0-1020-azure with Landlock ABI 8 and the seccomp filter of the
+agent, a program inside the agent could still reach another IP address on the
+port the manifest allows, over TCP and over UDP, with `connect`, `sendto`,
+`sendmsg` and `sendmmsg`; the servers of the test recorded the data. It could
+reach another UDP port, and it could tell a file outside its read root from a
+path that does not exist with `stat`. Rabbit refused with its policy the
+`connect`, the `sendto` and the `newfstatat` of those cases, and has no
+`sendmsg`, `sendmmsg` or `stat`. What Linux denied and Rabbit did not have is
+also in the data:
+`creat`, `unlink`, `rename`, `mkdir` and `symlink` inside the root, `execve` and
+`execveat` outside it, `io_uring_setup` and sockets of the families `AF_UNIX` and
+`AF_PACKET`, the last three by the seccomp filter; Rabbit answered
+`unavailable` to the first eight and failed the sockets with `EAFNOSUPPORT`.
+Both sides denied the secret, the path with `..`, the writes, the other TCP
+port, `listen` and `accept`, and no path of the enumerated family was allowed
+on either side (on Rabbit, in the 21 rows the log holds).
+
+### What this does not show
+
+- It is not a claim of being first. Others have worked on policies for the
+  tools of agents: Governed MCP (arXiv 2604.16870,
+  <https://arxiv.org/abs/2604.16870>), Agate at the AgenticOS workshop of SOSP
+  2026, and Before the Tool Call (arXiv 2603.20953,
+  <https://arxiv.org/abs/2603.20953>). The mechanisms used for the Linux side
+  are documented at <https://docs.kernel.org/userspace-api/landlock.html> and
+  <https://docs.kernel.org/userspace-api/seccomp_filter.html>.
+- `unavailable` is a missing system call and not enforcement: 22 of the 43 cases
+  of the table on Rabbit. Only the 11 cases refused by the policy say anything
+  about enforcement, and the 22 will become refusals or working calls the day
+  the kernel implements them.
+- The UDP port rule of Landlock needs ABI 10 and the runner has ABI 8. A newer
+  kernel closes the `net_send_other_port` and `connect_udp_other_port` rows, and
+  it does not close the rows about the address: Landlock keys its network rules
+  by port.
+- The two sides run in different environments: the Linux side is native, on a
+  runner, against the loopback addresses 127.0.0.x, and Rabbit is in QEMU
+  against 10.0.2.x, with no hardware acceleration. The log does not record the
+  acceleration of QEMU, its version output, the hash of the kernel or of the
+  archives; `summary.json` says `not recorded` for each.
+- The kernel and the oracle of the tests share the `rabbit-policy` engine, so the
+  tests show that the kernel applies the policy and not that the policy is right.
+- There is one policy per boot and one program per boot. The helpers that read
+  user memory have no fault fixup, and `bind` is not checked on either side.
+- `stat` has no tool of the agent, so the `stat` rows are results of raw system
+  calls and not of anything a model can ask for.
+- There is no protection against prompt injection: text from a server the agent
+  may reach can still steer the model into any call its tools allow.
+- It is one deterministic run, counted in verdicts and not in timings, on a
+  single kernel version for each side. It supports no claim about performance
+  and no claim about the security of a real deployment.
+
+### How to reproduce
+
+In CI, the step `Run the adversary and the compromised binary against Rabbit`
+boots Rabbit twice with the agent and the fixtures `/agent/hello.txt` and
+`/secret.txt`, and the step `Linux policy on this runner` runs the same tables
+in a restricted child, with `RABBIT_REQUIRE_LANDLOCK=1`. Locally, for Rabbit:
+
+```sh
+make agent build
+# a stage directory with agent/hello.txt, secret.txt and a net.conf that holds
+# address=10.0.2.2, port=, http_port=, path=/agent and adversary=1 (or compromised=1),
+# with an echo server on the host for the two ports
+EXTRA_DIR=stage bench/mkinitramfs.sh out.cpio rabbit-agent/rabbit-agent.elf
+qemu-system-x86_64 -M q35 -m 512M -kernel "$(make -s print-kernel-path)" \
+    -initrd out.cpio -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+    -display none -monitor none -no-reboot -serial file:run.log \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04
+```
+
+and on Linux:
+
+```sh
+RABBIT_REQUIRE_LANDLOCK=1 cargo test --manifest-path rabbit-agent/Cargo.toml \
+    adversary::tests::the_adversary_is_bounded_on_linux -- --nocapture --test-threads=1
+RABBIT_REQUIRE_LANDLOCK=1 cargo test --manifest-path rabbit-agent/Cargo.toml \
+    compromised::tests::the_compromised_binary_is_bounded_on_linux -- --nocapture --test-threads=1
+```
+
+The table comes from the raw logs with `python3 bench/policy/build_table.py`,
+and its tests with `python3 -m unittest discover -s bench/policy`.
+
 ## Losses
 
 - **The thread workload was a loss and then became a win.** With eager

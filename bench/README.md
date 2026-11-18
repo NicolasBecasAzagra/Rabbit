@@ -303,3 +303,10 @@ not a comparison of the kernel alone: the two kernels reach the first result
 by different paths, and the reference kernel panics when its PID 1 leaves.
 The number is published with that caveat, next to the measurements that are
 comparisons.
+
+## The policy
+
+`bench/policy/` holds the scripts of the policy dataset in `bench/results/policy/`:
+the raw lines of the adversaries on Rabbit and on Linux, cut from a CI log by
+`extract_ci_log.py`, and the table that `build_table.py` derives from them. Its
+README says where each line comes from and what is not in the log.
