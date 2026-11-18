@@ -35,9 +35,10 @@ It is built in three layers, each one measurable against mainline Linux on the
 same machine, with the same binary and the same checkpoint.
 
 1. **A kernel that does less.** No page table isolation, no LSM, no audit, no
-   cgroups, no hooks. Demand paging, large pages, a scheduler with a short
-   tail, and real multiprocessing. Every number is published, including the
-   losses.
+   cgroups, and no hook framework: the one check on the system call path is the
+   tool policy of the agent. Demand paging, large pages, a scheduler with a
+   short tail, and real multiprocessing. Every number is published, including
+   the losses.
 2. **A runtime that serves a model.** The weights are mapped from the
    initramfs without being copied, kept resident, and read by a decoder
    written from scratch: RMSNorm, rotary embeddings, grouped query attention,
@@ -299,7 +300,8 @@ measurable one. Rabbit publishes a narrow, defensible claim instead:
   benchmark scripts, raw results committed to the repository.
 - Two areas where a purpose-built kernel can plausibly win in a private VM:
   syscall entry cost (no KPTI/retpoline in a trusted single-tenant guest) and
-  fork/exec plus tail latency (no LSM, no audit, no cgroups, no hooks).
+  fork/exec plus tail latency (no LSM, no audit, no cgroups, no hook framework;
+  the tool policy is the one check on the system call path).
 - Every loss is published too. No cherry-picking, no "mitigations off!" as the
   only comparison point.
 

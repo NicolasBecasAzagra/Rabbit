@@ -143,7 +143,8 @@ Where the difference comes from, in the order the size of the effect:
 
 - **No page table isolation, no LSM or auditing hooks, no virtual memory
   accounting.** A system call that does not have to walk an audit path or
-  reload CR3 is cheaper.
+  reload CR3 is cheaper. The one check on the system call path is the tool
+  policy, which the operation benchmarks run without.
 - **Demand paging.** A mapping reserves address space and the frames arrive
   when the program touches them, so a program that reads one byte of a 256 MiB
   mapping does not pay for the rest of it. This single change made the
