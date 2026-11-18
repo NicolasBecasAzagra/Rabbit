@@ -70,7 +70,7 @@ const links = [
 ---
 
 <section id="policy" class="policy on-ink" aria-labelledby="policy-title" data-policy>
-  <SeamEars />
+  <SeamEars edge="top" side="right" reach="12rem" />
   <div class="wrapper">
     <header class="policy-head">
       <h2 id="policy-title" class="policy-title">
@@ -204,7 +204,7 @@ const links = [
   }
 
   .policy-head {
-    max-width: 56rem;
+    max-width: min(56rem, calc(100% - 15rem));
     margin-block-end: var(--space-xl);
   }
 

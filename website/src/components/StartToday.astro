@@ -13,7 +13,7 @@ const commands = [
 ---
 
 <section id="run" class="run on-ink" data-runit aria-labelledby="start-title">
-  <SeamEars />
+  <SeamEars edge="bottom" side="left" reach="9rem" />
   <div class="wrapper run-grid">
     <header class="run-head">
       <h2 id="start-title" class="run-title">Run it today</h2>
@@ -31,13 +31,13 @@ const commands = [
         {
           commands.map((c) => (
             <li>
-              <div class="command-row">
-                <code class="command" tabindex="0">{c.cmd}</code>
+              <code class="command" tabindex="0">{c.cmd}</code>
+              <div class="command-meta">
+                <span class="command-what">{c.what}</span>
                 <button type="button" class="copy" data-copy={c.cmd} aria-label={`Copy the command: ${c.cmd}`}>
                   <span class="copy-label">Copy</span>
                 </button>
               </div>
-              <span class="command-what">{c.what}</span>
               <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
             </li>
           ))
@@ -62,7 +62,7 @@ const commands = [
 
   .run-grid {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
     gap: var(--space-2xl);
     align-items: start;
   }
@@ -101,11 +101,12 @@ const commands = [
     border-block-end: 1px solid var(--hairline);
   }
 
-  .command-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+  .command-meta {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-md);
+    justify-content: space-between;
+    gap: var(--space-xs) var(--space-md);
   }
 
   /* One line, never broken mid-token: it scrolls inside the block */
@@ -113,15 +114,30 @@ const commands = [
     display: block;
     overflow-x: auto;
     white-space: nowrap;
-    padding-block: 0.25rem;
+    padding-block: 0.25rem 0.625rem;
     font-family: var(--font-mono);
-    font-size: var(--text-md);
+    font-size: var(--text-base);
     color: var(--ink);
+    scrollbar-width: thin;
+    scrollbar-color: var(--ink-secondary) transparent;
+  }
+
+  /* a visible, palette-coloured scrollbar tells the block scrolls on a narrow screen */
+  .command::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .command::-webkit-scrollbar-track {
+    background: var(--hairline);
+  }
+
+  .command::-webkit-scrollbar-thumb {
+    background: var(--ink-secondary);
   }
 
   .copy {
     min-width: 4.5rem;
-    height: 2.25rem;
+    height: 2rem;
     padding-inline: 0.875rem;
     border: 1px solid var(--rule);
     border-radius: var(--radius);
