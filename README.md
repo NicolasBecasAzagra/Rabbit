@@ -16,7 +16,9 @@ Rabbit is an experiment in measured method: the same static binary and the
 same initramfs run on Rabbit and on mainline Linux, the model reproduces the
 reference implementation token for token, and every number is published with
 its raw data, the losses included. It asks what a kernel built for one job
-costs, and it answers on an emulator first.
+costs, and it answers on an emulator first. Its newest result is a policy that
+the kernel enforces for the tools of the agent, measured against Landlock and
+seccomp on Linux: see [the tool policy](#the-tool-policy).
 
 ![The three layers of Rabbit](docs/architecture.svg)
 
@@ -108,6 +110,45 @@ Three things about these numbers:
   measured too, and the batches where a boot did not finish are in
   `bench/results/` with the samples that are missing.
 
+## The tool policy
+
+The agent declares its tools, and that declaration does two things. It
+constrains what the model may write, through the grammar, and it generates a
+manifest that the kernel enforces: which files the process may read and which
+addresses it may reach. The same binary applies the same manifest on Linux with
+Landlock and seccomp, so the two sides are compared with two adversaries: one
+that makes only the calls the grammar accepts, and a compromised binary that
+issues raw system calls under the tools.
+
+On a Linux 7.0 kernel with Landlock ABI 8 and a seccomp filter, the agent could
+still:
+
+- send TCP and UDP to **another IP address** on the allowed port, with
+  `connect`, `sendto`, `sendmsg` and `sendmmsg`, and the data reached the server
+  of the test;
+- send UDP to **another port**, because the UDP port rules of Landlock need
+  ABI 10;
+- tell a file outside its read root from a path that does not exist, with `stat`.
+
+Rabbit refuses the `connect`, the `sendto` and the `newfstatat` of those cases
+with the policy of its kernel, and no path of the 1554 of the enumerated family
+outside the read root is allowed on either side. Read it with its limits:
+
+- **22 of the 43 raw calls of the compromised binary are system calls that
+  Rabbit does not implement.** They count as missing, not as protection: only
+  11 are refusals by the policy.
+- The UDP port rows depend on the kernel version. The rows about the destination
+  address do not, because Landlock names ports and no addresses.
+- It is not the first work on policies for the tools of agents, and it runs on
+  an emulator against a runner, with one policy per boot and no defence against
+  prompt injection.
+
+The method, the table and the list of what it does not show are in
+[the section of the report](REPORT.md#the-tool-policy-enforced-by-the-kernel),
+the raw lines and the script that derives the table are in
+[`bench/results/policy/`](bench/results/policy/), and the gaps that are left are
+the milestone v0.8.
+
 ## Status
 
 Everything in the table is implemented, verified on the host and asserted in
@@ -140,6 +181,7 @@ repeats a call it has already made ([issue 14](https://github.com/NicolasBecasAz
 | E4 | The inference runtime: a real model, token for token against the reference | done |
 | E5 | The measurement of the runtime on both kernels, same machine, same binary | done |
 | E6 | The agent: model, tool call, tool result and model, with a grammar that forces the call | done |
+| M14 | The tool policy: the kernel enforces the manifest of the tools, measured against Landlock and seccomp | done |
 
 ## What comes next
 
@@ -151,6 +193,7 @@ criteria.
 | Milestone | Issues | Why it is next |
 |---|---|---|
 | **v0.4 Credible numbers** | [#10](https://github.com/NicolasBecasAzagra/Rabbit/issues/10) | A host with hardware acceleration: the only thing missing for the timings to describe a machine instead of an emulator, and the first test of every ratio above. |
+| **v0.8 Policy hardening** | [#21](https://github.com/NicolasBecasAzagra/Rabbit/issues/21), [#22](https://github.com/NicolasBecasAzagra/Rabbit/issues/22), [#23](https://github.com/NicolasBecasAzagra/Rabbit/issues/23), [#24](https://github.com/NicolasBecasAzagra/Rabbit/issues/24), [#25](https://github.com/NicolasBecasAzagra/Rabbit/issues/25) | The gaps the policy report names: `bind`, the copies of user memory, the descriptors open before the install, the log of denials, and the same tables on a kernel with Landlock ABI 10. |
 | **v0.5 An agent that finishes** | [#14](https://github.com/NicolasBecasAzagra/Rabbit/issues/14), [#15](https://github.com/NicolasBecasAzagra/Rabbit/issues/15) | A checkpoint that closes the conversation, and the tools that need a writable file system: `write_file` and `list_dir`. |
 | **v0.6 Reach the world** | [#18](https://github.com/NicolasBecasAzagra/Rabbit/issues/18), [#19](https://github.com/NicolasBecasAzagra/Rabbit/issues/19) | The model context protocol, so the agent works with the clients people already have, and TLS, because almost every API people call is HTTPS. |
 | **Deferred** | [#16](https://github.com/NicolasBecasAzagra/Rabbit/issues/16) | Processes, signals, dynamic linking and a shell test suite: named so they are not lost. |
