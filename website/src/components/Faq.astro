@@ -1,42 +1,126 @@
 ---
 import { faq } from '../data/project';
 import { url } from '../lib/paths';
-import FaqList from './faq/FaqList.astro';
 
 const preview = faq.slice(0, 4);
 ---
 
-<section class="faq-section" aria-labelledby="faq-title">
-  <div class="wrapper">
-    <header class="section-header">
-      <h2 id="faq-title" class="text-title">What people ask</h2>
-    </header>
+<section class="faq on-paper" aria-labelledby="faq-title">
+  <div class="wrapper faq-grid">
+    <h2 id="faq-title" class="faq-title">What people ask</h2>
 
-    <FaqList items={preview} />
-
-    <p class="section-footer">
-      <a class="button button-secondary" href={url('/faq')}>Read all questions</a>
-    </p>
+    <div class="faq-body">
+      <div class="faq-list">
+        {
+          preview.map((item) => (
+            <details class="faq-item">
+              <summary>
+                <span class="faq-box" aria-hidden="true"></span>
+                <span class="faq-question">{item.question}</span>
+              </summary>
+              <p class="faq-answer">{item.answer}</p>
+            </details>
+          ))
+        }
+      </div>
+      <p class="faq-more"><a href={url('/faq')}>Read all questions</a></p>
+    </div>
   </div>
 </section>
 
 <style>
-  .faq-section {
-    padding-block: var(--space-2xl);
+  .faq {
+    padding-block: var(--space-3xl) var(--space-2xl);
   }
 
-  .section-header {
+  .faq-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--space-2xl);
+    align-items: start;
+  }
+
+  .faq-title {
+    font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
+    line-height: 1.05;
+    font-weight: var(--font-medium);
+    letter-spacing: -0.03em;
+  }
+
+  .faq-list {
+    border-block-start: 1px solid var(--ink);
+  }
+
+  .faq-item {
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .faq-item summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-md);
+    align-items: start;
+    padding-block: var(--space-md);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .faq-item summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq-item summary:focus-visible {
+    outline-offset: -3px;
+  }
+
+  /* The marker grammar: hollow while closed, solid while open */
+  .faq-box {
+    width: 1rem;
+    height: 1rem;
+    margin-block-start: 0.2rem;
+    border: 1.5px solid var(--ink);
+    box-sizing: border-box;
+  }
+
+  .faq-item[open] .faq-box {
+    background: var(--ink);
+  }
+
+  .faq-question {
+    font-size: var(--text-lg);
+    font-weight: var(--font-medium);
+    line-height: var(--leading-snug);
+    letter-spacing: -0.015em;
+  }
+
+  .faq-answer {
     max-width: var(--measure);
-    margin-block-end: var(--space-xl);
+    padding: 0 0 var(--space-lg) calc(1rem + var(--space-md));
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+    text-wrap: pretty;
   }
 
-  .section-header h2 {
-    margin-block-end: var(--space-sm);
+  .faq-more {
+    margin-block-start: var(--space-lg);
+    font-weight: var(--font-medium);
   }
 
-  .section-footer {
-    display: flex;
-    justify-content: flex-start;
-    margin-block-start: var(--space-xl);
+  @media (max-width: 960px) {
+    .faq-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .faq {
+      padding-block: var(--space-2xl) var(--space-xl);
+    }
+
+    .faq-question {
+      font-size: var(--text-md);
+    }
   }
 </style>

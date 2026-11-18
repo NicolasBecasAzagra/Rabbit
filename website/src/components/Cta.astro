@@ -1,67 +1,79 @@
 ---
 import { meta } from '../data/project';
 import { url } from '../lib/paths';
+
+// The only addresses of the contact line: the repository and the profiles of the author.
+const contact = [
+  { label: 'Repository', href: meta.repo },
+  { label: 'GitHub', href: 'https://github.com/NicolasBecasAzagra' },
+  { label: 'LinkedIn', href: 'https://www.linkedin.com/in/nicolasbecas' },
+];
 ---
 
-<section class="cta-section" aria-labelledby="cta-title">
+<section class="closing on-paper" aria-labelledby="cta-title">
   <div class="wrapper">
-    <div class="cta-rule" aria-hidden="true"></div>
-    <h2 id="cta-title" class="cta-claim">
+    <h2 id="cta-title" class="closing-claim">
       The kernel is the comparison. Every measurement is published, every loss included.
     </h2>
-    <nav class="cta-links" aria-label="Next steps">
-      <a href={url('/docs')}>Docs</a>
-      <a href={url('/roadmap')}>Roadmap</a>
-      <a href={url('/benchmarks')}>Benchmarks</a>
-      <a href={meta.repo}>GitHub</a>
-    </nav>
+
+    <div class="closing-lines">
+      <nav class="closing-nav" aria-label="Next steps">
+        <a href={url('/docs')}>Docs</a>
+        <a href={url('/roadmap')}>Roadmap</a>
+        <a href={url('/benchmarks')}>Benchmarks</a>
+      </nav>
+
+      <p class="closing-contact">
+        <span>{meta.author}</span>
+        {
+          contact.map((c) => (
+            <a href={c.href} rel="noopener noreferrer">{c.label}</a>
+          ))
+        }
+      </p>
+    </div>
   </div>
 </section>
 
 <style>
-  .cta-section {
+  .closing {
     padding-block: var(--space-3xl);
-    border-top: 1px solid var(--hairline);
+    border-block-start: 1px solid var(--ink);
   }
 
-  .cta-claim {
-    max-width: var(--measure);
-    font-family: var(--font-display);
-    font-size: var(--text-xl);
-    line-height: var(--leading-snug);
+  .closing-claim {
+    max-width: 22ch;
+    font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
+    line-height: 1.05;
     font-weight: var(--font-medium);
-    letter-spacing: -0.02em;
-    color: var(--ink);
-    margin-block-end: var(--space-lg);
-    text-wrap: balance;
+    letter-spacing: -0.03em;
   }
 
-  .cta-links {
+  .closing-lines {
+    display: grid;
+    gap: var(--space-md);
+    margin-block-start: var(--space-xl);
+    padding-block-start: var(--space-md);
+    border-block-start: 1px solid var(--hairline);
+    font-size: var(--text-base);
+  }
+
+  .closing-nav,
+  .closing-contact {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-sm);
-  }
-
-  .cta-links a {
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
+    gap: var(--space-xs) var(--space-lg);
     font-weight: var(--font-medium);
+  }
+
+  .closing-contact span {
     color: var(--ink-secondary);
-    text-decoration: none;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--hairline);
-    border-radius: var(--radius-sm);
-    transition: color var(--transition-fast), border-color var(--transition-fast);
+    font-weight: var(--font-regular);
   }
 
-  .cta-links a:hover {
-    color: var(--ink);
-    border-color: var(--ink);
-  }
-
-
-  .cta-links a:active {
-    color: var(--accent);
-    border-color: var(--accent);
+  @media (max-width: 640px) {
+    .closing {
+      padding-block: var(--space-2xl);
+    }
   }
 </style>

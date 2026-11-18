@@ -1,129 +1,134 @@
 ---
 import { meta, build } from '../data/project';
 import { url } from '../lib/paths';
-import TerminalBlock from './TerminalBlock.astro';
 
-const cloneCommand = `git clone ${meta.repo}.git`;
+// Real commands only: the clone of the repository and the two commands of the data.
+const [buildCmd, runCmd] = build.commands;
+const commands = [
+  { cmd: `git clone ${meta.repo}.git`, what: 'Clone the repository.' },
+  { cmd: buildCmd.cmd, what: buildCmd.what },
+  { cmd: runCmd.cmd, what: runCmd.what },
+];
 ---
 
-<section class="start-section" aria-labelledby="start-title">
-  <div class="wrapper">
-    <header class="section-header">
-      <h2 id="start-title" class="text-title">Run it today</h2>
-      <p class="text-lead">
+<section class="run on-ink" data-runit aria-labelledby="start-title">
+  <div class="wrapper run-grid">
+    <header class="run-head">
+      <h2 id="start-title" class="run-title">Run it today</h2>
+      <p class="run-lead">
         Clone, build, boot. The repository has everything: the kernel, the runtime, the agent, the
         benchmark rig.
       </p>
+      <p class="run-note">
+        The boot ends with exit status 33 when it is clean. The toolchain is {meta.toolchain}.
+      </p>
     </header>
 
-    <TerminalBlock code={cloneCommand} label="Clone the repository" />
+    <div class="run-body">
+      <ol class="commands" role="list">
+        {
+          commands.map((c) => (
+            <li>
+              <code class="command">{c.cmd}</code>
+              <span class="command-what">{c.what}</span>
+            </li>
+          ))
+        }
+      </ol>
 
-    <div class="start-links">
-      <a class="start-link" href={url('/download')}>
-        <span class="link-label">Download & build</span>
-        <span class="link-meta">{meta.toolchain} · {build.requirements[2].detail}</span>
-      </a>
-      <a class="start-link" href={url('/docs')}>
-        <span class="link-label">Read the docs</span>
-        <span class="link-meta">Architecture, boot protocol, benchmarking</span>
-      </a>
-      <a class="start-link" href={url('/changelog')}>
-        <span class="link-label">Changelog</span>
-        <span class="link-meta">What changed, what is next</span>
-      </a>
+      <ul class="run-links" role="list">
+        <li><a href={url('/download')}>Download and build</a></li>
+        <li><a href={url('/docs')}>Read the docs</a></li>
+        <li><a href={url('/changelog')}>Changelog</a></li>
+      </ul>
     </div>
-
-    <p class="qemu-note">
-      Boot in QEMU with <code>make run</code>. The serial log ends with exit status 33 when the boot
-      is clean.
-    </p>
   </div>
 </section>
 
 <style>
-  .start-section {
+  .run {
     padding-block: var(--space-3xl);
   }
 
-  .section-header {
-    max-width: var(--measure);
-    margin-block-end: var(--space-xl);
-  }
-
-  .section-header h2 {
-    margin-block-end: var(--space-sm);
-  }
-
-  .start-links {
-    margin-block-start: var(--space-md);
-    border-top: 1px solid var(--hairline);
-  }
-
-  .start-link {
+  .run-grid {
     display: grid;
-    grid-template-columns: 1fr 1.5fr;
-    align-items: baseline;
-    gap: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    margin-inline: calc(var(--space-md) * -1);
-    border-bottom: 1px solid var(--hairline);
-    color: inherit;
-    text-decoration: none;
-    border-radius: var(--radius-sm);
-    transition: background-color var(--transition-fast);
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--space-2xl);
+    align-items: start;
   }
 
-  .start-link:hover {
-    background: var(--surface);
+  .run-title {
+    font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
+    line-height: 1.05;
+    font-weight: var(--font-medium);
+    letter-spacing: -0.03em;
   }
 
-
-  .start-link:hover .link-label {
-    color: var(--accent);
+  .run-lead {
+    margin-block-start: var(--space-lg);
+    max-width: 40ch;
+    font-size: var(--text-md);
+    line-height: var(--leading-relaxed);
+    color: var(--ink-secondary);
   }
 
-  .start-link:active .link-label {
-    color: var(--accent-hover);
+  .run-note {
+    margin-block-start: var(--space-sm);
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
   }
 
-  .link-label {
-    font-family: var(--font-display);
+  .commands {
+    list-style: none;
+    padding: 0;
+    border-block-start: 1px solid var(--ink);
+  }
+
+  .commands li {
+    display: grid;
+    gap: var(--space-xs);
+    padding-block: var(--space-md);
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .command {
+    font-family: var(--font-mono);
+    font-size: var(--text-md);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .command::before {
+    content: '$ ';
+    color: var(--ink-secondary);
+  }
+
+  .command-what {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .run-links {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-lg);
+    margin-block-start: var(--space-lg);
     font-size: var(--text-base);
     font-weight: var(--font-medium);
-    letter-spacing: -0.01em;
-    color: var(--ink);
   }
 
-  .link-meta {
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
+  @media (max-width: 960px) {
+    .run-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
   }
 
-  .qemu-note {
-    margin-block-start: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-card);
-    background: var(--surface);
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
-  }
-
-  .qemu-note code {
-    font-family: var(--font-mono);
-    font-size: 0.9em;
-    color: var(--ink);
-    background: var(--surface-2);
-    padding: 0.1em 0.25em;
-    border-radius: var(--radius-sm);
-  }
-
-  @media (max-width: 760px) {
-    .start-link {
-      grid-template-columns: 1fr;
-      gap: var(--space-xs);
+  @media (max-width: 640px) {
+    .run {
+      padding-block: var(--space-2xl);
     }
   }
 </style>
