@@ -202,6 +202,27 @@
   color-scheme: dark;
 }
 
+/* The white slab, forced whatever the system theme: the light values of
+   :root, so a section can alternate with .on-ink at any time. */
+.on-paper {
+  --ink: #000000;
+  --paper: #FFFFFF;
+  --canvas: #FFFFFF;
+  --surface: #F2F2F2;
+  --surface-2: #F2F2F2;
+  --ink-secondary: #404040;
+  --muted: #6B6B6B;
+  --hairline: rgba(0, 0, 0, 0.14);
+  --rule: rgba(0, 0, 0, 0.14);
+  --ink-inverse: #FFFFFF;
+  --text: #000000;
+  --text-secondary: #404040;
+  --text-tertiary: #6B6B6B;
+  background: #FFFFFF;
+  color: #000000;
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

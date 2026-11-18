@@ -1,0 +1,209 @@
+---
+import Mark from './Mark.astro';
+import { meta } from '../data/project';
+
+// The aim is stated as an aim. The ledger beside it says where the evidence
+// stands: two rows are measured, one is open, one is not measured.
+const rows = [
+  {
+    kind: 'solid',
+    state: 'Measured',
+    claim: 'Boots on x86-64 and runs a real userland',
+    detail: 'Asserted in the continuous integration.',
+    evidence: 'Status table',
+    href: `${meta.repo}#status`,
+  },
+  {
+    kind: 'solid',
+    state: 'Measured',
+    claim: 'Serves a model token for token against the reference',
+    detail: 'The same tokens as the reference implementation, one for one.',
+    evidence: 'REPORT.md',
+    href: `${meta.repo}/blob/main/REPORT.md`,
+  },
+  {
+    kind: 'hollow',
+    state: 'Open',
+    claim: 'The agent finishes a task',
+    detail: 'Not yet: the model repeats a call it has already made.',
+    evidence: 'Issue 14',
+    href: `${meta.repo}/issues/14`,
+  },
+  {
+    kind: 'hatch',
+    state: 'Not measured',
+    claim: 'Faster on real hardware',
+    detail: 'Every timing is QEMU TCG, an emulator, with no hardware acceleration.',
+    evidence: 'Issue 10',
+    href: `${meta.repo}/issues/10`,
+  },
+] as const;
+---
+
+<section class="aim on-paper" aria-labelledby="aim-title">
+  <div class="aim-grid wrapper">
+    <div class="aim-statement">
+      <h2 id="aim-title" class="aim-sentence">
+        The aim: the fastest kernel and operating system for local AI.
+      </h2>
+      <p class="aim-caveat">
+        It is an aim, not a result. The ledger beside it says where the evidence stands.
+      </p>
+    </div>
+
+    <div class="aim-ledger">
+      <ul class="ledger" role="list">
+        {
+          rows.map((row) => (
+            <li>
+              <a class="ledger-row" href={row.href}>
+                <Mark class="ledger-mark" kind={row.kind} label={row.state} />
+                <span class="ledger-text">
+                  <span class="ledger-claim">{row.claim}</span>
+                  <span class="ledger-detail">{row.detail}</span>
+                </span>
+                <span class="ledger-evidence">{row.evidence}</span>
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+      <p class="ledger-legend" aria-label="Legend">
+        <Mark kind="solid" visible />
+        <Mark kind="hollow" visible />
+        <Mark kind="hatch" visible />
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .aim {
+    padding-block: var(--space-3xl);
+  }
+
+  .aim-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: var(--space-2xl);
+    align-items: start;
+  }
+
+  .aim-sentence {
+    font-size: clamp(2.25rem, 1.2rem + 3.6vw, 4.5rem);
+    line-height: 1.04;
+    font-weight: var(--font-medium);
+    letter-spacing: -0.035em;
+    max-width: 14ch;
+  }
+
+  .aim-caveat {
+    margin-block-start: var(--space-lg);
+    max-width: 36ch;
+    font-size: var(--text-lg);
+    line-height: var(--leading-snug);
+    letter-spacing: -0.01em;
+    color: var(--ink-secondary);
+    text-wrap: pretty;
+  }
+
+  .ledger {
+    list-style: none;
+    padding: 0;
+    border-block-start: 1px solid var(--ink);
+  }
+
+  .ledger li {
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .ledger-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--space) var(--space-md);
+    align-items: start;
+    padding: var(--space-md) var(--space-sm);
+    margin-inline: calc(var(--space-sm) * -1);
+    color: var(--ink);
+    text-decoration: none;
+    transition: background-color var(--transition-fast);
+  }
+
+  .ledger-row:hover {
+    background: var(--surface);
+  }
+
+  .ledger-row:hover .ledger-evidence {
+    text-decoration-thickness: 2px;
+  }
+
+  .ledger-row:focus-visible {
+    outline-offset: -3px;
+  }
+
+  .ledger-row :global(.ledger-mark) {
+    --mark-size: 1.125rem;
+    margin-block-start: 0.2em;
+  }
+
+  .ledger-text {
+    display: grid;
+    gap: var(--space-xs);
+  }
+
+  .ledger-claim {
+    font-size: var(--text-md);
+    font-weight: var(--font-medium);
+    line-height: var(--leading-snug);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .ledger-detail {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+    text-wrap: pretty;
+  }
+
+  .ledger-evidence {
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    white-space: nowrap;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+  }
+
+  .ledger-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-lg);
+    margin-block-start: var(--space-md);
+  }
+
+  @media (max-width: 960px) {
+    .aim-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-xl);
+    }
+
+    .aim-sentence {
+      max-width: 18ch;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .aim {
+      padding-block: var(--space-2xl);
+    }
+
+    .ledger-row {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .ledger-evidence {
+      grid-column: 2;
+    }
+  }
+</style>
