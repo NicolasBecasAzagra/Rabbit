@@ -1,0 +1,73 @@
+table,case,rabbit_verdict,linux_verdict,reached_linux,class,note
+adversary,read_inside,allowed,allowed,na,same,
+adversary,read_secret,denied,denied,na,same,
+adversary,read_traversal,denied,denied,na,same,
+adversary,read_dot_inside,allowed,allowed,na,same,
+adversary,read_double_slash_inside,allowed,allowed,na,same,
+adversary,read_long_inside,failed,failed,na,same,
+adversary,read_long_outside,denied,failed,na,policy,a path that does not exist answers ENOENT before Landlock is asked
+adversary,write_inside,denied,denied,na,same,
+adversary,write_outside,denied,denied,na,same,
+adversary,list_inside,failed,allowed,na,other,
+adversary,list_outside,denied,denied,na,same,
+adversary,compute_control,allowed,allowed,na,same,
+adversary,done_control,allowed,allowed,na,same,
+adversary,net_send_allowed,allowed,allowed,yes,same,
+adversary,net_send_other_ip,denied,allowed,yes,policy,Landlock network rules name a port and no address
+adversary,net_send_other_port,denied,allowed,yes,policy,Landlock enforces UDP ports from ABI 10
+adversary,http_get_allowed,allowed,allowed,yes,same,
+adversary,http_get_other_ip,denied,allowed,yes,policy,Landlock network rules name a port and no address
+adversary,http_get_other_port,denied,denied,no,same,
+adversary,repeat_secret_1,denied,denied,na,same,
+adversary,repeat_secret_2,denied,denied,na,same,
+adversary,read_symlink_to_secret,not run,denied,na,other,not in the table of Rabbit
+adversary,family_rabbit,allowed=0;denied=18;failed=3;invalid=0,-,na,family,"rows=21; complete=no; no_path_allowed=true; the logs do not carry the paths, and no path of the family names a file inside the read root, so an allowed row would be a file outside it that was read; the CI step printed only the first 60 lines of the boot, so this is not the whole family"
+adversary,family_linux,-,allowed=0;denied=185;failed=1369;invalid=0,na,family,"rows=1554; complete=yes; no_path_allowed=true; the logs do not carry the paths, and no path of the family names a file inside the read root, so an allowed row would be a file outside it that was read"
+compromised,open_inside,allowed,allowed,na,same,
+compromised,open_secret,denied,denied,na,same,
+compromised,open_create_inside,denied,denied,na,same,
+compromised,creat_inside,unavailable,denied,na,linux-denies,
+compromised,unlink_inside,unavailable,denied,na,linux-denies,
+compromised,rename_inside,unavailable,denied,na,linux-denies,
+compromised,mkdir_inside,unavailable,denied,na,linux-denies,
+compromised,symlink_inside,unavailable,denied,na,linux-denies,
+compromised,readlink_inside,unavailable,allowed,na,surface,the test does not assert this answer; Rabbit has no such call
+compromised,chdir_outside,unavailable,allowed,na,surface,Landlock cannot restrict chdir; Rabbit has no such call
+compromised,newfstatat_secret,denied,allowed,na,policy,Landlock cannot restrict stat or access
+compromised,newfstatat_missing,denied,failed,na,policy,
+compromised,stat_secret,unavailable,allowed,na,surface,Landlock cannot restrict stat or access; Rabbit has no such call
+compromised,stat_missing,unavailable,failed,na,other,
+compromised,access_secret,unavailable,allowed,na,surface,Landlock cannot restrict stat or access; Rabbit has no such call
+compromised,access_missing,unavailable,failed,na,other,
+compromised,faccessat_secret,unavailable,allowed,na,surface,Landlock cannot restrict stat or access; Rabbit has no such call
+compromised,faccessat_missing,unavailable,failed,na,other,
+compromised,statx_secret,unavailable,allowed,na,surface,Landlock cannot restrict stat or access; Rabbit has no such call
+compromised,statx_missing,unavailable,failed,na,other,
+compromised,socket_stream,allowed,allowed,na,same,
+compromised,socket_dgram,allowed,allowed,na,same,
+compromised,socket_unix,failed,denied,na,other,
+compromised,socket_packet,failed,denied,na,other,
+compromised,connect_tcp_allowed,allowed,allowed,yes,same,
+compromised,connect_tcp_other_ip,denied,allowed,yes,policy,Landlock network rules name a port and no address
+compromised,connect_tcp_other_port,denied,denied,no,same,
+compromised,connect_udp_allowed,allowed,allowed,yes,same,
+compromised,connect_udp_other_ip,denied,allowed,yes,policy,Landlock network rules name a port and no address
+compromised,connect_udp_other_port,denied,allowed,yes,policy,the test does not assert this answer
+compromised,sendto_allowed,allowed,allowed,yes,same,
+compromised,sendto_other_ip,denied,allowed,yes,policy,Landlock network rules name a port and no address
+compromised,sendmsg_other_ip,unavailable,allowed,yes,surface,the filter cannot read the address behind the pointer of the call; Rabbit has no such call
+compromised,sendmmsg_other_ip,unavailable,allowed,yes,surface,the filter cannot read the address behind the pointer of the call; Rabbit has no such call
+compromised,bind_any,allowed,allowed,na,same,neither the policy nor the filter checks bind
+compromised,listen_stream,denied,denied,na,same,
+compromised,accept_stream,denied,denied,na,same,
+compromised,memfd_create,unavailable,allowed,na,surface,the test does not assert this answer; Rabbit has no such call
+compromised,io_uring_setup,unavailable,denied,na,linux-denies,
+compromised,fork,unavailable,allowed,na,surface,the test does not assert this answer; Rabbit has no such call
+compromised,clone_no_thread,failed,allowed,na,other,the test does not assert this answer
+compromised,execve_outside,unavailable,denied,na,linux-denies,
+compromised,execveat_outside,unavailable,denied,na,linux-denies,
+compromised,existence:newfstatat,oracle=no,oracle=yes,na,policy,Rabbit: outside=-13 missing=-13; Linux: outside=0 missing=-2
+compromised,existence:stat,oracle=no,oracle=yes,na,surface,Rabbit: outside=-38 missing=-38; Linux: outside=0 missing=-2
+compromised,existence:access,oracle=no,oracle=yes,na,surface,Rabbit: outside=-38 missing=-38; Linux: outside=0 missing=-2
+compromised,existence:faccessat,oracle=no,oracle=yes,na,surface,Rabbit: outside=-38 missing=-38; Linux: outside=0 missing=-2
+compromised,existence:statx,oracle=no,oracle=yes,na,surface,Rabbit: outside=-38 missing=-38; Linux: outside=0 missing=-2

@@ -1,0 +1,13 @@
+table,class,count
+adversary,same,16
+adversary,policy,4
+adversary,surface,0
+adversary,linux-denies,0
+adversary,other,2
+adversary,all,22
+compromised,same,12
+compromised,policy,6
+compromised,surface,10
+compromised,linux-denies,8
+compromised,other,7
+compromised,all,43
