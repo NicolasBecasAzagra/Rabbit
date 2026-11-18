@@ -1,5 +1,6 @@
 ---
 import { benchmarks, meta, benchmarkContext } from '../../data/project';
+import SeamEars from '../SeamEars.astro';
 import { url } from '../../lib/paths';
 
 export interface Props {
@@ -194,6 +195,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 ---
 
 <section id="benchmarks" class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
+  <SeamEars />
   <div class="wrapper">
     <header class="section-header">
       <h2 id="benchmarks-chart-title" class="text-title">{headline}</h2>
@@ -485,6 +487,8 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 
 <style>
   .dotplot-section {
+    position: relative;
+    isolation: isolate;
     padding-block: var(--space-3xl);
   }
 

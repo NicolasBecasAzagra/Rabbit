@@ -1,6 +1,7 @@
 ---
 import { meta, build } from '../data/project';
 import { url } from '../lib/paths';
+import SeamEars from './SeamEars.astro';
 
 // Real commands only: the clone of the repository and the two commands of the data.
 const [buildCmd, runCmd] = build.commands;
@@ -12,6 +13,7 @@ const commands = [
 ---
 
 <section id="run" class="run on-ink" data-runit aria-labelledby="start-title">
+  <SeamEars />
   <div class="wrapper run-grid">
     <header class="run-head">
       <h2 id="start-title" class="run-title">Run it today</h2>
@@ -53,6 +55,8 @@ const commands = [
 
 <style>
   .run {
+    position: relative;
+    isolation: isolate;
     padding-block: var(--space-3xl);
   }
 
@@ -66,8 +70,8 @@ const commands = [
   .run-title {
     font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
     line-height: 1.05;
-    font-weight: var(--font-medium);
-    letter-spacing: -0.03em;
+    font-weight: 800;
+    letter-spacing: -0.04em;
   }
 
   .run-lead {

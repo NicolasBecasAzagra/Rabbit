@@ -324,7 +324,7 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
   font-size: var(--text-3xl);
   line-height: var(--leading-tight);
-  font-weight: var(--font-medium);
+  font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--ink);
 }
@@ -333,7 +333,7 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
   font-size: var(--text-2xl);
   line-height: var(--leading-tight);
-  font-weight: var(--font-medium);
+  font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--ink);
 }
@@ -342,7 +342,7 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
   font-size: var(--text-xl);
   line-height: var(--leading-snug);
-  font-weight: var(--font-medium);
+  font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--ink);
 }

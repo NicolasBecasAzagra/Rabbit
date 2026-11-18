@@ -41,15 +41,15 @@ const rows = [
 ---
 
 <section id="aim" class="aim on-paper" aria-labelledby="aim-title">
+  <div class="wrapper">
+    <h2 id="aim-title" class="aim-sentence">
+      The aim: the fastest kernel and operating system for local AI.
+    </h2>
+  </div>
   <div class="aim-grid wrapper">
-    <div class="aim-statement">
-      <h2 id="aim-title" class="aim-sentence">
-        The aim: the fastest kernel and operating system for local AI.
-      </h2>
-      <p class="aim-caveat">
-        It is an aim, not a result. The ledger beside it says where the evidence stands.
-      </p>
-    </div>
+    <p class="aim-caveat">
+      It is an aim, not a result. The ledger beside it says where the evidence stands.
+    </p>
 
     <div class="aim-ledger">
       <p class="ledger-legend" aria-label="Legend">
@@ -82,31 +82,28 @@ const rows = [
     padding-block: var(--space-3xl);
   }
 
+  /* The sentence to remember, in the voice of the hero word */
+  .aim-sentence {
+    max-width: 16ch;
+    font-size: clamp(2.5rem, 1rem + 5.5vw, 6rem);
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    text-wrap: balance;
+  }
+
   .aim-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: var(--space-2xl);
     align-items: start;
-  }
-
-  .aim-statement {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-  }
-
-  .aim-sentence {
-    font-size: clamp(2.25rem, 1.2rem + 3.6vw, 4.5rem);
-    line-height: 1.04;
-    font-weight: var(--font-medium);
-    letter-spacing: -0.035em;
-    max-width: 14ch;
+    margin-block-start: var(--space-2xl);
   }
 
   .aim-caveat {
-    max-width: 30ch;
+    max-width: 24ch;
     font-size: 1.5rem;
-    font-weight: var(--font-medium);
+    font-weight: var(--font-semibold);
     line-height: var(--leading-snug);
     letter-spacing: -0.02em;
     color: var(--ink);
@@ -193,17 +190,13 @@ const rows = [
       padding-block: var(--space-2xl);
     }
 
-    .aim-statement {
-      gap: var(--space-lg);
-    }
-
     .aim-grid {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--space-xl);
     }
 
-    .aim-sentence {
-      max-width: 18ch;
+    .aim-grid {
+      margin-block-start: var(--space-xl);
     }
   }
 

@@ -1,5 +1,6 @@
 ---
 import Mark from './Mark.astro';
+import SeamEars from './SeamEars.astro';
 import { meta } from '../data/project';
 import { loadPolicy } from '../lib/policy';
 
@@ -69,6 +70,7 @@ const links = [
 ---
 
 <section id="policy" class="policy on-ink" aria-labelledby="policy-title" data-policy>
+  <SeamEars />
   <div class="wrapper">
     <header class="policy-head">
       <h2 id="policy-title" class="policy-title">
@@ -196,6 +198,8 @@ const links = [
 
 <style>
   .policy {
+    position: relative;
+    isolation: isolate;
     padding-block: var(--space-3xl) var(--space-2xl);
   }
 
@@ -207,8 +211,8 @@ const links = [
   .policy-title {
     font-size: clamp(2rem, 1.1rem + 3.2vw, 4rem);
     line-height: 1.05;
-    font-weight: var(--font-medium);
-    letter-spacing: -0.03em;
+    font-weight: 800;
+    letter-spacing: -0.04em;
   }
 
   .policy-lead {

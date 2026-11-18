@@ -1,0 +1,44 @@
+---
+// The chapter mark below the hero: one large outline ear pair hanging from the
+// top edge of a black slab, cropped by the seam with the slab above, with the
+// stroke of the hero ears. Decorative, so hidden from assistive technology, and
+// only drawn where there is empty room beside the heading.
+import EarsMark from './EarsMark.astro';
+---
+
+<div class="seam" aria-hidden="true">
+  <EarsMark class="seam-ears" />
+</div>
+
+<style>
+  .seam {
+    display: none;
+  }
+
+  @media (min-width: 1100px) {
+    .seam {
+      display: block;
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .seam :global(.seam-ears) {
+      position: absolute;
+      inset-block-start: -9rem;
+      inset-inline-end: max(2rem, calc((100% - var(--max-content)) / 2));
+      width: 30rem;
+      height: 30rem;
+      max-width: none;
+      fill: none;
+      stroke: var(--ink);
+      stroke-width: 3px;
+    }
+
+    .seam :global(.seam-ears path) {
+      vector-effect: non-scaling-stroke;
+    }
+  }
+</style>
