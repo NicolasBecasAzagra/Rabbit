@@ -185,7 +185,15 @@ export function loadPolicy() {
     /** compromised raw calls Rabbit answers with ENOSYS */
     rabbitUnavailable: compromised.filter((row) => row.rabbit === 'unavailable').length,
     compromisedCalls: compromised.length,
+    /** every case the two adversaries ran, and how they split by class */
+    totalCases: cases.length,
+    sameOnBothSides: cases.filter((row) => row.cls === 'same').length,
+    differByPolicy: headline.length,
+    differForOtherReasons: cases.filter((row) => row.cls !== 'same' && row.cls !== 'policy').length,
   };
+  if (counts.sameOnBothSides + counts.differByPolicy + counts.differForOtherReasons !== counts.totalCases) {
+    fail('the classes of summary.csv do not add up to the number of cases');
+  }
   if (counts.refusedByPolicy !== headline.length) {
     fail('a policy row is not a Rabbit refusal; the headline ledger assumes it is');
   }

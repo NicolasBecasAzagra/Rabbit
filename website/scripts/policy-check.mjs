@@ -8,6 +8,8 @@ assert.deepEqual(parseCsv('a,"b,c","d ""e"""\nx,,y\n'), [['a', 'b,c', 'd "e"'], 
 const p = loadPolicy();
 const c = p.counts;
 console.log('refused by policy', c.refusedByPolicy, '| linux let through', c.linuxLetThrough, '| unavailable', c.rabbitUnavailable, 'of', c.compromisedCalls);
+assert.equal(c.sameOnBothSides + c.differByPolicy + c.differForOtherReasons, c.totalCases);
+console.log('cases', c.totalCases, 'same', c.sameOnBothSides, 'policy', c.differByPolicy, 'other', c.differForOtherReasons);
 assert.equal(p.headline.length, c.refusedByPolicy);
 assert.ok(p.headline.every((r) => r.cls === 'policy' && r.rabbit === 'denied'));
 // the long quoted note of the family row survives parsing

@@ -22,10 +22,12 @@ const labels: Record<string, { text: string; udpPort?: boolean }> = {
   sendto_other_ip: { text: 'send a datagram with sendto to another IP' },
 };
 
+// Different outcomes get different words: a call that reached its target on
+// Linux is "let through"; an error before any policy was asked is not.
 const verdictText: Record<string, string> = {
   denied: 'Refused',
   allowed: 'Let through',
-  failed: 'Answered an error',
+  failed: 'Failed before any policy applied',
 };
 
 const items = headline.map((row) => {
@@ -51,6 +53,11 @@ const udpAbi = udpNote.match(/ABI (\d+)/)?.[1];
 if (!udpAbi) throw new Error('[policy] the note of net_send_other_port no longer names a Landlock ABI');
 
 const reachedText = { yes: 'yes', no: 'no', na: 'not a network call' } as const;
+const words = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'];
+const countWord = words[counts.differByPolicy] ?? String(counts.differByPolicy);
+
+const leadText = `They come from two adversaries written for this dataset. Of the ${counts.totalCases} cases they ran, ${counts.sameOnBothSides} were the same on both sides and ${counts.differByPolicy} differ by policy; the other ${counts.differForOtherReasons} differ for other reasons and are not claimed here. None of the ${countWord.toLowerCase()} is a missing system call: Rabbit answered each one with a refusal by its policy.`;
+const unavailableText = `Not in the table: Rabbit answers ${counts.rabbitUnavailable} of the ${counts.compromisedCalls} raw calls of the compromised binary with unavailable (ENOSYS). An unavailable call is a missing system call, not protection.`;
 
 const repoFile = (path: string) => `${meta.repo}/blob/main/${path}`;
 const links = [
@@ -64,17 +71,18 @@ const links = [
   <div class="wrapper">
     <header class="policy-head">
       <h2 id="policy-title" class="policy-title">
-        The Rabbit kernel refused calls that Linux with Landlock and seccomp did not.
+        {countWord} calls the Rabbit kernel refuses and Linux, with Landlock and seccomp, did not.
       </h2>
-      <p class="policy-lead">
-        {counts.refusedByPolicy} cases of the compromised agent and the adversary, counted from the dataset. Linux let {counts.linuxLetThrough} of
-        them through and answered an error to the rest.
+      <p class="policy-lead">{leadText}</p>
+      <p class="policy-unavailable">
+        <Mark kind="hatch" label="Unavailable" />
+        <span>{unavailableText}</span>
       </p>
     </header>
 
-    <div class="verdicts" role="list" aria-label="Cases refused by the policy of Rabbit">
+    <div class="verdicts" role="list" aria-label="Calls refused by the policy of Rabbit">
       <div class="verdict verdict-head" aria-hidden="true">
-        <span>Case</span>
+        <span>Call</span>
         <span>Rabbit</span>
         <span>Linux</span>
         <span>Reached Linux</span>
@@ -84,20 +92,24 @@ const links = [
           <div class="verdict" role="listitem">
             <p class="verdict-case">{item.text}</p>
             <p class="verdict-cell">
-              <span class="cell-label">Rabbit </span>
+              <span class="cell-label">Rabbit</span>
               <span class="vm" style={`--n:${i * 2}`}>
-                <Mark kind={item.rabbitKind} label={item.rabbit} visible />
+                <Mark class="verdict-mark" kind={item.rabbitKind} label={item.rabbit} visible />
               </span>
             </p>
             <p class="verdict-cell">
-              <span class="cell-label">Linux </span>
+              <span class="cell-label">Linux</span>
               <span class="vm" style={`--n:${i * 2 + 1}`}>
-                <Mark kind={item.linuxKind} label={item.linux} visible />
+                <Mark class="verdict-mark" kind={item.linuxKind} label={item.linux} visible />
               </span>
-              {item.udpPort && <span class="verdict-flag">needs Landlock ABI {udpAbi}</span>}
+              {item.udpPort && (
+                <span class="verdict-flag">
+                  on this runner, Landlock ABI {environment.landlockAbi}; ABI {udpAbi} adds UDP port rules
+                </span>
+              )}
             </p>
             <p class="verdict-reached">
-              <span class="verdict-reached-label">Reached Linux{' '}</span>
+              <span class="verdict-reached-label">Reached Linux: </span>
               <span class="data">{reachedText[item.reached]}</span>
             </p>
           </div>
@@ -105,40 +117,40 @@ const links = [
       }
     </div>
 
+    <dl class="legend">
+      <div>
+        <dt><Mark kind="solid" label="Solid square:" /></dt>
+        <dd>refused by the policy</dd>
+      </div>
+      <div>
+        <dt><Mark kind="hollow" label="Hollow square:" /></dt>
+        <dd>let through, or failed on its own</dd>
+      </div>
+      <div>
+        <dt><Mark kind="hatch" label="Hatched square:" /></dt>
+        <dd>the call does not exist on Rabbit, which is not protection</dd>
+      </div>
+    </dl>
+
     <div class="limits">
       <h3 class="limits-title">What this does not show</h3>
-      <div class="limits-body">
-        <p class="limit">
-          <Mark kind="hatch" label="Unavailable" />
-          <span>
-            Rabbit answers <span class="data">{counts.rabbitUnavailable}</span> of the <span class="data">{counts.compromisedCalls}</span> raw calls of the compromised
-            binary with unavailable (ENOSYS). An unavailable call is a missing system call, not protection.
-          </span>
-        </p>
-        <p class="limit">
-          <span class="limit-gap" aria-hidden="true"></span>
-          <span>
-            The Linux side ran on kernel <span class="data">{environment.linuxRelease}</span> with Landlock ABI{' '}
-            <span class="data">{environment.landlockAbi}</span> and seccomp, in CI run{' '}
-            <span class="data">{environment.ciRunId}</span> at commit <span class="data">{environment.commit}</span>.
-          </span>
-        </p>
-        <p class="limit">
-          <span class="limit-gap" aria-hidden="true"></span>
-          <span>
-            The UDP port rows depend on Landlock ABI <span class="data">{udpAbi}</span>, which that runner does not have. The rows about the destination
-            address do not.
-          </span>
-        </p>
-        <p class="limit">
-          <span class="limit-gap" aria-hidden="true"></span>
-          <span>
-            Rabbit is not the first to enforce a policy on the tool calls of an agent. See{' '}
-            <a href="https://arxiv.org/abs/2604.16870">Governed MCP</a>, Agate (AgenticOS workshop of SOSP 2026) and{' '}
-            <a href="https://arxiv.org/abs/2603.20953">Before the Tool Call</a>.
-          </span>
-        </p>
-      </div>
+      <p>
+        <strong>Environment.</strong>{' '}
+        The Linux side ran on kernel <span class="data">{environment.linuxRelease}</span> with Landlock ABI{' '}
+        <span class="data">{environment.landlockAbi}</span> and seccomp, in CI run{' '}
+        <span class="data">{environment.ciRunId}</span> at commit <span class="data">{environment.commit}</span>.
+      </p>
+      <p>
+        <strong>UDP ports.</strong>{' '}
+        The UDP port rows depend on Landlock ABI <span class="data">{udpAbi}</span>, which that runner does not have. The rows
+        about the destination address do not.
+      </p>
+      <p>
+        <strong>Prior art.</strong>{' '}
+        Rabbit is not the first to enforce a policy on the tool calls of an agent. See{' '}
+        <a href="https://arxiv.org/abs/2604.16870">Governed MCP</a>, Agate (AgenticOS workshop of SOSP 2026) and{' '}
+        <a href="https://arxiv.org/abs/2603.20953">Before the Tool Call</a>.
+      </p>
       <ul class="verify" role="list">
         {
           links.map((link) => (
@@ -174,12 +186,12 @@ const links = [
 
 <style>
   .policy {
-    padding-block: var(--space-3xl);
+    padding-block: var(--space-3xl) var(--space-2xl);
   }
 
   .policy-head {
-    max-width: 52rem;
-    margin-block-end: var(--space-2xl);
+    max-width: 56rem;
+    margin-block-end: var(--space-xl);
   }
 
   .policy-title {
@@ -192,10 +204,27 @@ const links = [
   .policy-lead {
     margin-block-start: var(--space-lg);
     max-width: var(--measure);
-    font-size: var(--text-lg);
-    line-height: var(--leading-snug);
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
     color: var(--ink-secondary);
     text-wrap: pretty;
+  }
+
+  .policy-unavailable {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-sm);
+    align-items: start;
+    margin-block-start: var(--space-md);
+    max-width: var(--measure);
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--ink);
+    text-wrap: pretty;
+  }
+
+  .policy-unavailable :global(.mark) {
+    --mark-size: 1.5rem;
   }
 
   .data {
@@ -212,20 +241,18 @@ const links = [
 
   .verdict {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 11rem 15rem 11rem;
-    gap: var(--space-xs) var(--space-md);
-    align-items: baseline;
+    grid-template-columns: minmax(0, 1fr) 11rem 17rem 10rem;
+    gap: var(--space-xs) var(--space-lg);
+    align-items: start;
     padding-block: var(--space-md);
     border-block-end: 1px solid var(--hairline);
   }
 
   .verdict-head {
     padding-block: var(--space-sm);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
+    font-size: var(--text-caption);
+    font-weight: var(--font-medium);
+    color: var(--ink-secondary);
   }
 
   .verdict p {
@@ -233,22 +260,45 @@ const links = [
   }
 
   .verdict-case {
-    font-size: var(--text-md);
+    font-size: var(--text-lg);
     font-weight: var(--font-medium);
     line-height: var(--leading-snug);
-    letter-spacing: -0.01em;
-    text-wrap: balance;
+    letter-spacing: -0.015em;
+    text-wrap: pretty;
   }
 
   .verdict-cell {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-xs) var(--space-sm);
+    display: grid;
+    gap: var(--space-xs);
+    justify-items: start;
+  }
+
+  .verdict-cell :global(.verdict-mark) {
+    --mark-size: 1.5rem;
+    align-items: flex-start;
+    gap: 0.625rem;
   }
 
   .verdict-cell :global(.mark-text) {
     color: var(--ink);
+    font-size: var(--text-base);
+    line-height: 1.5rem;
+  }
+
+  .verdict-flag {
+    font-size: var(--text-caption);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
+  }
+
+  .verdict-reached {
+    font-size: var(--text-sm);
+    line-height: 1.5rem;
+    color: var(--ink-secondary);
+  }
+
+  .verdict-reached-label {
+    display: none;
   }
 
   .cell-label {
@@ -259,20 +309,6 @@ const links = [
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
-  }
-
-  .verdict-flag {
-    font-size: var(--text-xs);
-    color: var(--muted);
-  }
-
-  .verdict-reached {
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
-  }
-
-  .verdict-reached-label {
-    display: none;
   }
 
   .vm {
@@ -320,50 +356,63 @@ const links = [
     }
   }
 
-  /* The honest limits */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm) var(--space-xl);
+    margin-block-start: var(--space-md);
+  }
+
+  .legend > div {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .legend dd {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .legend :global(.mark) {
+    --mark-size: 1rem;
+  }
+
+  /* The honest limits: one typographic unit on the measure */
   .limits {
-    margin-block-start: var(--space-3xl);
-    padding-block-start: var(--space-xl);
+    margin-block-start: var(--space-xl);
+    padding-block-start: var(--space-lg);
     border-block-start: 1px solid var(--rule);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-    gap: var(--space-xl) var(--space-2xl);
+    max-width: var(--measure);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--ink-secondary);
   }
 
   .limits-title {
     font-size: var(--text-lg);
     line-height: var(--leading-snug);
+    margin-block-end: var(--space-md);
   }
 
-  .limit {
-    display: grid;
-    grid-template-columns: 1rem minmax(0, 1fr);
-    gap: var(--space-md);
-    max-width: var(--measure);
-    font-size: var(--text-base);
-    line-height: var(--leading-normal);
-    color: var(--ink-secondary);
-    text-wrap: pretty;
-  }
-
-  .limit + .limit {
+  .limits p + p {
     margin-block-start: var(--space-md);
   }
 
-  .limit :global(.mark) {
-    --mark-size: 1rem;
-    margin-block-start: 0.3em;
-    align-items: flex-start;
+  .limits strong {
+    color: var(--ink);
+    font-weight: var(--font-medium);
   }
 
-  .limit a {
+  .limits a {
     color: var(--ink);
   }
 
   .verify {
-    grid-column: 2;
     list-style: none;
     padding: 0;
+    margin-block-start: var(--space-lg);
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-sm) var(--space-lg);
@@ -373,7 +422,7 @@ const links = [
 
   @media (max-width: 960px) {
     .verdict {
-      grid-template-columns: minmax(0, 1fr) 10rem 13rem;
+      grid-template-columns: minmax(0, 1fr) 9rem 13rem;
     }
 
     .verdict-head span:last-child {
@@ -387,65 +436,55 @@ const links = [
     .verdict-reached-label {
       display: inline;
     }
-
-    .limits {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .verify {
-      grid-column: 1;
-    }
   }
 
   @media (max-width: 640px) {
     .policy {
-      padding-block: var(--space-2xl);
+      padding-block: var(--space-xl);
     }
 
+    .policy-head {
+      margin-block-end: var(--space-lg);
+    }
+
+    /* one header for the two columns of marks replaces a label on every row */
     .verdict-head {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--space-md);
+    }
+
+    .verdict-head span:first-child,
+    .verdict-head span:last-child {
       display: none;
     }
 
     .verdict {
-      grid-template-columns: auto minmax(0, 1fr);
-      column-gap: var(--space-lg);
-      row-gap: var(--space-sm);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--space-xs) var(--space-md);
+      padding-block: var(--space-sm) 0.75rem;
     }
 
     .verdict-case {
       grid-column: 1 / -1;
+      font-size: var(--text-md);
     }
 
-    .verdict-cell {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 0.25rem;
+    .verdict-cell :global(.verdict-mark) {
+      gap: 0.5rem;
     }
 
-    .cell-label {
-      position: static;
-      width: auto;
-      height: auto;
-      margin: 0;
-      overflow: visible;
-      clip: auto;
-      font-family: var(--font-mono);
-      font-size: var(--text-xs);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-    }
-
-    .verdict-cell:nth-of-type(3) {
-      grid-column: 2;
+    .verdict-cell :global(.mark-text) {
+      font-size: var(--text-sm);
+      line-height: 1.5rem;
     }
 
     .verdict-reached {
-      grid-column: 1 / -1;
+      font-size: var(--text-caption);
+      line-height: 1.4;
     }
 
-    .limits {
-      margin-block-start: var(--space-2xl);
+    .legend {
+      flex-direction: column;
     }
   }
 </style>
