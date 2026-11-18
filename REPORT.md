@@ -377,7 +377,7 @@ manifest on Linux with Landlock and seccomp when the kernel answers `ENOSYS`
 to that call. Two adversaries run against both: one makes only the calls the
 grammar of the agent accepts, and one is a compromised binary that issues raw
 system calls under the tool layer. The data is in `bench/results/policy/`, cut
-from one CI run (44357746548, commit `759128d`); every number below is derived
+from one CI run (44360523565, commit `f94d73a`); every number below is derived
 from it by `bench/policy/build_table.py`.
 
 ### Results
@@ -408,11 +408,11 @@ The adversary on Linux has one case more, `read_symlink_to_secret`, because the
 initramfs of Rabbit has no symbolic links. On Linux a network call counts as
 allowed when its data reached the server of the test, whatever the tool then
 read. The enumerated family of the adversary, 1554 paths made of six
-components, had no allowed path on Linux (185 denied, 1369 failed). The log of
-that boot on Rabbit is partial, because the CI step printed only its first 60
-lines: it has the 21 named cases and the first 21 of the 1554 rows of the
-family, none of those 21 allowed, and no summary. The step now prints every
-`ADV` line, so the next run records the whole table.
+components, had no allowed path on either side: on Linux 185 were denied and
+1369 failed, and on Rabbit 1304 were denied and 250 failed. The two sides
+differ in how a path fails, not in whether it is allowed: a path that does not
+exist is refused by the policy of Rabbit before it is looked up, and on Linux it
+answers `ENOENT`.
 
 The rows of class `policy`, copied from `summary.csv`:
 
@@ -453,7 +453,7 @@ also in the data:
 `unavailable` to the first eight and failed the sockets with `EAFNOSUPPORT`.
 Both sides denied the secret, the path with `..`, the writes, the other TCP
 port, `listen` and `accept`, and no path of the enumerated family was allowed
-on either side (on Rabbit, in the 21 rows the log holds).
+on either side.
 
 ### What this does not show
 

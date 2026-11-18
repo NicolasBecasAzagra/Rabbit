@@ -17,8 +17,8 @@ derived from them. See the section "The tool policy enforced by the kernel" of
 
 ## Where the raw lines come from
 
-The run is CI run 44357746548 of commit `759128d2d1f1a9a6554ccc42e4db54d5a315a036`.
-The log was downloaded with `gh run view 44357746548 --log` and is not in the
+The run is CI run 44360523565 of commit `f94d73a1fe6a8d9a1e6949d90e403bcd3be278f1`.
+The log was downloaded with `gh run view 44360523565 --log` and is not in the
 repository: it holds the whole build. Each of its lines is
 
     JOB <tab> STEP <tab> [BOM]TIMESTAMP PAYLOAD
@@ -52,12 +52,11 @@ Reading the files:
 
 ## What is incomplete
 
-`rabbit-adversary.log` is partial. The CI step prints only the first 60 lines of
-the ADV and POLICY lines of the boot, so the file has the 21 named cases and the
-first 21 rows of the enumerated family, and no summary line. The other three
-logs are complete and their cases add up to their summary lines, which the script
-checks. `summary.json` lists what the log does not show and is written as
-`not recorded`.
+Nothing in the four logs: each has its summary line, and the cases add up to it,
+which the script checks. What the CI log does not show is listed in
+`summary.json` under `not_in_the_log`, and written there as `not recorded`. The
+numbers of the ports in the `POLICY deny` lines of Rabbit change from one run to
+the next, because the servers of the host take free ports.
 
 ## Regenerating the table
 

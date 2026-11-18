@@ -6,6 +6,9 @@ target/
 ._*
 *.swp
 *.log
+# The raw lines of the policy dataset are data, not build output.
+!bench/results/policy/*.log
+bench/results/policy/._*
 rabbit-userland/rabbit-userland.elf
 rabbit-bench/rabbit-bench.elf
 rabbit-netclient/rabbit-netclient.elf

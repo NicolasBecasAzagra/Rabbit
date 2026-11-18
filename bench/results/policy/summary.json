@@ -2,14 +2,14 @@
   "dataset": "policy",
   "description": "Raw lines of the two adversaries run against the policy of Rabbit and against Landlock and seccomp on Linux, cut from one CI log. summary.csv and totals.csv are derived from the four .log files by bench/policy/build_table.py.",
   "source": {
-    "ci_run_id": 44357746548,
-    "commit": "759128d2d1f1a9a6554ccc42e4db54d5a315a036",
+    "ci_run_id": 44360523565,
+    "commit": "f94d73a1fe6a8d9a1e6949d90e403bcd3be278f1",
     "workflow": "CI",
     "job": "build, lint, test and boot",
     "event": "push",
     "branch": "main",
-    "created_at": "2026-11-18T17:21:23Z",
-    "log_command": "gh run view 44357746548 --log",
+    "created_at": "2026-11-18T17:36:20Z",
+    "log_command": "gh run view 44360523565 --log",
     "extraction": "bench/policy/extract_ci_log.py LOG bench/results/policy"
   },
   "steps": {
@@ -44,8 +44,8 @@
   },
   "logs": {
     "rabbit-adversary.log": {
-      "complete": false,
-      "note": "The step prints only the first 60 lines of the ADV and POLICY lines of the boot: the 21 named cases and the first 21 rows of the enumerated family are there, the summary line is not. The family of this setup is not recorded."
+      "complete": true,
+      "note": "every ADV line of the boot: the 21 named cases, the 1554 rows of the enumerated family and the summary line"
     },
     "rabbit-compromised.log": {
       "complete": true,
@@ -63,7 +63,6 @@
   "not_in_the_log": [
     "the output of `qemu-system-x86_64 --version`",
     "the hash of the Rabbit kernel and of the archives",
-    "the acceleration QEMU used",
-    "the summary line and the family rows after the 21st of the adversary boot of Rabbit"
+    "the acceleration QEMU used"
   ]
 }

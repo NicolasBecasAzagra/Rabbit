@@ -1,0 +1,63 @@
+POLICY installed bytes=30
+RAW case=open_inside syscall=openat ret=3 verdict=allowed reached=na
+POLICY deny open reason=OutsideRoots path=/secret.txt
+RAW case=open_secret syscall=openat ret=-13 verdict=denied reached=na
+POLICY deny open reason=OutsideRoots path=/agent/created.txt
+RAW case=open_create_inside syscall=openat ret=-13 verdict=denied reached=na
+RAW case=creat_inside syscall=creat ret=-38 verdict=unavailable reached=na
+RAW case=unlink_inside syscall=unlink ret=-38 verdict=unavailable reached=na
+RAW case=rename_inside syscall=rename ret=-38 verdict=unavailable reached=na
+RAW case=mkdir_inside syscall=mkdir ret=-38 verdict=unavailable reached=na
+RAW case=symlink_inside syscall=symlink ret=-38 verdict=unavailable reached=na
+RAW case=readlink_inside syscall=readlink ret=-38 verdict=unavailable reached=na
+RAW case=chdir_outside syscall=chdir ret=-38 verdict=unavailable reached=na
+POLICY deny open reason=OutsideRoots path=/secret.txt
+RAW case=newfstatat_secret syscall=newfstatat ret=-13 verdict=denied reached=na
+POLICY deny open reason=OutsideRoots path=/missing-raw
+RAW case=newfstatat_missing syscall=newfstatat ret=-13 verdict=denied reached=na
+RAW case=stat_secret syscall=stat ret=-38 verdict=unavailable reached=na
+RAW case=stat_missing syscall=stat ret=-38 verdict=unavailable reached=na
+RAW case=access_secret syscall=access ret=-38 verdict=unavailable reached=na
+RAW case=access_missing syscall=access ret=-38 verdict=unavailable reached=na
+RAW case=faccessat_secret syscall=faccessat ret=-38 verdict=unavailable reached=na
+RAW case=faccessat_missing syscall=faccessat ret=-38 verdict=unavailable reached=na
+RAW case=statx_secret syscall=statx ret=-38 verdict=unavailable reached=na
+RAW case=statx_missing syscall=statx ret=-38 verdict=unavailable reached=na
+RAW case=socket_stream syscall=socket ret=3 verdict=allowed reached=na
+RAW case=socket_dgram syscall=socket ret=3 verdict=allowed reached=na
+RAW case=socket_unix syscall=socket ret=-97 verdict=failed reached=na
+RAW case=socket_packet syscall=socket ret=-97 verdict=failed reached=na
+RAW case=connect_tcp_allowed syscall=connect ret=0 verdict=allowed reached=na
+POLICY deny connect reason=EndpointNotListed proto=tcp addr=10.0.2.3:36607
+RAW case=connect_tcp_other_ip syscall=connect ret=-13 verdict=denied reached=na
+POLICY deny connect reason=EndpointNotListed proto=tcp addr=10.0.2.2:36608
+RAW case=connect_tcp_other_port syscall=connect ret=-13 verdict=denied reached=na
+RAW case=connect_udp_allowed syscall=connect ret=0 verdict=allowed reached=na
+POLICY deny connect reason=EndpointNotListed proto=udp addr=10.0.2.3:54167
+RAW case=connect_udp_other_ip syscall=connect ret=-13 verdict=denied reached=na
+POLICY deny connect reason=EndpointNotListed proto=udp addr=10.0.2.2:54168
+RAW case=connect_udp_other_port syscall=connect ret=-13 verdict=denied reached=na
+RAW case=sendto_allowed syscall=sendto ret=14 verdict=allowed reached=na
+POLICY deny connect reason=EndpointNotListed proto=udp addr=10.0.2.3:54167
+RAW case=sendto_other_ip syscall=sendto ret=-13 verdict=denied reached=na
+RAW case=sendmsg_other_ip syscall=sendmsg ret=-38 verdict=unavailable reached=na
+RAW case=sendmmsg_other_ip syscall=sendmmsg ret=-38 verdict=unavailable reached=na
+RAW case=bind_any syscall=bind ret=0 verdict=allowed reached=na
+POLICY deny listen
+RAW case=listen_stream syscall=listen ret=-13 verdict=denied reached=na
+POLICY deny accept
+RAW case=accept_stream syscall=accept ret=-13 verdict=denied reached=na
+RAW case=memfd_create syscall=memfd_create ret=-38 verdict=unavailable reached=na
+RAW case=io_uring_setup syscall=io_uring_setup ret=-38 verdict=unavailable reached=na
+RAW case=fork syscall=fork ret=-38 verdict=unavailable reached=na
+RAW case=clone_no_thread syscall=clone ret=-22 verdict=failed reached=na
+RAW case=execve_outside syscall=execve ret=-38 verdict=unavailable reached=na
+RAW case=execveat_outside syscall=execveat ret=-38 verdict=unavailable reached=na
+RAW existence syscall=newfstatat outside=-13 missing=-13 oracle=no
+RAW existence syscall=stat outside=-38 missing=-38 oracle=no
+RAW existence syscall=access outside=-38 missing=-38 oracle=no
+RAW existence syscall=faccessat outside=-38 missing=-38 oracle=no
+RAW existence syscall=statx outside=-38 missing=-38 oracle=no
+RAW summary cases=43 allowed=7 denied=11 unavailable=22 failed=3 kernel=rabbit
+RAW case=bind_any syscall=bind ret=0 verdict=allowed reached=na
+GAP case=bind_any syscall=bind ret=0 why=neither the policy nor the filter checks bind

@@ -21,7 +21,7 @@ adversary,http_get_other_port,denied,denied,no,same,
 adversary,repeat_secret_1,denied,denied,na,same,
 adversary,repeat_secret_2,denied,denied,na,same,
 adversary,read_symlink_to_secret,not run,denied,na,other,not in the table of Rabbit
-adversary,family_rabbit,allowed=0;denied=18;failed=3;invalid=0,-,na,family,"rows=21; complete=no; no_path_allowed=true; the logs do not carry the paths, and no path of the family names a file inside the read root, so an allowed row would be a file outside it that was read; the CI step printed only the first 60 lines of the boot, so this is not the whole family"
+adversary,family_rabbit,allowed=0;denied=1304;failed=250;invalid=0,-,na,family,"rows=1554; complete=yes; no_path_allowed=true; the logs do not carry the paths, and no path of the family names a file inside the read root, so an allowed row would be a file outside it that was read"
 adversary,family_linux,-,allowed=0;denied=185;failed=1369;invalid=0,na,family,"rows=1554; complete=yes; no_path_allowed=true; the logs do not carry the paths, and no path of the family names a file inside the read root, so an allowed row would be a file outside it that was read"
 compromised,open_inside,allowed,allowed,na,same,
 compromised,open_secret,denied,denied,na,same,
