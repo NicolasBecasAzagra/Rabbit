@@ -23,6 +23,7 @@ type Row = {
   mainline: string;
   mainlineNoMitigations: string;
   group: 'operation' | 'inference' | 'agent';
+  comparison?: 'compared' | 'recorded';
 };
 
 function parseValue(s: string): { value: number; unit: string; isTime: boolean } {
@@ -67,7 +68,11 @@ function ratioOf(row: Row, key: BaselineKey): number | null {
 }
 
 /** The multiplier with its baseline in words, a loss stated as a loss. */
+const recordedText = 'Recorded, not a comparison of the kernels';
+const isRecorded = (row: Row) => row.comparison === 'recorded';
+
 function compare(row: Row, key: BaselineKey): string {
+  if (isRecorded(row)) return key === 'mainline' ? recordedText : '';
   const r = ratioOf(row, key);
   if (r === null) return '';
   const unit = parseValue(row.rabbit).unit;
@@ -79,7 +84,8 @@ function compare(row: Row, key: BaselineKey): string {
     unit === 'MB' ? (better ? 'less memory than' : 'more memory than')
     : unit === 'tok/s' ? (better ? 'more tokens/s than' : 'fewer tokens/s than')
     : better ? 'faster than' : 'slower than';
-  return `${n}× ${what} ${name}`;
+  // Memory is described, not scored: it is not a win.
+  return unit === 'MB' ? `${n}× ${what} ${name} (described, not a win)` : `${n}× ${what} ${name}`;
 }
 
 const processed = benchmarks.map((row) => {
@@ -159,17 +165,21 @@ const svgHeight = eeBottom + 24;
 const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const timingRows = [...operationRows, ...endToEndRows];
 const timingWord = words[timingRows.length] ?? String(timingRows.length);
-// The heading says what holds: the build fails if Rabbit is not faster than default Linux in every timing,
-// and the part about the mitigations-off build is counted from the same rows.
-for (const { row } of timingRows) {
+// The heading says what holds, over the compared rows only (the boot is recorded, not compared).
+// The build fails if Rabbit is not faster than default Linux in every compared timing, and the
+// part about the mitigations-off build is counted from the same rows.
+const comparedRows = timingRows.filter(({ row }) => !isRecorded(row));
+const comparedWord = words[comparedRows.length] ?? String(comparedRows.length);
+for (const { row } of comparedRows) {
   const r = ratioOf(row, 'mainline');
   if (r === null || !(r > 1)) throw new Error(`[benchmarks] "${row.metric}" is not faster on Rabbit than Linux 7.3.0; the heading would be false`);
 }
-const fasterThanNoMit = timingRows.filter(({ row }) => (ratioOf(row, 'mainlineNoMitigations') ?? 0) > 1).length;
+const fasterThanNoMit = comparedRows.filter(({ row }) => (ratioOf(row, 'mainlineNoMitigations') ?? 0) > 1).length;
+const recordedNote = timingRows.length > comparedRows.length ? '; the boot is recorded, not compared' : '';
 const headline =
-  fasterThanNoMit === timingRows.length
-    ? `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 and than Linux with mitigations off in all ${timingWord} measured timings`
-    : `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 in all ${timingWord} measured timings and than Linux with mitigations off in ${words[fasterThanNoMit] ?? fasterThanNoMit} of ${timingWord}`;
+  fasterThanNoMit === comparedRows.length
+    ? `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 and than Linux with mitigations off in all ${comparedWord} compared timings${recordedNote}.`
+    : `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 in all ${comparedWord} compared timings and than Linux with mitigations off in ${words[fasterThanNoMit] ?? fasterThanNoMit} of ${comparedWord}${recordedNote}.`;
 
 const seriesKeys: SeriesKey[] = ['mainline', 'mainlineNoMitigations', 'rabbit'];
 const compactPanels = [
@@ -244,9 +254,17 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
               return (
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
-                  <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
-                  <text class="row-ctx" x={rowLabelX} y={y + 50} text-anchor="end">{benchmarkContext}</text>
+                  {isRecorded(row) ? (
+                    <a href={url('/docs/benchmarking')}>
+                      <text class="row-ratio row-recorded" x={rowLabelX} y={y + 14} text-anchor="end">{recordedText}</text>
+                    </a>
+                  ) : (
+                    <>
+                      <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
+                      <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
+                    </>
+                  )}
+                  <text class="row-ctx" x={rowLabelX} y={y + (isRecorded(row) ? 32 : 50)} text-anchor="end">{benchmarkContext}</text>
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
@@ -306,9 +324,17 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
               return (
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
-                  <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
-                  <text class="row-ctx" x={rowLabelX} y={y + 50} text-anchor="end">{benchmarkContext}</text>
+                  {isRecorded(row) ? (
+                    <a href={url('/docs/benchmarking')}>
+                      <text class="row-ratio row-recorded" x={rowLabelX} y={y + 14} text-anchor="end">{recordedText}</text>
+                    </a>
+                  ) : (
+                    <>
+                      <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
+                      <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
+                    </>
+                  )}
+                  <text class="row-ctx" x={rowLabelX} y={y + (isRecorded(row) ? 32 : 50)} text-anchor="end">{benchmarkContext}</text>
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
@@ -365,9 +391,15 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                     <p class="crow-head">
                       <span class="crow-label">{row.metric}</span>
                       <span class="crow-ratio">
-                        {compare(row, 'mainline')}
-                        <br />
-                        {compare(row, 'mainlineNoMitigations')}
+                        {isRecorded(row) ? (
+                          <a href={url('/docs/benchmarking')}>{recordedText}</a>
+                        ) : (
+                          <>
+                            {compare(row, 'mainline')}
+                            <br />
+                            {compare(row, 'mainlineNoMitigations')}
+                          </>
+                        )}
                         <br />
                         {benchmarkContext}
                       </span>
@@ -553,6 +585,11 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     font-family: var(--font-body);
     font-size: 14px;
     fill: var(--ink);
+  }
+
+  .row-recorded {
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .row-ctx {

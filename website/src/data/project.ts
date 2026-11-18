@@ -382,6 +382,12 @@ export type Benchmark = {
   mainline: string;
   mainlineNoMitigations: string;
   group: 'operation' | 'inference' | 'agent';
+  /**
+   * 'recorded' rows are published but never compared: docs/BENCHMARKING.md rule 5
+   * says the boot is recorded and is not a comparison of the kernels (the two reach
+   * the first result by different paths), never read as a kernel property.
+   */
+  comparison?: 'compared' | 'recorded';
 };
 
 export const benchmarks: Benchmark[] = [
@@ -430,6 +436,7 @@ export const benchmarks: Benchmark[] = [
   {
     group: 'operation',
     metric: 'Boot to the first result',
+    comparison: 'recorded',
     rabbit: '12.9 s',
     mainline: '206 s',
     mainlineNoMitigations: '63.8 s',
