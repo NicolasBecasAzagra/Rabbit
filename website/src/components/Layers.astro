@@ -3,8 +3,8 @@ import { layers } from '../data/project';
 
 // One fact per layer, quoted from the data of the project and the README.
 // The agent row is open on purpose: it does not finish a task yet.
-const facts: Record<string, { kind: 'solid' | 'hollow'; state: string; text: string }> = {
-  kernel: { kind: 'solid', state: 'Measured', text: '59 Linux system calls' },
+const facts: Record<string, { kind: 'solid' | 'hollow' | 'hatch'; state: string; text: string }> = {
+  kernel: { kind: 'hatch', state: 'Stated in the README, not measured', text: '59 Linux system calls' },
   runtime: { kind: 'solid', state: 'Measured', text: 'Token for token against the reference' },
   agent: { kind: 'hollow', state: 'Open', text: 'Does not finish a task yet: the model repeats a call' },
   network: { kind: 'solid', state: 'Measured', text: 'IPv4, UDP and TCP in the kernel' },

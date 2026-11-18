@@ -29,8 +29,14 @@ const commands = [
         {
           commands.map((c) => (
             <li>
-              <code class="command">{c.cmd}</code>
+              <div class="command-row">
+                <code class="command" tabindex="0">{c.cmd}</code>
+                <button type="button" class="copy" data-copy={c.cmd} aria-label={`Copy the command: ${c.cmd}`}>
+                  <span class="copy-label">Copy</span>
+                </button>
+              </div>
               <span class="command-what">{c.what}</span>
+              <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
             </li>
           ))
         }
@@ -91,11 +97,38 @@ const commands = [
     border-block-end: 1px solid var(--hairline);
   }
 
+  .command-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-md);
+  }
+
+  /* One line, never broken mid-token: it scrolls inside the block */
   .command {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-block: 0.25rem;
     font-family: var(--font-mono);
     font-size: var(--text-md);
     color: var(--ink);
-    overflow-wrap: anywhere;
+  }
+
+  .copy {
+    min-width: 4.5rem;
+    height: 2.25rem;
+    padding-inline: 0.875rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--ink);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+  }
+
+  .copy:hover {
+    background: var(--surface-2);
   }
 
   .command::before {
@@ -132,3 +165,44 @@ const commands = [
     }
   }
 </style>
+
+<script>
+  // Copy with the clipboard API; a hidden textarea is the fallback. The state
+  // is a text change ("Copied"), never a colour change.
+  async function copyText(text: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      area.remove();
+      return ok;
+    }
+  }
+
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((button) => {
+    const label = button.querySelector('.copy-label');
+    const status = button.closest('li')?.querySelector('[data-copy-status]');
+    button.addEventListener('click', async () => {
+      const ok = await copyText(button.dataset.copy ?? '');
+      if (label) label.textContent = ok ? 'Copied' : 'Select it';
+      if (status) status.textContent = ok ? 'Copied to the clipboard' : 'Copy failed: select the command and copy it';
+      setTimeout(() => {
+        if (label) label.textContent = 'Copy';
+        if (status) status.textContent = '';
+      }, 2000);
+    });
+  });
+</script>

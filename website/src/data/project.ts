@@ -37,7 +37,7 @@ export const layers: Layer[] = [
     id: 'kernel',
     name: 'The kernel',
     role: 'A kernel that does less',
-    body: 'No page table isolation, no LSM, no audit, no cgroups, no hooks. Demand paging, large pages, a scheduler with a short tail and real multiprocessing. Every number is published, including the losses.',
+    body: 'No page table isolation, no LSM, no audit, no cgroups, and no hook framework: the one check on the system call path is the tool policy. Demand paging, large pages, a scheduler with a short tail and real multiprocessing. Every number is published, including the losses.',
     crates: [
       'rabbit-kernel',
       'rabbit-arch',

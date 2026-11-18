@@ -47,25 +47,38 @@ function formatRatio(n: number): string {
   return n.toFixed(2);
 }
 
-function ratioText(row: Row): string {
+const baselineNames = {
+  mainline: 'Linux 7.3.0',
+  mainlineNoMitigations: 'Linux with mitigations off',
+} as const;
+type BaselineKey = keyof typeof baselineNames;
+
+/** Rabbit against one baseline of the same row: above 1 means Rabbit is better. */
+function ratioOf(row: Row, key: BaselineKey): number | null {
   const a = parseValue(row.rabbit);
-  const b = parseValue(row.mainline);
-  if (!a.isTime && a.unit !== 'MB' && a.unit !== 'tok/s') return '';
+  const b = parseValue(row[key]);
+  if (!a.isTime && a.unit !== 'MB' && a.unit !== 'tok/s') return null;
   let ratio: number;
-  if (a.unit === 'tok/s') {
-    ratio = a.value / b.value;
-  } else if (a.unit === 'MB') {
-    ratio = b.value / a.value;
-  } else {
-    const aSeconds = toSeconds(a.value, a.unit);
-    const bSeconds = toSeconds(b.value, b.unit);
-    ratio = bSeconds / aSeconds;
-  }
-  if (!Number.isFinite(ratio) || ratio < 1.01) return '';
-  const formatted = formatRatio(ratio);
-  if (a.unit === 'MB') return `${formatted}× less memory`;
-  if (a.unit === 'tok/s') return `${formatted}× more tokens/s`;
-  return `${formatted}× faster`;
+  if (a.unit === 'tok/s') ratio = a.value / b.value;
+  else if (a.unit === 'MB') ratio = b.value / a.value;
+  else ratio = toSeconds(b.value, b.unit) / toSeconds(a.value, a.unit);
+  return Number.isFinite(ratio) ? ratio : null;
+}
+
+/** The multiplier with its baseline in words, a loss stated as a loss. */
+function compare(row: Row, key: BaselineKey): string {
+  const r = ratioOf(row, key);
+  if (r === null) return '';
+  const unit = parseValue(row.rabbit).unit;
+  const name = baselineNames[key];
+  if (r > 0.99 && r < 1.01) return `about the same as ${name}`;
+  const better = r > 1;
+  const n = formatRatio(better ? r : 1 / r);
+  const what =
+    unit === 'MB' ? (better ? 'less memory than' : 'more memory than')
+    : unit === 'tok/s' ? (better ? 'more tokens/s than' : 'fewer tokens/s than')
+    : better ? 'faster than' : 'slower than';
+  return `${n}× ${what} ${name}`;
 }
 
 const processed = benchmarks.map((row) => {
@@ -125,32 +138,37 @@ const eeTickLabels: Record<number, string> = {
   [10000]: '10000 s',
 };
 
-const rowLabelX = 250;
-const chartLeft = 280;
-const chartRight = 700;
+const rowLabelX = 290;
+const chartLeft = 320;
+const chartRight = 720;
 const valueColX: Record<SeriesKey, number> = {
-  rabbit: 735,
-  mainline: 860,
-  mainlineNoMitigations: 1000,
+  rabbit: 760,
+  mainline: 880,
+  mainlineNoMitigations: 1020,
 };
-const svgWidth = 1160;
+const svgWidth = 1180;
 const opTop = 72;
-const opRowHeight = 56;
+const opRowHeight = 88;
 const opBottom = opTop + operationRows.length * opRowHeight + 40;
 const eeTop = opBottom + 48;
-const eeRowHeight = 56;
+const eeRowHeight = 88;
 const eeBottom = eeTop + endToEndRows.length * eeRowHeight + 40;
 const svgHeight = eeBottom + 24;
 
 const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const timingRows = [...operationRows, ...endToEndRows];
 const timingWord = words[timingRows.length] ?? String(timingRows.length);
-// The heading says "in all N timings": the build fails if that stops being true.
-for (const { row, parsed } of timingRows) {
-  const r = toSeconds(parsed.rabbit.value, parsed.rabbit.unit);
-  const m = toSeconds(parsed.mainline.value, parsed.mainline.unit);
-  if (!(r < m)) throw new Error(`[benchmarks] "${row.metric}" is not faster on Rabbit; the heading would be false`);
+// The heading says what holds: the build fails if Rabbit is not faster than default Linux in every timing,
+// and the part about the mitigations-off build is counted from the same rows.
+for (const { row } of timingRows) {
+  const r = ratioOf(row, 'mainline');
+  if (r === null || !(r > 1)) throw new Error(`[benchmarks] "${row.metric}" is not faster on Rabbit than Linux 7.3.0; the heading would be false`);
 }
+const fasterThanNoMit = timingRows.filter(({ row }) => (ratioOf(row, 'mainlineNoMitigations') ?? 0) > 1).length;
+const headline =
+  fasterThanNoMit === timingRows.length
+    ? `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 and than Linux with mitigations off in all ${timingWord} measured timings`
+    : `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 in all ${timingWord} measured timings and than Linux with mitigations off in ${words[fasterThanNoMit] ?? fasterThanNoMit} of ${timingWord}`;
 
 const seriesKeys: SeriesKey[] = ['mainline', 'mainlineNoMitigations', 'rabbit'];
 const compactPanels = [
@@ -178,7 +196,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 <section id="benchmarks" class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
   <div class="wrapper">
     <header class="section-header">
-      <h2 id="benchmarks-chart-title" class="text-title">Under QEMU TCG, an emulator, Rabbit costs less in all {timingWord} measured timings</h2>
+      <h2 id="benchmarks-chart-title" class="text-title">{headline}</h2>
       <p class="text-lead">
         Lower is faster. {benchmarkContext}, on the same rig, without hardware acceleration. The
         raw table is one click below and contains every measurement, including the losses.
@@ -220,14 +238,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 
             {/* Rows */}
             {operationRows.map(({ row, parsed }, i) => {
-              const y = opTop + 18 + i * opRowHeight;
-              const ratio = ratioText(row);
+              const y = opTop + 22 + i * opRowHeight;
               return (
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}, {benchmarkContext}</text>
-                  )}
+                  <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
+                  <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
+                  <text class="row-ctx" x={rowLabelX} y={y + 50} text-anchor="end">{benchmarkContext}</text>
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
@@ -247,13 +264,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                           stroke-dasharray="2,2"
                         />
                         {key === 'rabbit' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
+                          <circle cx={x} cy={y - 7} r="4.5" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
                         )}
                         {key === 'mainline' && (
-                          <circle cx={x} cy={y} r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" />
+                          <circle cx={x} cy={y} r="4" fill="var(--canvas)" stroke="var(--ink)" stroke-width="2" />
                         )}
                         {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-secondary)" />
+                          <rect x={x - 3.5} y={y + 7 - 3.5} width="7" height="7" fill="var(--ink-secondary)" stroke="var(--canvas)" stroke-width="1" />
                         )}
                         <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
                       </g>
@@ -283,14 +300,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
             <line x1={chartLeft} y1={eeBottom - 32} x2={chartRight} y2={eeBottom - 32} stroke="var(--border-strong)" stroke-width="1" />
 
             {endToEndRows.map(({ row, parsed }, i) => {
-              const y = eeTop + 18 + i * eeRowHeight;
-              const ratio = ratioText(row);
+              const y = eeTop + 22 + i * eeRowHeight;
               return (
                 <g class="row">
                   <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  {ratio && (
-                    <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{ratio}, {benchmarkContext}</text>
-                  )}
+                  <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
+                  <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
+                  <text class="row-ctx" x={rowLabelX} y={y + 50} text-anchor="end">{benchmarkContext}</text>
                   {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
                     const p = parsed[key];
                     if (!p.isTime) return null;
@@ -310,13 +326,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                           stroke-dasharray="2,2"
                         />
                         {key === 'rabbit' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
+                          <circle cx={x} cy={y - 7} r="4.5" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
                         )}
                         {key === 'mainline' && (
-                          <circle cx={x} cy={y} r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" />
+                          <circle cx={x} cy={y} r="4" fill="var(--canvas)" stroke="var(--ink)" stroke-width="2" />
                         )}
                         {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3} y={y - 3} width="6" height="6" fill="var(--ink-secondary)" />
+                          <rect x={x - 3.5} y={y + 7 - 3.5} width="7" height="7" fill="var(--ink-secondary)" stroke="var(--canvas)" stroke-width="1" />
                         )}
                         <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
                       </g>
@@ -346,7 +362,13 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                   <li class="crow">
                     <p class="crow-head">
                       <span class="crow-label">{row.metric}</span>
-                      <span class="crow-ratio">{ratioText(row)}, {benchmarkContext}</span>
+                      <span class="crow-ratio">
+                        {compare(row, 'mainline')}
+                        <br />
+                        {compare(row, 'mainlineNoMitigations')}
+                        <br />
+                        {benchmarkContext}
+                      </span>
                     </p>
                     <div class="ctrack" aria-hidden="true">
                       {panel.grid.map((g) => (
@@ -355,7 +377,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                       {seriesKeys.map((key) => (
                         <i
                           class={`m m-${key} cm`}
-                          style={`left:${logPos(toSeconds(parsed[key].value, parsed[key].unit), panel.min, panel.max, 0, 100)}%`}
+                          style={`left:${logPos(toSeconds(parsed[key].value, parsed[key].unit), panel.min, panel.max, 0, 100)}%;top:${key === 'rabbit' ? 25 : key === 'mainline' ? 50 : 75}%`}
                         />
                       ))}
                     </div>
@@ -420,7 +442,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
                     <span class="series-mainline">{row.mainline}</span>
                     <span class="series-nomit">{row.mainlineNoMitigations}</span>
                   </span>
-                  {ratioText(row) && <span class="other-ratio">{ratioText(row)}</span>}
+                  <span class="other-ratio">{compare(row, 'mainline')}<br />{compare(row, 'mainlineNoMitigations')}</span>
                 </div>
               ))}
             </div>
@@ -527,6 +549,12 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     font-family: var(--font-body);
     font-size: 14px;
     fill: var(--ink);
+  }
+
+  .row-ctx {
+    font-family: var(--font-body);
+    font-size: 13px;
+    fill: var(--ink-secondary);
   }
 
   .row-ratio {
@@ -822,13 +850,14 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
   }
 
   .crow-ratio {
+    text-align: end;
     font-size: var(--text-sm);
     color: var(--ink-secondary);
   }
 
   .ctrack {
     position: relative;
-    height: 1.5rem;
+    height: 2.25rem;
     margin: var(--space-xs) 0.5rem;
     border-block: 1px solid rgba(255, 255, 255, 0.3);
   }
@@ -842,7 +871,6 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 
   .cm {
     position: absolute;
-    inset-block-start: 50%;
     margin-block-start: -6px;
     margin-inline-start: -6px;
   }

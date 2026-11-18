@@ -185,6 +185,8 @@ export function loadPolicy() {
     /** compromised raw calls Rabbit answers with ENOSYS */
     rabbitUnavailable: compromised.filter((row) => row.rabbit === 'unavailable').length,
     compromisedCalls: compromised.length,
+    /** of the headline rows, the ones where Linux answered an error before any policy applied */
+    linuxFailedOnItsOwn: headline.filter((row) => row.linux === 'failed').length,
     /** every case the two adversaries ran, and how they split by class */
     totalCases: cases.length,
     sameOnBothSides: cases.filter((row) => row.cls === 'same').length,
@@ -193,6 +195,9 @@ export function loadPolicy() {
   };
   if (counts.sameOnBothSides + counts.differByPolicy + counts.differForOtherReasons !== counts.totalCases) {
     fail('the classes of summary.csv do not add up to the number of cases');
+  }
+  if (counts.linuxLetThrough + counts.linuxFailedOnItsOwn !== headline.length) {
+    fail('a policy row is neither let through nor failed on Linux; the title assumes it is one of the two');
   }
   if (counts.refusedByPolicy !== headline.length) {
     fail('a policy row is not a Rabbit refusal; the headline ledger assumes it is');
