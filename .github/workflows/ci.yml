@@ -681,7 +681,7 @@ jobs:
           status=$?
           echo "QEMU exit status: $status"
           set -e
-          grep -a "ADV\|POLICY" adversary.log | tr -d '\r' | sed -n '1,60p'
+          grep -a "ADV\|POLICY" adversary.log | tr -d '\r'
           test "$status" -eq 33
           tr -d '\r' < adversary.log | sed -E 's/^\[[[:space:]]*[0-9]+\.[0-9]+\][[:space:]]*//' > adversary-boot.log
           grep -q "^POLICY installed bytes=" adversary-boot.log

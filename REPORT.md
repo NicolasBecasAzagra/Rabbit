@@ -410,7 +410,9 @@ allowed when its data reached the server of the test, whatever the tool then
 read. The enumerated family of the adversary, 1554 paths made of six
 components, had no allowed path on Linux (185 denied, 1369 failed). The log of
 that boot on Rabbit is partial, because the CI step printed only its first 60
-lines: it has 21 of the rows, none allowed, and no summary.
+lines: it has the 21 named cases and the first 21 of the 1554 rows of the
+family, none of those 21 allowed, and no summary. The step now prints every
+`ADV` line, so the next run records the whole table.
 
 The rows of class `policy`, copied from `summary.csv`:
 
