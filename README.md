@@ -20,6 +20,11 @@ costs, and it answers on an emulator first. Its newest result is a policy that
 the kernel enforces for the tools of the agent, measured against Landlock and
 seccomp on Linux: see [the tool policy](#the-tool-policy).
 
+![The boot log of the Rabbit kernel, from the first line to "boot OK"](docs/boot.gif)
+
+The serial output of one real boot under QEMU, as recorded in
+[docs/BOOT.md](docs/BOOT.md).
+
 ![The three layers of Rabbit](docs/architecture.svg)
 
 ## What we are building
