@@ -600,7 +600,10 @@ serial log, so the claims in this document are checked on every push.
 
 - **A host with hardware acceleration**, which is the only thing missing for
   the inference timings to mean something about a machine rather than about
-  an emulator.
+  an emulator. The rig and the scripts of the session (`bench/kvm/`) are ready
+  and were rehearsed under TCG on a virtual machine; the accelerated column of
+  the table is empty until a bare metal host runs them, and nothing in this
+  report describes a processor before that.
 - **A scheduler with a better tail, and more than one processor.** A server
   that batches requests lives on the latency of the tail. The kernel starts
   more processors since M9, but every dataset published here is one
