@@ -202,7 +202,18 @@ criteria.
 | **v0.8 Policy hardening** | [#21](https://github.com/NicolasBecasAzagra/Rabbit/issues/21), [#22](https://github.com/NicolasBecasAzagra/Rabbit/issues/22), [#23](https://github.com/NicolasBecasAzagra/Rabbit/issues/23), [#24](https://github.com/NicolasBecasAzagra/Rabbit/issues/24), [#25](https://github.com/NicolasBecasAzagra/Rabbit/issues/25) | The gaps the policy report names: `bind`, the copies of user memory, the descriptors open before the install, the log of denials, and the same tables on a kernel with Landlock ABI 10. |
 | **v0.5 An agent that finishes** | [#14](https://github.com/NicolasBecasAzagra/Rabbit/issues/14), [#15](https://github.com/NicolasBecasAzagra/Rabbit/issues/15) | A checkpoint that closes the conversation, and the tools that need a writable file system: `write_file` and `list_dir`. |
 | **v0.6 Reach the world** | [#18](https://github.com/NicolasBecasAzagra/Rabbit/issues/18), [#19](https://github.com/NicolasBecasAzagra/Rabbit/issues/19) | The model context protocol, so the agent works with the clients people already have, and TLS, because almost every API people call is HTTPS. |
+| **v0.9 Real hardware** | [#26](https://github.com/NicolasBecasAzagra/Rabbit/issues/26), [#27](https://github.com/NicolasBecasAzagra/Rabbit/issues/27), [#28](https://github.com/NicolasBecasAzagra/Rabbit/issues/28) | Every number so far comes from an emulator. A UEFI entry, a disk driver and a first boot on a named machine are what turn the kernel from an experiment into an operating system. |
+| **v0.10 Fast on the CPU** | [#29](https://github.com/NicolasBecasAzagra/Rabbit/issues/29), [#30](https://github.com/NicolasBecasAzagra/Rabbit/issues/30), [#31](https://github.com/NicolasBecasAzagra/Rabbit/issues/31) | Vector kernels, the GGUF format and models of one billion parameters or more, which are the smallest that may finish the tasks of the agent. |
+| **v0.11 The fair comparison** | [#32](https://github.com/NicolasBecasAzagra/Rabbit/issues/32), [#33](https://github.com/NicolasBecasAzagra/Rabbit/issues/33) | The same weights on the same machine against llama.cpp over Linux, losses included, and a written stop rule if the operating system turns out not to be where the speed is. |
+| **v0.12 One accelerator** | [#34](https://github.com/NicolasBecasAzagra/Rabbit/issues/34), [#35](https://github.com/NicolasBecasAzagra/Rabbit/issues/35) | Most of the speed of local inference is in the accelerator. One is chosen with a written go or no-go before any driver code. |
+| **v1.0 The standard** | [#36](https://github.com/NicolasBecasAzagra/Rabbit/issues/36), [#37](https://github.com/NicolasBecasAzagra/Rabbit/issues/37), [#38](https://github.com/NicolasBecasAzagra/Rabbit/issues/38) | A bootable image, the API the clients already speak and a hardware matrix that lists only tested machines. |
 | **Deferred** | [#16](https://github.com/NicolasBecasAzagra/Rabbit/issues/16) | Processes, signals, dynamic linking and a shell test suite: named so they are not lost. |
+
+The aim behind the order is to be the fastest system for local AI. That is a
+goal, not a result: nothing published supports a speed claim beyond ratios
+measured under an emulator. [docs/ROADMAP.md](docs/ROADMAP.md) states the
+ladder, the proof that closes each rung and the rule that stops the project if
+an operating system turns out not to be where the speed is.
 
 A scheduler with a better tail, for batching inference requests, is the work
 after these.
