@@ -66,6 +66,43 @@ Every report states the acceleration mode it was produced in.
 A host with hardware acceleration is therefore required before any claim
 about wall clock performance is published.
 
+### The accelerated run
+
+The session that produces the accelerated column is in `bench/kvm/`, and it
+needs a bare metal host: a virtual machine without nested virtualisation has no
+`/dev/kvm`. What the rig does for it:
+
+- `--accel kvm` is refused before anything is built or booted when the host is
+  not Linux, when the CPU advertises neither `vmx` nor `svm`, or when `/dev/kvm`
+  is missing or cannot be opened. Every reason is listed at once.
+- `--no-build` measures the kernel image and the initramfs that are given, as
+  they are, so a rented host needs no toolchain. The SHA-256 of both is in
+  `summary.json`. The network rows are not available with it, because each one
+  builds a client and an archive that carries the port of the run.
+- `--cpu` names the CPU model the guest sees, `Skylake-Client` by default as in
+  every published dataset. `-cpu host` is refused. The model, the CPU of the host
+  and the warnings that QEMU printed about features it masked are published with
+  the data, because under KVM the guest runs on that processor. A host from
+  another vendor than the model may not present it exactly, and a run where it
+  did not says so.
+- `bench/kvm/build_table.py` derives the table with two columns from a pair of
+  datasets, one with `accel` equal to `tcg` and one equal to `kvm`, and refuses a
+  column whose metadata names the other mode.
+
+How the two columns are read:
+
+| column | what it supports | what it does not |
+|---|---|---|
+| emulation (`tcg`) | a relative comparison of two kernels under one emulator | any statement about time on a processor |
+| KVM | a statement about wall clock time on the named host | a statement about other processors, or about hardware the session did not use |
+
+A ratio above 1 means Rabbit is better, whichever the unit. If the direction of
+a ratio differs between the two columns, the table says `reverses` and every
+document that quotes the emulated ratio is corrected. A loss under KVM is
+published like a win. Until a dataset with `accel` equal to `kvm` is committed,
+the accelerated column is empty and no ratio in this repository describes a
+processor.
+
 ## The rig
 
 `bench/run.py` boots a kernel image with a fixed configuration, hands it the

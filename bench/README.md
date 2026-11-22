@@ -156,6 +156,13 @@ Both kernels always run with the same flags:
   directly and Rabbit parses the same bytes, so no decompressor is involved.
 - `--accel` selects `tcg` (default), `kvm` or `hvf`. Both kernels use the same
   accelerator in a run, and `summary.json` records which one it was.
+  `kvm` is refused up front on a host that cannot run it.
+- `--cpu` names the CPU model of the guest, `Skylake-Client` by default and the
+  same for both kernels. `host` is refused. `summary.json` records the model and
+  the CPU of the host.
+- `--no-build` builds nothing and measures the `--rabbit` image and the `--initrd`
+  archive as given, which a host without a toolchain needs. It refuses the network
+  measurements. The session of issue 10 is in `bench/kvm/`.
 
 ## The workload
 
