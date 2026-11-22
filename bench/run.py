@@ -241,6 +241,59 @@ def qemu_version(qemu: str) -> str:
     return first or f"unknown (status {result.returncode})"
 
 
+def kvm_problems(
+    system: str, cpuinfo: str | None, kvm_present: bool, kvm_usable: bool
+) -> list[str]:
+    """Why a run with `--accel kvm` cannot produce trustworthy numbers.
+
+    Pure on purpose, so the host tests can feed it every host. An empty list
+    means the host can run KVM. Every problem is reported, not only the first,
+    because the rig is run on a rented machine where each retry costs money.
+    """
+    problems: list[str] = []
+    if system != "Linux":
+        return [f"KVM is a Linux feature and this host is {system}"]
+    if cpuinfo is None:
+        problems.append("cannot read /proc/cpuinfo, so VT-x or AMD-V is unchecked")
+    else:
+        flags: set[str] = set()
+        for line in cpuinfo.splitlines():
+            if line.startswith("flags"):
+                flags.update(line.partition(":")[2].split())
+        if "vmx" not in flags and "svm" not in flags:
+            problems.append(
+                "the CPU does not advertise vmx (VT-x) or svm (AMD-V): "
+                "a virtual machine without nested virtualisation lands here"
+            )
+    if not kvm_present:
+        problems.append("/dev/kvm does not exist")
+    elif not kvm_usable:
+        problems.append("/dev/kvm exists but this user cannot open it read/write")
+    return problems
+
+
+def check_kvm_host() -> None:
+    """Stop before building or booting anything when KVM is not usable."""
+    try:
+        cpuinfo: str | None = Path("/proc/cpuinfo").read_text()
+    except OSError:
+        cpuinfo = None
+    kvm = Path("/dev/kvm")
+    problems = kvm_problems(
+        platform.system(),
+        cpuinfo,
+        kvm.exists(),
+        os.access(kvm, os.R_OK | os.W_OK),
+    )
+    if problems:
+        raise SystemExit(
+            "--accel kvm cannot run on this host:\n  - "
+            + "\n  - ".join(problems)
+            + "\nNothing was built or booted. Use --accel tcg to measure the "
+            "emulator, which supports only a relative statement."
+        )
+
+
 def host_metadata() -> dict[str, str]:
     uname = platform.uname()
     return {
@@ -1367,6 +1420,9 @@ def main() -> int:
         help="QEMU accelerator; both kernels always use the same one",
     )
     args = parser.parse_args()
+
+    if args.accel == "kvm":
+        check_kvm_host()
 
     root = repo_root()
     rabbit_image = Path(args.rabbit or default_rabbit_image()).resolve()
