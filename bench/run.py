@@ -1414,6 +1414,17 @@ def main() -> int:
     )
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help=(
+            "do not build anything: measure the kernel image and the --initrd "
+            "archive that are given, as they are. For a rented host without a "
+            "toolchain, where the artifacts were built elsewhere and their "
+            "SHA-256 is in summary.json. The network measurements need the "
+            "toolchain, so they are refused with this option."
+        ),
+    )
+    parser.add_argument(
         "--accel",
         choices=["tcg", "kvm", "hvf"],
         default="tcg",
@@ -1425,7 +1436,14 @@ def main() -> int:
         check_kvm_host()
 
     root = repo_root()
+    if args.no_build and not (args.rabbit and args.initrd):
+        raise SystemExit(
+            "--no-build needs both --rabbit and --initrd: with nothing to build, "
+            "the rig cannot make the kernel image or the archive itself"
+        )
     rabbit_image = Path(args.rabbit or default_rabbit_image()).resolve()
+    if not rabbit_image.is_file() and args.no_build:
+        raise SystemExit(f"Rabbit image not found: {rabbit_image}")
     if not rabbit_image.is_file():
         # The kernel is built here when it is missing, so a host that has only
         # cloned the repository can measure. A checkout that was updated and
@@ -1442,7 +1460,7 @@ def main() -> int:
         rabbit_image = Path(args.rabbit or default_rabbit_image()).resolve()
     if not rabbit_image.is_file():
         raise SystemExit(f"Rabbit image not found: {rabbit_image}")
-    else:
+    elif not args.no_build:
         # Always rebuild, for the same reason as the runtime.
         subprocess.run(["make", "build"], cwd=repo_root(), check=True)
 
@@ -1557,6 +1575,12 @@ def main() -> int:
     server_port = None
     server_stream_port = None
     server_http_port = None
+    if args.no_build and (net or net_stream or agent_net):
+        raise SystemExit(
+            "--no-build cannot run the network measurements: each builds a client "
+            "and an archive that carries the port of this run. Leave them out "
+            "with --only, or build on a host with the toolchain"
+        )
     if net or net_stream or agent_net:
         if args.initrd:
             raise SystemExit(
