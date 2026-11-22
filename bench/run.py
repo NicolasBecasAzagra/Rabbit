@@ -294,9 +294,37 @@ def check_kvm_host() -> None:
         )
 
 
+def host_cpu(cpuinfo: str | None) -> dict[str, str]:
+    """The CPU of the host as /proc/cpuinfo names it, for the metadata.
+
+    Under KVM the guest runs on this processor, so a number without it cannot
+    be read. Absent on a host with no /proc/cpuinfo, and then it says so.
+    """
+    if cpuinfo is None:
+        return {"cpu_model": "unavailable (no /proc/cpuinfo)"}
+    info: dict[str, str] = {}
+    for line in cpuinfo.splitlines():
+        key, _, value = line.partition(":")
+        key = key.strip()
+        if key in ("model name", "vendor_id") and key not in info:
+            info[key] = value.strip()
+    return {
+        "cpu_model": info.get("model name", "unknown"),
+        "cpu_vendor": info.get("vendor_id", "unknown"),
+    }
+
+
+def read_cpuinfo() -> str | None:
+    try:
+        return Path("/proc/cpuinfo").read_text()
+    except OSError:
+        return None
+
+
 def host_metadata() -> dict[str, str]:
     uname = platform.uname()
     return {
+        **host_cpu(read_cpuinfo()),
         "hostname": uname.node,
         "platform": platform.platform(),
         "machine": uname.machine,
@@ -396,6 +424,13 @@ def check_initramfs(path: Path, strict: bool = True) -> None:
     )
 
 
+# The guest CPU model is fixed on purpose, and `-cpu host` is refused: it changes
+# between machines and invalidates the comparison. `--cpu` exists for a host
+# whose CPU cannot present this model under KVM, and the model used is recorded.
+DEFAULT_CPU = "Skylake-Client"
+GUEST_CPU = DEFAULT_CPU  # set once by main() from --cpu, read by run_once()
+
+
 def qemu_command(
     qemu: str,
     image: Path,
@@ -406,6 +441,7 @@ def qemu_command(
     memory: str = "512M",
     smp: str = "1",
     net: bool = False,
+    cpu: str = DEFAULT_CPU,
 ) -> list[str]:
     kernel_args = "console=ttyS0"
     if append_extra:
@@ -415,7 +451,7 @@ def qemu_command(
         "-M",
         "q35",
         "-cpu",
-        "Skylake-Client",
+        cpu,
         "-m",
         memory,
         "-kernel",
@@ -582,7 +618,7 @@ def run_once(
     # the guest, so throwing it away hides the only explanation there is.
     qemu_log = out_dir / f"{label}{tag}.qemu.log"
     command = qemu_command(
-        qemu, image, initramfs, log, accel, append_extra, memory, smp, net
+        qemu, image, initramfs, log, accel, append_extra, memory, smp, net, GUEST_CPU
     )
     print(f"[rig] {label}{tag}: {' '.join(shlex.quote(part) for part in command)}", file=sys.stderr)
 
@@ -1425,6 +1461,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--cpu",
+        default=DEFAULT_CPU,
+        help=(
+            "CPU model the guest sees, for both kernels. The default is the one "
+            "every published dataset used. `host` is refused: it changes "
+            "between machines and invalidates the comparison. The model is "
+            "recorded in summary.json, and QEMU warnings about features it "
+            "masked are in each <label>.qemu.log"
+        ),
+    )
+    parser.add_argument(
         "--accel",
         choices=["tcg", "kvm", "hvf"],
         default="tcg",
@@ -1432,6 +1479,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.cpu == "host" or args.cpu.startswith("host,"):
+        raise SystemExit(
+            "--cpu host is refused: it changes between machines and invalidates "
+            "the comparison. Name a model such as Skylake-Client or EPYC-Rome"
+        )
+    global GUEST_CPU
+    GUEST_CPU = args.cpu
     if args.accel == "kvm":
         check_kvm_host()
 
@@ -1624,6 +1678,7 @@ def main() -> int:
     metadata: dict[str, Any] = {
         "qemu": qemu_version(args.qemu),
         "accel": args.accel,
+        "guest_cpu": args.cpu,
         "host": host_metadata(),
         "kernels": {},
         "commands": {},
