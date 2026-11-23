@@ -115,6 +115,65 @@ class Derive(unittest.TestCase):
         rows = build_table.derive([pair])[0]
         self.assertEqual(sorted(r["accel"] for r in rows), ["kvm", "tcg"])
 
+    def test_several_runs_merge_into_the_median_of_their_medians(self) -> None:
+        runs = [
+            dataset(self.root, f"k{i}", "kvm", [row("rabbit", "syscall", m), row("mainline", "syscall", 100)])
+            for i, m in enumerate((40, 50, 90), start=1)
+        ]
+        tcg = dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 100), row("mainline", "syscall", 300)])
+        rows, ratios = build_table.derive([("ops", tcg, runs)])
+        merged = [r for r in rows if r["accel"] == "kvm" and r["kernel"] == "rabbit"][0]
+        self.assertEqual(merged["runs"], "3")
+        self.assertEqual(float(merged["median"]), 50.0)
+        self.assertEqual(merged["samples"], "90")
+        self.assertGreater(float(merged["stddev"]), 0)
+        # The ratio uses the merged median: 100 / 50.
+        self.assertEqual(ratios[0]["ratio_kvm"], "2.000")
+
+    def test_a_difference_inside_the_spread_is_a_tie_not_a_reversal(self) -> None:
+        # Rabbit runs at 99, 100, 101 and the reference at 100, 100, 100: the
+        # ratio is 1.00 and the spread between runs is wider than the gap.
+        runs = [
+            dataset(self.root, f"k{i}", "kvm", [row("rabbit", "syscall", m), row("mainline-nomitig", "syscall", 100)])
+            for i, m in enumerate((99, 100, 101), start=1)
+        ]
+        tcg = dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 50), row("mainline-nomitig", "syscall", 100)])
+        _, ratios = build_table.derive([("ops", tcg, runs)])
+        self.assertEqual(ratios[0]["direction"], "tie under KVM")
+
+    def test_a_clear_loss_outside_the_spread_is_still_a_reversal(self) -> None:
+        runs = [
+            dataset(self.root, f"k{i}", "kvm", [row("rabbit", "syscall", m), row("mainline-nomitig", "syscall", 100)])
+            for i, m in enumerate((199, 200, 201), start=1)
+        ]
+        tcg = dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 50), row("mainline-nomitig", "syscall", 100)])
+        _, ratios = build_table.derive([("ops", tcg, runs)])
+        self.assertEqual(ratios[0]["direction"], "reverses")
+
+    def test_one_run_has_no_spread_so_no_tie_is_declared(self) -> None:
+        pair = (
+            "ops",
+            dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 50), row("mainline-nomitig", "syscall", 100)]),
+            dataset(self.root, "k", "kvm", [row("rabbit", "syscall", 101), row("mainline-nomitig", "syscall", 100)]),
+        )
+        _, ratios = build_table.derive([pair])
+        self.assertEqual(ratios[0]["direction"], "reverses")
+
+    def test_a_run_with_the_wrong_mode_spoils_the_whole_merge(self) -> None:
+        good = dataset(self.root, "g", "kvm", [row("rabbit", "syscall", 1)])
+        bad = dataset(self.root, "b", "tcg", [row("rabbit", "syscall", 1)])
+        tcg = dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 1)])
+        with self.assertRaises(build_table.TableError):
+            build_table.derive([("ops", tcg, [good, bad])])
+
+    def test_lost_samples_of_any_run_stay_visible_after_the_merge(self) -> None:
+        a = dataset(self.root, "a", "kvm", [row("rabbit", "syscall", 10)])
+        b = dataset(self.root, "b", "kvm", [row("rabbit", "syscall", 10, errors=3)])
+        tcg = dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 10)])
+        rows, _ = build_table.derive([("ops", tcg, [a, b])])
+        merged = [r for r in rows if r["accel"] == "kvm"][0]
+        self.assertEqual(merged["errors"], "3")
+
     def test_a_workload_nobody_ran_is_not_a_row(self) -> None:
         pair = (
             "ops",
@@ -124,6 +183,40 @@ class Derive(unittest.TestCase):
         rows, ratios = build_table.derive([pair])
         self.assertEqual({r["workload"] for r in rows}, {"syscall"})
         self.assertEqual({r["workload"] for r in ratios}, {"syscall"})
+
+    def test_the_markdown_table_copies_the_derived_numbers(self) -> None:
+        pair = (
+            "ops",
+            dataset(self.root, "t", "tcg", [row("rabbit", "syscall", 100), row("mainline-nomitig", "syscall", 300)]),
+            dataset(self.root, "k", "kvm", [row("rabbit", "syscall", 50), row("mainline-nomitig", "syscall", 60)]),
+        )
+        rows, ratios = build_table.derive([pair])
+        text = build_table.markdown(rows, ratios)
+        line = [l for l in text.splitlines() if l.startswith("| system call")][0]
+        self.assertIn("| 100 ns | 300 ns | 3.00x |", line)
+        self.assertIn("| 50 ns | 60 ns | 1.20x |", line)
+        self.assertIn("same side", line)
+
+    def test_a_figure_is_written_in_the_unit_a_person_reads(self) -> None:
+        self.assertEqual(build_table.with_unit(376.5, "ns/op"), "376.5 ns")
+        self.assertEqual(build_table.with_unit(1309, "ns/op"), "1.309 us")
+        self.assertEqual(build_table.with_unit(6.83e6, "ns/MiB"), "6.83 ms")
+        self.assertEqual(build_table.with_unit(2.5e9, "ns/total"), "2.5 s")
+        self.assertEqual(build_table.with_unit(11250.0, "ms"), "11.25 s")
+        self.assertEqual(build_table.with_unit(109.7, "ms"), "109.7 ms")
+        self.assertEqual(build_table.with_unit(46.41, "tok/s"), "46.41 tok/s")
+        self.assertEqual(build_table.with_unit(13.48, "s"), "13.48 s")
+
+    def test_a_reversed_ratio_is_marked_in_the_markdown(self) -> None:
+        pair = (
+            "ops",
+            dataset(self.root, "t", "tcg", [row("rabbit", "futex", 10), row("mainline-nomitig", "futex", 100)]),
+            dataset(self.root, "k", "kvm", [row("rabbit", "futex", 200), row("mainline-nomitig", "futex", 100)]),
+        )
+        rows, ratios = build_table.derive([pair])
+        line = [l for l in build_table.markdown(rows, ratios).splitlines() if "futex" in l][0]
+        self.assertIn("0.50x", line)
+        self.assertIn("reverses", line)
 
     def test_the_files_are_written_with_the_declared_columns(self) -> None:
         pair = (

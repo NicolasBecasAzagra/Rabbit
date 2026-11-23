@@ -1,7 +1,7 @@
 # The KVM session
 
-Issue 10: the rig run with `--accel kvm` on a host with `/dev/kvm`, and a table
-with two columns, one under emulation (a relative comparison) and one under
+Issue 10, closed by the data in `bench/results/kvm/`: the rig run with `--accel kvm`
+on a host with `/dev/kvm`, and a table with two columns, one under emulation (a relative comparison) and one under
 KVM (the only one that can support a statement about wall clock time).
 
 This directory holds the scripts of that session. Nothing in it spends money by
@@ -14,6 +14,8 @@ and it never powers the machine off.
 | `preflight.sh` | the rented host, first | refuses a host without VT-x or AMD-V, without a usable `/dev/kvm`, that is itself a virtual machine, with a damaged bundle, or where the Rabbit kernel does not boot under KVM |
 | `run-session.sh` | the rented host | the preflight, `host-info.txt`, then the datasets `operations`, `inference` and `agent`, with a time budget |
 | `build_table.py` | the machine of the owner | derives `rows.csv` and `ratios.csv` from pairs of datasets, one under TCG and one under KVM |
+| `repeat.sh` | the rented host | repeats the session for one or more guest CPU models, each repetition in its own directory |
+| `stages.py` | the machine of the owner | derives the progress of the kernel, stage by stage, from the runs of `bench/results/kvm/stages/`, and refuses a stage that does not match its manifest |
 
 ## What is measured
 
@@ -64,10 +66,11 @@ Back on the machine of the owner:
 ```sh
 scp USER@HOST:rabbit-kvm/results/kvm-*.tar.gz .
 # unpack it into bench/results/kvm-<date>/, then
+# several runs of one dataset are merged: list them all after the emulated one
 python3 bench/kvm/build_table.py --out bench/results/kvm-<date> \
-    --pair operations=bench/results/vps-1cpu,bench/results/kvm-<date>/operations \
-    --pair inference=bench/results/inference-native,bench/results/kvm-<date>/inference \
-    --pair agent=bench/results/agent,bench/results/kvm-<date>/agent
+    --pair operations=bench/results/vps-1cpu,RUN1/operations,RUN2/operations \
+    --pair inference=bench/results/inference-native,RUN1/inference,RUN2/inference \
+    --pair agent=bench/results/agent,RUN1/agent,RUN2/agent
 ```
 
 Destroy the server in the panel of the provider when the tar is on your machine,
