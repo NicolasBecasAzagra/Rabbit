@@ -130,6 +130,9 @@ pub struct Thread {
     pub priority: Priority,
     /// Saved machine state; filled on the first switch away.
     pub context: Context,
+    /// Saved vector registers. The kernel is built without SSE, so the
+    /// registers of a thread survive a switch only if the switch saves them.
+    pub vector: rabbit_arch::vector::Area,
     /// Entry function, absent for the boot thread and for user threads.
     pub entry: Option<EntryFn>,
     /// First user context, absent for kernel threads.
@@ -209,6 +212,7 @@ pub(crate) fn install_boot() {
         state: ThreadState::Running,
         priority: Priority::DEFAULT,
         context: Context::ZERO,
+        vector: rabbit_arch::vector::Area::clean(),
         entry: None,
         user: None,
         stack: None,
@@ -239,6 +243,7 @@ pub(crate) fn install_idle(id: usize, name: &'static str, stack_top: u64) {
         state: ThreadState::Running,
         priority: Priority::DEFAULT,
         context: Context::ZERO,
+        vector: rabbit_arch::vector::Area::clean(),
         entry: None,
         user: None,
         stack: None,
@@ -337,6 +342,7 @@ fn spawn_thread(
         state: ThreadState::Runnable,
         priority,
         context,
+        vector: rabbit_arch::vector::Area::clean(),
         entry,
         user,
         stack: Some(stack),
@@ -405,6 +411,18 @@ pub(crate) fn context_mut_ptr(id: usize) -> Option<*mut Context> {
         .get(id)?
         .as_ref()
         .map(|thread| addr_of!(thread.context) as *mut Context)
+}
+
+/// Raw pointer to the saved vector registers of one thread.
+pub(crate) fn vector_mut_ptr(id: usize) -> Option<*mut rabbit_arch::vector::Area> {
+    let _guard = TABLE_LOCK.lock();
+    // SAFETY: the pointer is to static storage and remains valid while the
+    // thread exists; no borrow is held on return.
+    let slots = unsafe { table() };
+    slots
+        .get(id)?
+        .as_ref()
+        .map(|thread| addr_of!(thread.vector) as *mut rabbit_arch::vector::Area)
 }
 
 /// Identifier, start state and name of one thread.

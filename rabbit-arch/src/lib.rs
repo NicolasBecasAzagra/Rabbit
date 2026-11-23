@@ -16,6 +16,7 @@ extern crate std;
 pub mod cpu;
 pub mod pci;
 pub mod port;
+pub mod vector;
 
 /// Re-export of the low level CPU helpers for convenience.
 pub use cpu::{cpuid, cpuid_subleaf, hlt, Cpuid};

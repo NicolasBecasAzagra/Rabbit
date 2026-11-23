@@ -345,6 +345,15 @@ unsafe extern "C" fn _start(
     let tsc_hz = clock::init();
     kprintln!("[time] TSC {} MHz", tsc_hz / 1_000_000);
 
+    // Enable the vector state before any thread exists, and before the other
+    // processors start, because they copy what the boot processor chose.
+    let vector = rabbit_arch::vector::init_boot();
+    kprintln!(
+        "[cpu] vector state: {:?} xcr0={:#x}",
+        vector.mode,
+        vector.xcr0
+    );
+
     sched::init();
 
     // Discover the processors and start them before the workloads exist. The

@@ -74,7 +74,125 @@ static SLICE_FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Run both measurements. Returns `false` when an assertion fails.
 pub fn run() -> bool {
-    wakeup_test() && slice_test()
+    wakeup_test() && slice_test() && vector_test()
+}
+
+/// Vector register rounds each thread of the isolation test runs.
+const VECTOR_ROUNDS: usize = 40;
+
+/// Spin iterations between loading a pattern and reading it back. Long enough
+/// that the timer preempts the thread inside the window, many times over.
+const VECTOR_SPIN: usize = 300_000;
+
+static VECTOR_FAILED: AtomicBool = AtomicBool::new(false);
+static VECTOR_CORRUPTED: AtomicUsize = AtomicUsize::new(0);
+
+/// Check that a thread keeps its own vector registers across a context switch.
+///
+/// The kernel is built without SSE, so it never touches the vector registers
+/// itself, and the registers of the thread that was running stay in the CPU
+/// while the kernel switches to another thread. Unless the switch saves and
+/// restores them, the second thread reads the pattern of the first. Two threads
+/// of one priority load different patterns, spin long enough to be preempted
+/// many times, and read the pattern back.
+fn vector_test() -> bool {
+    let finished_before = sched::finished_threads();
+    if sched::spawn_with_priority("A", vector_thread_a, Priority::HIGHEST).is_err()
+        || sched::spawn_with_priority("B", vector_thread_b, Priority::HIGHEST).is_err()
+    {
+        crate::kprintln!("SCHED vector FAILED: cannot create the threads");
+        return false;
+    }
+    let finished = wait_for_threads(finished_before, 2);
+    let corrupted = VECTOR_CORRUPTED.load(Ordering::Acquire);
+    if !finished || VECTOR_FAILED.load(Ordering::Acquire) || corrupted != 0 {
+        crate::kprintln!(
+            "SCHED vector FAILED: finished={} corrupted_rounds={} of {}",
+            finished,
+            corrupted,
+            2 * VECTOR_ROUNDS
+        );
+        return false;
+    }
+    crate::kprintln!("SCHED vector OK rounds={}", 2 * VECTOR_ROUNDS);
+    true
+}
+
+fn vector_thread_a(_name: &'static str) {
+    vector_rounds(0xA1A1_A1A1_A1A1_A1A1);
+}
+
+fn vector_thread_b(_name: &'static str) {
+    vector_rounds(0xB2B2_B2B2_B2B2_B2B2);
+}
+
+/// Load `pattern` into `xmm0` and `xmm15`, and into `ymm1` when AVX is enabled,
+/// spin, and count the rounds in which a register no longer holds it.
+fn vector_rounds(pattern: u64) {
+    let lanes = [pattern, !pattern];
+    let wide = [
+        pattern,
+        !pattern,
+        pattern ^ 0x00FF_00FF_00FF_00FF,
+        !pattern ^ 1,
+    ];
+    let avx = rabbit_arch::vector::xcr0() & 0b100 != 0;
+    for _ in 0..VECTOR_ROUNDS {
+        let mut back0 = [0u64; 2];
+        let mut back15 = [0u64; 2];
+        let mut back_wide = [0u64; 4];
+        if avx {
+            // SAFETY: reads 32 bytes of `wide`. AVX is enabled, as `xcr0`
+            // says; the kernel never uses `ymm1`, and the target has no AVX,
+            // which is why the register is not named as a clobber.
+            unsafe {
+                core::arch::asm!(
+                    "vmovups ymm1, [{wide}]",
+                    wide = in(reg) wide.as_ptr(),
+                    options(nostack, readonly),
+                );
+            }
+        }
+        // SAFETY: the instructions only read `lanes` and write the two output
+        // arrays, each 16 bytes. The kernel never uses `xmm0` or `xmm15`, so no
+        // register the compiler relies on is changed; the target has no SSE,
+        // which is why the registers are not named as clobbers.
+        unsafe {
+            core::arch::asm!(
+                "movups xmm0, [{lanes}]",
+                "movups xmm15, [{lanes}]",
+                lanes = in(reg) lanes.as_ptr(),
+                options(nostack, readonly),
+            );
+        }
+        for _ in 0..VECTOR_SPIN {
+            core::hint::spin_loop();
+        }
+        // SAFETY: as above; the outputs are 16 byte arrays.
+        unsafe {
+            core::arch::asm!(
+                "movups [{b0}], xmm0",
+                "movups [{b15}], xmm15",
+                b0 = in(reg) back0.as_mut_ptr(),
+                b15 = in(reg) back15.as_mut_ptr(),
+                options(nostack),
+            );
+        }
+        if avx {
+            // SAFETY: writes 32 bytes into `back_wide`; AVX is enabled.
+            unsafe {
+                core::arch::asm!(
+                    "vmovups [{out}], ymm1",
+                    out = in(reg) back_wide.as_mut_ptr(),
+                    options(nostack),
+                );
+            }
+        }
+        let wide_ok = !avx || back_wide == wide;
+        if back0 != lanes || back15 != lanes || !wide_ok {
+            VECTOR_CORRUPTED.fetch_add(1, Ordering::AcqRel);
+        }
+    }
 }
 
 /// Measure the delay between a futex wake and the woken thread running.

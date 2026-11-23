@@ -483,6 +483,7 @@ pub extern "C" fn ap_main(index: u64) -> ! {
     percpu::load_base(index);
     gdt::install(index);
     idt::load();
+    rabbit_arch::vector::init_secondary();
     lapic::init();
     if !lapic::start_timer() {
         crate::kprintln!("SMP cpu {}: the local APIC timer did not start", index);

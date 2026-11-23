@@ -451,6 +451,25 @@ pub fn schedule() {
         ) else {
             lost_thread(current, next);
         };
+        let (Some(old_vector), Some(new_vector)) = (
+            thread::vector_mut_ptr(current),
+            thread::vector_mut_ptr(next),
+        ) else {
+            lost_thread(current, next);
+        };
+
+        // The kernel never uses the vector registers, so the registers of the
+        // thread that leaves are still in the CPU and the next thread would
+        // read them. Save them into the area of the thread that leaves, and
+        // load the area of the one that runs. Both happen here, before the
+        // switch, because the thread that resumes after it is a different one.
+        // SAFETY: both pointers refer to areas in the static thread table,
+        // interrupts are disabled, and the mode was enabled on every processor
+        // before its first thread ran.
+        unsafe {
+            rabbit_arch::vector::save(old_vector);
+            rabbit_arch::vector::restore(new_vector);
+        }
 
         // The CPU installs `rsp0` on the next interrupt from ring 3 and the
         // system call stub loads the same field, so it must name the stack of
