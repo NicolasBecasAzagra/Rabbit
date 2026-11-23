@@ -12,7 +12,13 @@ proof is published with the raw data, and a loss is published like a win.
 
 The speed of a model on a machine is decided mostly by memory bandwidth and by
 the kernels of the compute, usually on an accelerator. An operating system
-matters less than that. Rabbit can only win where the system decides: mapping
+matters less than that.
+
+The first run on hardware acceleration agrees with that. On one host, some
+operations of the kernel are 1.2 to 2.3 times cheaper than the reference (7.4 times
+for the tail of a 2 MiB fault), the model and the agent loop are level with it, and
+the cost of a fault in memory is 0.73 times. The calculation is where the time goes, and it is the same code on
+both sides. Rabbit can only win where the system decides: mapping
 the weights without a copy, large pages, a scheduler that does not disturb the
 thread that decodes, the time to the first token from a cold boot, and idle
 power. The roadmap measures those, and it has a stop rule (see the end).
@@ -21,7 +27,7 @@ power. The roadmap measures those, and it has a stop rule (see the end).
 
 | Rung | Milestone | Proof that closes it | Issues |
 |---|---|---|---|
-| 0 | v0.4 Credible numbers | The rig runs with `--accel kvm` and every dataset names its acceleration mode | [#10](https://github.com/NicolasBecasAzagra/Rabbit/issues/10) |
+| 0 | v0.4 Credible numbers (done) | The rig runs with `--accel kvm` and every dataset names its acceleration mode. Proof: [`bench/results/kvm/`](../bench/results/kvm/README.md), one bare metal host | [#10](https://github.com/NicolasBecasAzagra/Rabbit/issues/10) |
 | 1 | v0.9 Real hardware | A named physical machine boots Rabbit from USB and the agent answers a task there | [#26](https://github.com/NicolasBecasAzagra/Rabbit/issues/26), [#27](https://github.com/NicolasBecasAzagra/Rabbit/issues/27), [#28](https://github.com/NicolasBecasAzagra/Rabbit/issues/28) |
 | 2 | v0.10 Fast on the CPU | AVX2 and AVX-512 paths token exact with the scalar path, GGUF read, a model of 1B or more running | [#29](https://github.com/NicolasBecasAzagra/Rabbit/issues/29), [#30](https://github.com/NicolasBecasAzagra/Rabbit/issues/30), [#31](https://github.com/NicolasBecasAzagra/Rabbit/issues/31) |
 | 3 | v0.11 The fair comparison | Same weights, same machine, against llama.cpp over Linux, with the losses | [#32](https://github.com/NicolasBecasAzagra/Rabbit/issues/32), [#33](https://github.com/NicolasBecasAzagra/Rabbit/issues/33) |

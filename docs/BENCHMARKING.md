@@ -99,9 +99,32 @@ How the two columns are read:
 A ratio above 1 means Rabbit is better, whichever the unit. If the direction of
 a ratio differs between the two columns, the table says `reverses` and every
 document that quotes the emulated ratio is corrected. A loss under KVM is
-published like a win. Until a dataset with `accel` equal to `kvm` is committed,
-the accelerated column is empty and no ratio in this repository describes a
-processor.
+published like a win. The table of both columns is in `bench/results/kvm/`, and
+under it the ratios of the emulator did not hold: see the section below.
+
+### The method of the run under KVM
+
+Each version of the kernel is measured by five runs of the operations, the model
+and the agent, in a directory `kvm-<cpu>-r<N>` of its own, so that the spread
+between runs is in the data and no claim rests on one run. `bench/kvm/repeat.sh`
+makes the runs. The table keeps, for every kernel and workload, the median of the
+medians of the runs, the largest 99th percentile and the spread between the medians
+(`bench/kvm/build_table.py`), and the lost samples and the errors of every run are
+added, so a run that lost one shows in the total. A KVM difference smaller than
+twice the combined spread of the two kernels between runs is called a tie and not
+a win or a loss. The stages of the series, one per version of the kernel, are
+derived by `bench/kvm/stages.py`, which refuses a stage whose bundle was built from
+another commit than the manifest says, or whose runs are not all `kvm`.
+
+The guest CPU is `Skylake-Client` as in every dataset. A host of another maker may
+not present it exactly, QEMU prints a warning for every feature it masks, and the
+`*.qemu.log` of each run is kept. `--cpu host` is refused. The host is described
+in `host-info.txt`: the governor, the CPU, the memory and the kernel.
+
+What the first run under KVM showed is the reason for the rule that a ratio is
+never quoted without its mode: the advantages of 1.3 to 123 times of the emulator
+were 1.2 to 2.3 times, three rows reversed, and two defects of the kernel under
+test were found, so a claim that rests on the emulator alone is not made.
 
 ## The rig
 
@@ -208,7 +231,9 @@ five, because every sample faults 65536 pages.
 
 Rabbit against Linux 7.3.0, one processor, 512 MiB, thirty iterations per
 workload, under emulation with no hardware acceleration. Both kernels fault
-the measured regions lazily, so the comparison is like for like.
+the measured regions lazily, so the comparison is like for like. These are the
+numbers of the emulator, and the run under KVM contradicts several of the
+ratios: see `bench/results/kvm/README.md`.
 
 ```text
 workload           Rabbit     mainline    mainline (mitigations=off)
@@ -430,6 +455,14 @@ At most two narrow claims, each with the losing configuration also published:
 2. **Small-workload tail latency.** No LSM, no audit subsystem, no cgroups and
    no tracing hooks means less work per fork, exec and metadata operation.
    The expected win is in p99, not in throughput.
+
+What the run under KVM says about them, on one host: the system call is 1.17 times
+cheaper than the reference with its mitigations off, and the reference with them
+on costs the same as with them off (49 ns; 72 ns with the guest model `EPYC-Rome`),
+so the gap against the default configuration that the emulator showed, 78 times,
+does not appear there. The tail of
+a 2 MiB fault is 7.4 times shorter, and the tail of a 4 KiB fault is 0.52 times,
+a loss. Both numbers are in `bench/results/kvm/table/table.md`.
 
 ## Claims that are not made
 

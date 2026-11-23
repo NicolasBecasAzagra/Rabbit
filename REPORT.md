@@ -2,8 +2,9 @@
 
 **Repository**: <https://github.com/NicolasBecasAzagra/Rabbit>
 **Status**: milestones M0 to M4c, M8, M9, E1, E2, E2b, E3a, E3b, E4, E5 and E6 are implemented and
-asserted in CI. The measurement below was produced by the rig in this
-repository, from the raw rows in `bench/results/`.
+asserted in CI, and the rig has been run under KVM on a bare metal host (M15).
+The measurement below was produced by the rig in this repository, from the raw
+rows in `bench/results/`.
 
 ## Abstract
 
@@ -15,14 +16,15 @@ mainline Linux, from the same binary and the same initramfs.
 
 The point of the project is not to be "a faster Linux". It is to measure what
 a kernel costs an inference server, with a method that can be checked, and to
-publish the losses as carefully as the wins. Three findings came out of it:
+publish the losses as carefully as the wins. Four findings came out of it:
 
-1. **With the mitigations disabled on both sides, Rabbit is about two to ten
-   times cheaper per operation** than mainline: 2.2 times per system call,
-   4.4 times per megabyte faulted in with 4 KiB pages, 9.7 times with 2 MiB
-   pages, 7.5 times per futex round trip. The difference is not the
+1. **Under an emulator, with the mitigations disabled on both sides, Rabbit is
+   about two to ten times cheaper per operation** than mainline: 2.2 times per
+   system call, 4.4 times per megabyte faulted in with 4 KiB pages, 9.7 times
+   with 2 MiB pages, 7.5 times per futex round trip. The difference is not the
    arithmetic of the program, which is the same binary on both sides, but the
-   work the kernel does per operation.
+   work the kernel does per operation. Finding 4 says how much of it survives
+   on hardware acceleration.
 2. **Large pages are an improvement on Rabbit and not on the reference
    kernel**: mapping the weights with 2 MiB pages halves the cost per MiB and
    shortens the worst fault by more than an order of magnitude on Rabbit,
@@ -35,6 +37,16 @@ publish the losses as carefully as the wins. Three findings came out of it:
    streaming 269 MB of weights took 65536 faults instead of 134. Fixing that
    took the faults to 791. The loss and its cause are published in
    `docs/BENCHMARKING.md` alongside the win.
+4. **Hardware acceleration contradicted part of the emulator ratios, and found
+   two defects of Rabbit.** The same rig run under KVM on one bare metal host
+   gives advantages of 1.2 to 2.3 times where the emulator gave 1.3 to 123, and
+   three rows that Rabbit won under emulation are losses: the cost of a fault in
+   memory with 4 KiB pages (0.73 times) and with 2 MiB pages (0.76 times), and
+   the slowest fault of 4 KiB (0.52 times). The tokens per second and the agent
+   loop are level with the reference kernel. The first runs also showed that
+   Rabbit did not save the vector registers when it switched threads, and that
+   the same binary ran different code on the two kernels. See
+   [the same rig under KVM](#results-the-same-rig-under-kvm).
 
 ## What is in the box
 
@@ -87,7 +99,8 @@ The rules were written before the first number was measured, in
 benchmarks and 1024 MiB for the inference ones. The primary host runs QEMU
 8.2.2 on an x86_64 server and the cross check runs QEMU 11.1.2 on an arm64
 macOS laptop (both are described below). Neither host has hardware
-acceleration, which is the most important limitation of everything below.
+acceleration, which is the most important limitation of everything below
+except the section on KVM, which is one run on one bare metal host.
 
 ## Results: the cost of an operation
 
@@ -362,6 +375,125 @@ vectorised, so the tokens per second go from 1.51 to 0.65 on Rabbit and
 from 1.25 to 0.20 on the reference kernel. The format buys memory, and the
 rows say so.
 
+## Results: the same rig under KVM
+
+Issue 10 asked for the rig to run with `--accel kvm` on a host with `/dev/kvm`,
+for every dataset to say which acceleration mode produced it, and for the table
+to carry both columns. This section is that run. The data, the scripts that derive
+every table and the stages are in
+[`bench/results/kvm/`](bench/results/kvm/README.md).
+
+### The setup
+
+A bare metal server, an AMD Ryzen 5 PRO 3600 with 16 GB, rented by the hour; the
+host reports that it is not a virtual machine and has `/dev/kvm`. QEMU 8.2.2, the
+same version as the emulated datasets, one virtual processor, 512 MiB for the
+operations and 1024 MiB for the model and the agent, the same initramfs and the
+same binary on both kernels. The governor was `performance`, the guest was pinned
+to two cores and the resynchronisation of the disks of the host was frozen. The
+kernels were built elsewhere and the host built nothing: the rig takes
+`--no-build`, refuses `--accel kvm` on a host that cannot run it, and records the
+accelerator, the guest and host CPU and the digests of the images in every
+`summary.json`. Each version of Rabbit was measured by five runs of the three
+datasets, and the table keeps the median of the medians and the spread between the
+runs.
+
+The host is AMD and the guest model is an Intel one, `Skylake-Client`, which every
+dataset uses. QEMU masked five features of the model (`pcid`, `invpcid`, `hle`,
+`rtm`, `erms`) and recorded the warnings. With the native model `EPYC-Rome`, the
+medians of the first version differ by at most 14% (the `mmap` of the reference
+kernel) and by 8% or less in the rest, except that the system call of the
+reference kernel with its mitigations on goes from 49 to 72 ns.
+
+### The table
+
+| workload | Rabbit, emulation (TCG) | mainline, emulation | ratio, emulation | Rabbit, KVM | mainline, KVM | ratio, KVM | direction |
+|---|---|---|---|---|---|---|---|
+| futex round trip | 6.532 us | 97.71 us | 14.96x | 1.308 us | 2.254 us | 1.72x | same side |
+| map and touch memory, per MiB | 6.826 ms | 8.685 ms | 1.27x | 61.16 us | 138.4 us | 2.26x | same side |
+| system call | 376.5 ns | 1.039 us | 2.76x | 42 ns | 49 ns | 1.17x | same side |
+| four threads, spawn to join | 619.5 us | 4.589 ms | 7.41x | 106.6 us | 135.7 us | 1.27x | same side |
+| fault in memory, 4 KiB pages, per MiB | 2.011 ms | 13.73 ms | 6.83x | 237 us | 174.3 us | 0.73x | reverses |
+| fault in memory, 2 MiB pages, per MiB | 824.8 us | 12.98 ms | 15.73x | 234.5 us | 178.1 us | 0.76x | reverses |
+| slowest single fault, 2 MiB | 189.1 us | 23.33 ms | 123.32x | 5.714 us | 42.3 us | 7.40x | same side |
+| slowest single fault, 4 KiB | 1.744 ms | 38.89 ms | 22.30x | 79.7 us | 41.06 us | 0.52x | reverses |
+| tokens per second | 0.45 tok/s | 0.21 tok/s | 2.14x | 46.41 tok/s | 46.97 tok/s | 0.99x | tie under KVM |
+| time to the first token | 11.25 s | 22.82 s | 2.03x | 109.7 ms | 114.4 ms | 1.04x | same side |
+| seconds of an agent loop | 821 s | 2570 s | 3.13x | 13.48 s | 13.19 s | 0.98x | reverses |
+
+A ratio above 1 means Rabbit is better, whichever the unit. The reference is Linux
+7.3.0 with `mitigations=off`. A tie is a difference smaller than twice the spread
+between the runs. The emulated columns are the datasets published above, one run
+each, and their ratios are the relative comparison of two kernels under one
+emulator. The KVM columns are the only ones of the two that can support a
+statement about wall clock time, and only on this host.
+
+### What changed along the way
+
+Five versions of the Rabbit kernel, in the order they were made, each measured by
+five runs. The first is the kernel as it was when the first run found what is
+below.
+
+| version | system call | futex | four threads | mmap | 4 KiB faults | 2 MiB faults | slowest 4 KiB fault | first token | tokens/s | agent loop |
+|---|---|---|---|---|---|---|---|---|---|---|
+| before | 1.17x | 2.13x | 1.30x | 0.39x | 0.54x | 0.75x | 0.98x | 0.52x | 0.61x | 0.62x |
+| vector state saved | 1.17x | 1.71x | 1.28x | 0.39x | 0.55x | 0.76x | 0.94x | 0.76x | 1.02x | 0.99x |
+| `mlock` without a copy | 1.17x | 1.72x | 1.29x | 0.39x | 0.56x | 0.76x | 0.92x | 0.99x | 1.00x | 0.98x |
+| the fault path | 1.17x | 1.71x | 1.28x | 1.21x | 0.60x | 0.75x | 0.54x | 1.03x | 0.99x | 0.98x |
+| sequential runs | 1.17x | 1.72x | 1.27x | 2.26x | 0.73x | 0.76x | 0.52x | 1.04x | 0.99x | 0.98x |
+
+* **The same binary ran different code on the two kernels.** The runtime chooses
+  its multiplication by asking the processor: AVX2 with FMA when the processor
+  and the kernel report both, SSE2 otherwise. Linux enables AVX, Rabbit did not,
+  so the model ran with eight lanes on one kernel and four on the other, and
+  Rabbit was 0.61 times on the tokens per second. With the guest model
+  `Skylake-Client,-avx2,-fma`, where the reference cannot use AVX2 either, the
+  tokens per second are 28.5 for Rabbit and 27.8 for the reference with its
+  mitigations off. The first version is therefore not a comparison of kernels for
+  the model, and the emulated model rows above were measured in that state.
+* **Rabbit did not save the vector registers on a context switch.** The kernel is
+  built without SSE, so it never touches them, and the registers of the thread
+  that left stayed in the processor for the next one. A boot test of two threads
+  that load different patterns found 77 of 80 rounds corrupted, with one and with
+  four processors, and none after the fix. The correction costs the futex a part
+  of its advantage, from 2.13 to 1.71 times.
+* **`mlock` copied the weights.** A fault in a file that asked for large pages
+  copied 2 MiB of the archive into a fresh block, so pinning the 269 MB of the
+  model was a pass over every byte of it: 46 ms against 10 ms on the reference
+  kernel, and 36 of the 37 ms by which the first token was late. Mapping the pages
+  where the archive holds them takes 1.3 ms. The price is that those pages are 4
+  KiB, and the multiplication is 5% slower for it (0.255 against 0.242 s).
+* **The fault path.** A cycle counter built into the fault path showed about 1825
+  cycles in the handler, 308 of them an `invlpg` that a not present page does not
+  need, and 579 for the lock and the allocation. Removing the invalidation, giving
+  each processor a run of 32 frames and installing the entries already accessed
+  and dirty brought `mmap` from 356 to 114 us per MiB and the fault in memory from
+  313 to 290. The slowest single fault of 4 KiB went from 43 to 77 us, and to 80
+  after the next version. My reading, not measured, is that a refill now takes the
+  lock and searches the allocator for a run; it is published as the loss it is.
+* **Sequential runs.** A fault that continues a sequential run now maps up to 16
+  pages. It took the fault in memory from 290 to 237 us per MiB and `mmap` from 114
+  to 61. I had estimated two to three times for the 4 KiB case, and the measurement
+  was 1.2: the cost that remains scales with pages, not with exceptions.
+
+### What this does not show
+
+* **One host.** One processor model, one virtual processor, one measurement
+  session. It says nothing about other processors, about more virtual processors,
+  or about hardware that is not virtualised.
+* **About 2000 cycles per page of the 4 KiB fault are not explained.** After the
+  last version the workload costs about 3280 cycles per page and the handler about
+  1300. KVM does not intervene in a fault (the counters of the host show no exit
+  for it, and the same number of faults of its own for both kernels), and touching
+  the same memory again costs 5.2 us per MiB on both kernels, so it is not the loop
+  nor the translation. The host exposes no counter of the cycles of the guest, so
+  it could not be sampled, and no cause is claimed. The measurements are in
+  `bench/results/kvm/diagnostics/`.
+* **The model and the agent are small and short.** A ratio of 0.98 or 1.04 is a tie
+  or a small difference, and not a ranking.
+* **The runtime was written for the kernel to be measured.** The tokens per second
+  that a real inference stack reaches on this processor are not measured here.
+
 ## The tool policy enforced by the kernel
 
 ### The question and the setup
@@ -531,6 +663,14 @@ and its tests with `python3 -m unittest discover -s bench/policy`.
   the rig recorded the twenty seven missing samples instead of hiding them.
   A repeated run completed all thirty iterations, so it was a flake. Both
   runs are in `bench/results/anomaly/` and `bench/results/repeat/`.
+- **Under KVM, three rows that Rabbit won under emulation are losses**: the cost
+  of a fault in memory with 4 KiB pages (0.73 times), with 2 MiB pages (0.76
+  times), and the slowest fault of 4 KiB (0.52 times). The last one got worse with
+  the changes that improved the others, from 42 to 80 us, and is published with
+  them.
+- **Rabbit did not save the vector registers on a thread switch**, and the first
+  run of the model under KVM ran different instructions on the two kernels. Both
+  were found by the run under KVM, fixed, and are in `bench/results/kvm/`.
 - **The first reference image could not be asked for large pages at all**:
   `madvise(MADV_HUGEPAGE)` returned `EINVAL`, because that advice is only
   valid when the kernel is built with transparent huge pages. The workload
@@ -539,10 +679,11 @@ and its tests with `python3 -m unittest discover -s bench/policy`.
 
 ## Threats to validity
 
-- **There is no hardware acceleration on this host.** Every absolute number
-  describes an emulator. The ratios between the kernels are less affected,
-  because both pay the same translation cost, but the translation cost is
-  large compared to the work being measured.
+- **The emulated datasets describe an emulator.** Every absolute number of them
+  is an emulator's. The run under KVM showed that the ratios are not preserved:
+  advantages of 1.3 to 123 times became 1.2 to 2.3 times, and three rows
+  reversed. The KVM column is one host and one processor model, and the
+  `Skylake-Client` model of the guest is not the processor of the host.
 - **The measurement variance under emulation is large**, up to a factor of
   two for the inference timings, and it is larger than the difference
   between the kernels there.
@@ -551,10 +692,12 @@ and its tests with `python3 -m unittest discover -s bench/policy`.
   Rabbit one system call per measurement point. The measurements that
   timestamp every sample are biased against Rabbit.
 - **One processor, 512 MiB.** A server that batches requests is not that.
-- **The runtime is deliberately naive.** It is a matmul in plain Rust with
-  no BLAS and no vectorisation, so that the comparison is about the kernel.
-  The arithmetic is identical on both sides, but the absolute tokens per
-  second are not what a real inference stack would reach.
+- **The runtime is deliberately small.** It is a matmul in plain Rust with no
+  BLAS, with a SSE2 path and an AVX2 and FMA path that it chooses at run time by
+  asking the processor, so that the comparison is about the kernel. The choice
+  has a consequence: a kernel that does not enable AVX runs the other path, as
+  Rabbit did until the run under KVM showed it. The absolute tokens per second
+  are not what a real inference stack would reach.
 - **The workload is ours.** It measures the operations the kernel does while
   serving a model, not the model.
 
@@ -598,12 +741,12 @@ serial log, so the claims in this document are checked on every push.
 
 ## What comes next
 
-- **A host with hardware acceleration**, which is the only thing missing for
-  the inference timings to mean something about a machine rather than about
-  an emulator. The rig and the scripts of the session (`bench/kvm/`) are ready
-  and were rehearsed under TCG on a virtual machine; the accelerated column of
-  the table is empty until a bare metal host runs them, and nothing in this
-  report describes a processor before that.
+- **The fault in memory, and what it costs per page.** It is the largest loss left
+  under KVM, 0.73 times, and 2000 cycles per page of it are not accounted for. A
+  host that exposes the counters of the guest, or a profiler inside the guest, would
+  say where they go.
+- **Real hardware.** The numbers under KVM are one virtualised processor. A
+  physical machine booting Rabbit is the next rung of the roadmap.
 - **A scheduler with a better tail, and more than one processor.** A server
   that batches requests lives on the latency of the tail. The kernel starts
   more processors since M9, but every dataset published here is one
