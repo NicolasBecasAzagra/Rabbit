@@ -4,8 +4,9 @@
 use crate::buddy::BuddyAllocator;
 use crate::heap::{HeapError, SizeClassHeap, MAX_SMALL, SIZE_CLASSES};
 use crate::paging::{
-    directories_for, entry, large_page_entry, large_pages_for, user_large_page_entry, Indices,
-    DIRECTORY_SPAN, LARGE_PAGE, LARGE_PAGE_SIZE, PAGE_SIZE, PRESENT, USER, WRITABLE,
+    directories_for, entry, large_page_entry, large_pages_for, user_large_page_entry,
+    user_page_entry, user_table_entry, Indices, ACCESSED, DIRECTORY_SPAN, DIRTY, LARGE_PAGE,
+    LARGE_PAGE_SIZE, PAGE_SIZE, PRESENT, USER, WRITABLE,
 };
 use crate::store::{SliceStore, VecStore};
 use crate::{
@@ -477,14 +478,33 @@ fn large_pages_require_two_mib_alignment() {
 }
 
 #[test]
+fn a_user_page_is_installed_already_used() {
+    // The access that raised the fault runs again at once: with the flags
+    // already set, the CPU has no entry to update behind it.
+    assert_eq!(
+        user_page_entry(0x1000, true),
+        0x1000 | PRESENT | WRITABLE | USER | ACCESSED | DIRTY
+    );
+    // A read only page is never written, so it never gets the dirty flag.
+    assert_eq!(
+        user_page_entry(0x1000, false),
+        0x1000 | PRESENT | USER | ACCESSED
+    );
+    assert_eq!(
+        user_table_entry(0x2000),
+        0x2000 | PRESENT | WRITABLE | USER | ACCESSED
+    );
+}
+
+#[test]
 fn a_user_large_page_is_reachable_from_ring_three() {
     assert_eq!(
         user_large_page_entry(0x40_0000, true),
-        Some(0x40_0000 | PRESENT | WRITABLE | USER | LARGE_PAGE)
+        Some(0x40_0000 | PRESENT | WRITABLE | USER | ACCESSED | DIRTY | LARGE_PAGE)
     );
     assert_eq!(
         user_large_page_entry(0x40_0000, false),
-        Some(0x40_0000 | PRESENT | USER | LARGE_PAGE)
+        Some(0x40_0000 | PRESENT | USER | ACCESSED | LARGE_PAGE)
     );
     assert_eq!(user_large_page_entry(0x40_1000, true), None);
 }

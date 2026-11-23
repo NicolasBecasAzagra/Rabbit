@@ -28,6 +28,22 @@ pub const WRITABLE: u64 = 1 << 1;
 /// Entry flag: the mapping is reachable from ring 3.
 pub const USER: u64 = 1 << 2;
 
+/// Entry flag: the CPU has used the entry for a translation.
+///
+/// The CPU sets it with an atomic update of the entry the first time it walks
+/// through it. An entry installed with the flag already set spares the CPU that
+/// update, which a processor under hardware assisted virtualisation does through
+/// the nested page tables, and which is the most expensive part of the first
+/// access to a page.
+pub const ACCESSED: u64 = 1 << 5;
+
+/// Entry flag: the CPU has written through the entry.
+///
+/// Set at the first store, with the same atomic update as [`ACCESSED`]. The
+/// kernel has no swap and no write back, so nothing reads it; it is installed
+/// set on a writable page only so that the first store does not pay for it.
+pub const DIRTY: u64 = 1 << 6;
+
 /// Entry flag: a page directory entry maps a 2 MiB page instead of a table.
 pub const LARGE_PAGE: u64 = 1 << 7;
 
@@ -66,12 +82,22 @@ pub const fn entry(physical: u64) -> u64 {
 
 /// Entry that points at the next level and is reachable from ring 3.
 pub const fn user_table_entry(physical: u64) -> u64 {
-    entry(physical) | USER
+    entry(physical) | USER | ACCESSED
 }
 
 /// Leaf entry that maps one 4 KiB page for ring 3.
-pub const fn user_page_entry(physical: u64) -> u64 {
-    entry(physical) | USER
+///
+/// The accessed flag is set, and the dirty flag too when the page is writable,
+/// because the access that raised the fault is about to run again and would
+/// otherwise make the CPU set them itself. `writable` clears the writable bit
+/// for a read only range.
+pub const fn user_page_entry(physical: u64, writable: bool) -> u64 {
+    let entry = entry(physical) | USER | ACCESSED;
+    if writable {
+        entry | DIRTY
+    } else {
+        entry & !WRITABLE
+    }
 }
 
 /// Entry of a page directory that maps one 2 MiB page.
@@ -93,9 +119,9 @@ pub const fn user_large_page_entry(physical: u64, writable: bool) -> Option<u64>
     match large_page_entry(physical) {
         None => None,
         Some(entry) => {
-            let entry = entry | USER;
+            let entry = entry | USER | ACCESSED;
             if writable {
-                Some(entry)
+                Some(entry | DIRTY)
             } else {
                 Some(entry & !WRITABLE)
             }

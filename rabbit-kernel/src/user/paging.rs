@@ -237,12 +237,11 @@ pub fn map_page(address: u64, physical: u64, writable: bool) -> Option<()> {
     for index in [indices.pml4, indices.pdpt, indices.directory] {
         table = next_table(table, index)?;
     }
-    let entry = if writable {
-        paging::user_page_entry(physical)
-    } else {
-        paging::user_page_entry(physical) & !paging::WRITABLE
-    };
-    write_entry(table, indices.table, entry);
+    write_entry(
+        table,
+        indices.table,
+        paging::user_page_entry(physical, writable),
+    );
     Some(())
 }
 
