@@ -292,6 +292,15 @@ export const milestones: Milestone[] = [
     verification: 'The runtime against the reference, with the digest of the checkpoint.',
   },
   {
+    id: 'M15',
+    name: 'The rig under KVM',
+    delivers:
+      'The benchmark rig run with hardware acceleration on a bare metal host, and what it found: the vector state of a thread, a copy in mlock and the cost of a fault.',
+    state: 'done',
+    exit: 'The rig runs with --accel kvm on a host with /dev/kvm, every dataset names its acceleration mode, and the published table carries the emulation and the KVM columns.',
+    verification: 'bench/results/kvm/ holds the raw runs, the five versions of the kernel and the scripts that derive every table.',
+  },
+  {
     id: 'M14',
     name: 'The tool policy',
     delivers:
@@ -377,10 +386,6 @@ export const milestones: Milestone[] = [
 export type NextStep = { title: string; why: string; id?: string };
 
 export const nextSteps: NextStep[] = [
-  {
-    title: 'A host with hardware acceleration',
-    why: 'The only thing missing for the timings to describe a machine instead of an emulator, and the first test of every ratio.',
-  },
   {
     title: 'Policy hardening',
     why: 'The gaps the policy report names: bind, the copies of user memory, the descriptors open before the install, the log of denials, and the same tables on a kernel with Landlock ABI 10 (issues 21 to 25).',
@@ -526,17 +531,22 @@ export const benchmarkMethod = {
     { label: 'The operations', path: 'bench/results/vps-1cpu/' },
     { label: 'The model', path: 'bench/results/inference-native/' },
     { label: 'The agent', path: 'bench/results/agent/' },
+    { label: 'The same rig under KVM on a bare metal host, the five versions of the kernel, and the diagnostics', path: 'bench/results/kvm/' },
   ],
 };
 
 export const benchmarkCaveats = [
   {
-    title: 'The ratios compare two kernels on one emulator',
-    body: 'Between 1.3 and 7.4 times cheaper per operation. The agent loop is one run: 3.4 times faster by the clock of the guest and 2.3 times by the clock of the host. Part of that gap may belong to the emulator, and it is the first thing a run with KVM has to confirm or retire.',
+    title: 'The ratios of the emulator do not all hold',
+    body: 'The table above is the emulator. Under KVM on one bare metal host the advantages of 1.3 to 123 times were 1.2 to 2.3 times, and three rows reversed: the fault in memory with 4 KiB and with 2 MiB pages, and the slowest fault of 4 KiB. The model and the agent loop are level with the reference kernel.',
   },
   {
-    title: 'The absolute numbers describe an emulator',
-    body: 'There is no hardware acceleration on the host, so a statement about a processor, and the claim that the ratios hold on real hardware, are not supported yet. A host with KVM is the open issue for that (v0.4).',
+    title: 'The KVM column is one host',
+    body: 'One processor model, an AMD Ryzen 5 PRO 3600 under a guest model of Intel, and one virtual processor. It says nothing about other processors, about more virtual processors or about hardware that is not virtualised. Rabbit has not booted on a physical machine.',
+  },
+  {
+    title: 'The first KVM runs found two defects of Rabbit',
+    body: 'The kernel did not save the vector registers when it switched threads, and it did not enable AVX, so the same binary ran different code on the two kernels. Both are fixed and the five versions measured on the way are published, with the loss that one of the fixes caused.',
   },
   {
     title: 'Every loss is published',
@@ -559,7 +569,7 @@ export const faq: { question: string; answer: string }[] = [
   {
     question: 'Does it run on my machine?',
     answer:
-      'It runs in QEMU on x86_64, with -M q35. It is not bare metal yet, and without KVM or HVF the timings describe an emulator. Hardware acceleration is the open issue.',
+      'It runs in QEMU on x86_64, with -M q35. It is not bare metal yet: the table was measured under an emulator, and once under KVM on one host, where several of its ratios did not hold. Booting on a physical machine is a later rung of the roadmap.',
   },
   {
     question: 'What does it need?',

@@ -31,11 +31,11 @@ const rows = [
   },
   {
     kind: 'hatch',
-    state: 'Not measured',
+    state: 'Partly measured',
     claim: 'Faster on real hardware',
-    detail: 'Every timing is QEMU TCG, an emulator, with no hardware acceleration.',
-    evidence: 'Issue 10',
-    href: `${meta.repo}/issues/10`,
+    detail: 'Under KVM on one bare metal host some operations are 1.2 to 2.3 times cheaper, the model is level and the fault in memory is behind. Never booted on a physical machine.',
+    evidence: 'bench/results/kvm',
+    href: `${meta.repo}/tree/main/bench/results/kvm`,
   },
 ] as const;
 ---
