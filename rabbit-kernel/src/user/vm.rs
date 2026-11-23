@@ -897,8 +897,9 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
         if paging::map_page(address, physical, false).is_none() {
             return PageFaultOutcome::OutOfMemory;
         }
+        // No invalidation: the fault was a not present entry, and a processor
+        // never caches a translation for one, so no stale entry can name it.
         FILE_PAGE_FAULTS.fetch_add(1, Ordering::Relaxed);
-        rabbit_arch::cpu::invalidate_page(address);
         return PageFaultOutcome::Resolved;
     }
     if mapping.huge
@@ -924,7 +925,9 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
         return PageFaultOutcome::OutOfMemory;
     }
     lap.mark(crate::profile::Phase::Map);
-    rabbit_arch::cpu::invalidate_page(address);
+    // No invalidation: this fault was a not present entry (a protection fault
+    // returned above), and a processor never caches a translation for a not
+    // present entry, so there is no stale one to drop. Linux does the same.
     lap.mark(crate::profile::Phase::Invalidate);
     PageFaultOutcome::Resolved
 }
