@@ -1,0 +1,6 @@
+stage,commit,change
+baseline-3bfb366,3bfb366,"Rabbit as it was before any change made with KVM: no vector state saved, SSE2 only, weights copied by mlock"
+vector-5f73cab,5f73cab,"The vector registers are saved per thread, and XSAVE and AVX are enabled"
+pin-131d288,131d288,"mlock maps the pages of a file where the archive holds them, with no copy"
+fault-f6b8abf,f6b8abf,"The fault path: no invalidation of a not present page, entries installed accessed and dirty, a frame run per processor"
+ahead-487051a,487051a,"An anonymous fault that continues a sequential run maps up to 16 pages"

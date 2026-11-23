@@ -1,0 +1,29 @@
+diff --git a/rabbit-bench/src/main.rs b/rabbit-bench/src/main.rs
+index f03c454..d325e4a 100644
+--- a/rabbit-bench/src/main.rs
++++ b/rabbit-bench/src/main.rs
+@@ -595,6 +595,24 @@ fn measure_weights(scale: TickScale, huge: bool) -> Result<(u128, u128), i64> {
+     }
+ 
+     let elapsed = start.elapsed().as_nanos();
++    // DIAGNOSTIC (not committed): touch every page again, now that no page
++    // faults, to price the loop and the TLB misses without the kernel.
++    if !huge {
++        let again = Instant::now();
++        let mut offset = 0;
++        while offset < WEIGHTS_BYTES {
++            unsafe {
++                let page = (base as usize + offset) as *mut u8;
++                let value = core::ptr::read_volatile(page);
++                core::ptr::write_volatile(page, value.wrapping_add(1));
++            }
++            let _ = ticks();
++            let _ = ticks();
++            offset += PAGE_SIZE;
++        }
++        let nanos = again.elapsed().as_nanos();
++        println!("DIAG retouch ns/MiB={}", nanos / ((WEIGHTS_BYTES / (1024 * 1024)) as u128));
++    }
+     unmap(base, WEIGHTS_BYTES);
+     let mib = (WEIGHTS_BYTES / (1024 * 1024)) as u128;
+     Ok((elapsed / mib, slowest))

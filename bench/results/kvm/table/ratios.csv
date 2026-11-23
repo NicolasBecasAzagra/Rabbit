@@ -1,0 +1,41 @@
+dataset,workload,kind,reference,ratio_tcg,ratio_kvm,direction,tcg_status,kvm_status
+operations,boot-rss-mb,context,mainline-nomitig,1.511,0.969,reverses,ok,ok
+operations,boot-rss-mb,context,mainline,1.491,0.969,reverses,ok,ok
+operations,boot-seconds,context,mainline-nomitig,4.957,0.789,reverses,ok,ok
+operations,boot-seconds,context,mainline,16.029,0.846,reverses,ok,ok
+operations,futex,comparison,mainline-nomitig,14.959,1.723,same side,ok,ok
+operations,futex,comparison,mainline,62.376,1.962,same side,ok,ok
+operations,mmap,comparison,mainline-nomitig,1.272,2.262,same side,ok,ok
+operations,mmap,comparison,mainline,3.780,2.288,same side,ok,ok
+operations,syscall,comparison,mainline-nomitig,2.760,1.167,same side,ok,ok
+operations,syscall,comparison,mainline,77.948,1.167,same side,ok,ok
+operations,threads,comparison,mainline-nomitig,7.407,1.272,same side,ok,ok
+operations,threads,comparison,mainline,12.477,1.280,same side,ok,ok
+operations,weights,comparison,mainline-nomitig,6.829,0.735,reverses,ok,ok
+operations,weights,comparison,mainline,22.154,0.736,reverses,ok,ok
+operations,weights-huge,comparison,mainline-nomitig,15.733,0.759,reverses,ok,ok
+operations,weights-huge,comparison,mainline,54.430,0.759,reverses,ok,ok
+operations,weights-huge-tail,comparison,mainline-nomitig,123.323,7.404,same side,ok,ok
+operations,weights-huge-tail,comparison,mainline,361.180,7.283,same side,ok,ok
+operations,weights-tail,comparison,mainline-nomitig,22.298,0.515,reverses,ok,ok
+operations,weights-tail,comparison,mainline,24.423,0.497,reverses,ok,ok
+inference,boot-rss-mb,context,mainline-nomitig,1.217,1.638,same side,ok,ok
+inference,boot-rss-mb,context,mainline,1.218,1.638,same side,ok,ok
+inference,boot-seconds,context,mainline-nomitig,,1.073,unknown,no reference samples,ok
+inference,boot-seconds,context,mainline,,1.073,unknown,no reference samples,ok
+inference,infer-tps,comparison,mainline-nomitig,2.143,0.988,tie under KVM,ok,ok
+inference,infer-tps,comparison,mainline,2.250,0.987,tie under KVM,ok,ok
+inference,infer-ttft,comparison,mainline-nomitig,2.029,1.043,same side,ok,ok
+inference,infer-ttft,comparison,mainline,2.193,1.039,same side,ok,ok
+agent,agent-seconds,comparison,mainline-nomitig,3.130,0.978,reverses,ok,ok
+agent,agent-seconds,comparison,mainline,3.402,0.974,reverses,ok,ok
+agent,agent-step-ms,comparison,mainline-nomitig,3.130,0.979,reverses,ok,ok
+agent,agent-step-ms,comparison,mainline,3.402,0.974,reverses,ok,ok
+agent,agent-steps,comparison,mainline-nomitig,1.000,1.000,tie under one mode,ok,ok
+agent,agent-steps,comparison,mainline,1.000,1.000,tie under one mode,ok,ok
+agent,agent-tokens,comparison,mainline-nomitig,1.000,1.000,tie under one mode,ok,ok
+agent,agent-tokens,comparison,mainline,1.000,1.000,tie under one mode,ok,ok
+agent,boot-rss-mb,context,mainline-nomitig,1.194,1.563,same side,ok,ok
+agent,boot-rss-mb,context,mainline,1.191,1.563,same side,ok,ok
+agent,boot-seconds,context,mainline-nomitig,2.152,0.990,tie under KVM,ok,ok
+agent,boot-seconds,context,mainline,2.338,0.990,tie under KVM,ok,ok

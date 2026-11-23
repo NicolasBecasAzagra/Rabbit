@@ -1,0 +1,3 @@
+ exits=0 invlpg=0 tlb_flush=0 pf_fixed=0 pf_guest=0 pf_taken=0 mmio_exits=0 insn_emulation=221 irq_exits=1 halt_exits=0 remote_tlb_flush=0
+ exits=18782 invlpg=0 tlb_flush=12 pf_fixed=605 pf_guest=0 pf_taken=651 mmio_exits=1853 insn_emulation=4126 irq_exits=3116 halt_exits=275 remote_tlb_flush=0
+ exits=33256 invlpg=0 tlb_flush=12 pf_fixed=734 pf_guest=0 pf_taken=780 mmio_exits=1853 insn_emulation=5603 irq_exits=7046 halt_exits=275 remote_tlb_flush=0
