@@ -54,9 +54,11 @@
 //! stack builder maps the top of the user half, and the two regions in between
 //! are handed out by this module.
 
+use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use rabbit_elf::USER_SPACE_END;
+use rabbit_mm::ahead::Stream;
 use rabbit_mm::mapping::{Mapping, PROT_WRITE};
 use rabbit_mm::paging::{LARGE_PAGE_SIZE, PAGE_SIZE};
 use rabbit_mm::pin::Pin;
@@ -65,6 +67,7 @@ use rabbit_mm::{phys_to_virt, LARGE_PAGE_ORDER};
 use super::errno::{EEXIST, EINVAL, ENODEV, ENOMEM, EROFS};
 use super::{fd, mappings, paging, pins};
 use crate::memory;
+use crate::percpu;
 
 /// Where a page table walk learns whether a present page is file backed.
 ///
@@ -121,6 +124,20 @@ static FILE_LARGE_PAGES: AtomicU64 = AtomicU64::new(0);
 ///
 /// A 4 KiB file page counts once, and a copied 2 MiB block counts once.
 static FILE_PAGE_FAULTS: AtomicU64 = AtomicU64::new(0);
+
+/// Pages an anonymous fault mapped beyond the one that faulted, because the
+/// fault was the next one of a sequential run.
+static ANON_PAGES_AHEAD: AtomicU64 = AtomicU64::new(0);
+
+struct Streams([UnsafeCell<Stream>; percpu::MAX_CPUS]);
+
+// SAFETY: each processor only touches its own entry, and the fault handler runs
+// with interrupts disabled, so nothing else on that processor can hold a
+// reference to it.
+unsafe impl Sync for Streams {}
+
+/// What each processor remembers about its last anonymous fault.
+static STREAMS: Streams = Streams([const { UnsafeCell::new(Stream::new()) }; percpu::MAX_CPUS]);
 
 /// Pages of file mappings that `mlock` mapped in place, with no copy.
 static FILE_PINNED_IN_PLACE: AtomicU64 = AtomicU64::new(0);
@@ -916,15 +933,55 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
             let _ = memory::with(|manager| manager.free_block(block, LARGE_PAGE_ORDER));
         }
     }
-    let Some(frame) = memory::alloc_zeroed_frame_cached() else {
-        return PageFaultOutcome::OutOfMemory;
-    };
-    lap.mark(crate::profile::Phase::Alloc);
-    if paging::map_page(address, frame, mapping.is_writable()).is_none() {
-        let _ = memory::with(|manager| manager.free_frame(frame));
-        return PageFaultOutcome::OutOfMemory;
+    map_anonymous_run(&mapping, address, &mut lap)
+}
+
+/// Map the faulting anonymous page and, when the fault continues a sequential
+/// run, the pages after it.
+///
+/// [`Stream`] decides how many. The first page has to succeed, because the
+/// faulting instruction needs it; a page after it is a bonus, so the run stops
+/// at the first one that is already present or that cannot get a frame, and the
+/// fault still resolves. The extra pages are zero filled and writable exactly
+/// like a page the program touched, so a program cannot tell them apart.
+fn map_anonymous_run(
+    mapping: &Mapping,
+    address: u64,
+    lap: &mut crate::profile::Lap,
+) -> PageFaultOutcome {
+    let writable = mapping.is_writable();
+    // SAFETY: the entry belongs to this processor and interrupts are disabled,
+    // so no other reference to it exists.
+    let stream = unsafe { &mut *STREAMS.0[percpu::this().index].get() };
+    let wanted = stream.pages_for(address, mapping.end());
+
+    let mut mapped = 0u32;
+    while mapped < wanted {
+        let page = address + u64::from(mapped) * PAGE_SIZE;
+        if mapped > 0 && paging::frame_at(page).is_some() {
+            break;
+        }
+        let Some(frame) = memory::alloc_zeroed_frame_cached() else {
+            if mapped == 0 {
+                return PageFaultOutcome::OutOfMemory;
+            }
+            break;
+        };
+        lap.mark(crate::profile::Phase::Alloc);
+        if paging::map_page(page, frame, writable).is_none() {
+            let _ = memory::with(|manager| manager.free_frame(frame));
+            if mapped == 0 {
+                return PageFaultOutcome::OutOfMemory;
+            }
+            break;
+        }
+        lap.mark(crate::profile::Phase::Map);
+        mapped += 1;
     }
-    lap.mark(crate::profile::Phase::Map);
+    stream.record(address, mapped);
+    if mapped > 1 {
+        ANON_PAGES_AHEAD.fetch_add(u64::from(mapped - 1), Ordering::Relaxed);
+    }
     // No invalidation: this fault was a not present entry (a protection fault
     // returned above), and a processor never caches a translation for a not
     // present entry, so there is no stale one to drop. Linux does the same.
@@ -945,6 +1002,11 @@ pub fn file_large_pages() -> u64 {
 /// Number of page faults the kernel resolved from a file mapping since boot.
 pub fn file_page_faults() -> u64 {
     FILE_PAGE_FAULTS.load(Ordering::Relaxed)
+}
+
+/// Number of pages anonymous faults mapped ahead of the program since boot.
+pub fn anonymous_pages_ahead() -> u64 {
+    ANON_PAGES_AHEAD.load(Ordering::Relaxed)
 }
 
 /// Number of file pages `mlock` mapped in place since boot.

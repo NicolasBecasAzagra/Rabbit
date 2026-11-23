@@ -168,6 +168,14 @@ pub fn run(program: &Program) -> u64 {
         "[user] file pages mapped in place by mlock: {}",
         vm::file_pinned_in_place()
     );
+    crate::kprintln!(
+        "[user] pages mapped ahead of an anonymous fault: {}",
+        vm::anonymous_pages_ahead()
+    );
+    crate::kprintln!(
+        "[user] frames held in the allocation caches: {}",
+        crate::memory::cached_frames()
+    );
     crate::profile::report();
     crate::kprintln!(
         "[user] locked pages: {} ({} bytes)",
