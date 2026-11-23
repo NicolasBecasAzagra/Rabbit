@@ -855,6 +855,7 @@ fn map_file_large_page(mapping: &Mapping, address: u64) -> Option<()> {
 /// block when the range asked for large pages and the fault lands on a 2 MiB
 /// boundary. The faulting instruction then runs again and succeeds.
 pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
+    let mut lap = crate::profile::Lap::start();
     if address >= USER_SPACE_END {
         return PageFaultOutcome::KernelAddress;
     }
@@ -873,6 +874,7 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
     if error & PAGE_FAULT_WRITE != 0 && !mapping.is_writable() {
         return PageFaultOutcome::Protection;
     }
+    lap.mark(crate::profile::Phase::Lookup);
     if mapping.is_file() {
         // A file page is served at the aligned 2 MiB chunk that contains the
         // fault, so the first touch of the chunk maps all of it. The chunk must
@@ -916,11 +918,14 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
     let Some(frame) = memory::with(|manager| manager.alloc_zeroed_frame()).flatten() else {
         return PageFaultOutcome::OutOfMemory;
     };
+    lap.mark(crate::profile::Phase::Alloc);
     if paging::map_page(address, frame, mapping.is_writable()).is_none() {
         let _ = memory::with(|manager| manager.free_frame(frame));
         return PageFaultOutcome::OutOfMemory;
     }
+    lap.mark(crate::profile::Phase::Map);
     rabbit_arch::cpu::invalidate_page(address);
+    lap.mark(crate::profile::Phase::Invalidate);
     PageFaultOutcome::Resolved
 }
 

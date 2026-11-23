@@ -12,6 +12,11 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+# Cycle counters on the page fault path, printed at the end of the user run.
+# Off in every published build: it adds timestamp reads to a hot path.
+fault-profile = []
+
 [dependencies]
 rabbit-arch = { path = "../rabbit-arch" }
 rabbit-bootinfo = { path = "../rabbit-bootinfo" }

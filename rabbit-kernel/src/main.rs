@@ -48,6 +48,7 @@ mod pci;
 mod percpu;
 mod pic;
 mod pit;
+mod profile;
 mod sched;
 mod sched_test;
 mod smp;

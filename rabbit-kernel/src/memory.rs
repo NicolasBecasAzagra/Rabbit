@@ -176,12 +176,14 @@ impl MemoryManager {
     /// left behind, so a mapping that requires zeroed memory uses this helper.
     pub fn alloc_zeroed_frame(&mut self) -> Option<u64> {
         let frame = self.alloc_frame()?;
+        let mut lap = crate::profile::Lap::start();
         // SAFETY: the allocator just removed the frame from its free lists and
         // nothing else references it, so the zero fill is exclusive. The
         // direct map translates the physical address.
         unsafe {
             core::ptr::write_bytes(phys_to_virt(frame) as *mut u8, 0, FRAME_SIZE);
         }
+        lap.mark(crate::profile::Phase::Zero);
         Some(frame)
     }
 

@@ -224,8 +224,11 @@ pub extern "C" fn rabbit_interrupt_handler(frame: &mut InterruptFrame) {
     // installs the frame the program just touched and the instruction retries.
     if vector == 14 {
         let address = cpu::read_cr2();
+        let mut lap = crate::profile::Lap::start();
         let outcome = crate::user::vm::handle_page_fault(address, frame.error_code);
         if outcome == PageFaultOutcome::Resolved {
+            lap.mark(crate::profile::Phase::Total);
+            crate::profile::count_fault();
             return;
         }
         fatal_page_fault(frame, address, outcome);
