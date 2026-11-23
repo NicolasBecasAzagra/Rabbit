@@ -916,7 +916,7 @@ pub fn handle_page_fault(address: u64, error: u64) -> PageFaultOutcome {
             let _ = memory::with(|manager| manager.free_block(block, LARGE_PAGE_ORDER));
         }
     }
-    let Some(frame) = memory::with(|manager| manager.alloc_zeroed_frame()).flatten() else {
+    let Some(frame) = memory::alloc_zeroed_frame_cached() else {
         return PageFaultOutcome::OutOfMemory;
     };
     lap.mark(crate::profile::Phase::Alloc);

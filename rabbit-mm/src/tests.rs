@@ -541,3 +541,53 @@ fn spans_are_rounded_up_to_whole_pages() {
     // The page table sizes the boot code uses.
     assert_eq!(PAGE_SIZE * 512, LARGE_PAGE_SIZE);
 }
+
+#[test]
+fn a_split_run_gives_every_frame_its_own_owner() {
+    let mut allocator = released(64);
+    let base = allocator.allocate_split(5).expect("a run of 32 frames");
+    assert_eq!(allocator.free_frames(), 32);
+    // The run as a whole is no longer a block, so freeing it at its order is
+    // refused instead of corrupting the free lists.
+    assert!(allocator.deallocate(base, 5).is_err());
+    // Every frame frees on its own, at order 0.
+    for offset in 0..32 {
+        allocator
+            .deallocate(base + offset, 0)
+            .expect("each frame of the run is owned");
+    }
+    assert_eq!(allocator.free_frames(), 64);
+}
+
+#[test]
+fn the_frames_of_a_split_run_merge_back_into_blocks() {
+    let mut allocator = released(64);
+    let before = (0..=MAX_ORDER)
+        .map(|order| allocator.free_blocks_at(order))
+        .collect::<Vec<_>>();
+    let base = allocator.allocate_split(5).expect("a run of 32 frames");
+    for offset in 0..32 {
+        allocator.deallocate(base + offset, 0).expect("owned");
+    }
+    let after = (0..=MAX_ORDER)
+        .map(|order| allocator.free_blocks_at(order))
+        .collect::<Vec<_>>();
+    // The same free blocks as before: nothing was left fragmented.
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_frame_of_a_split_run_cannot_be_freed_twice() {
+    let mut allocator = released(64);
+    let base = allocator.allocate_split(3).expect("a run of 8 frames");
+    allocator.deallocate(base + 2, 0).expect("first free");
+    assert!(allocator.deallocate(base + 2, 0).is_err());
+    assert_eq!(allocator.free_frames(), 64 - 7);
+}
+
+#[test]
+fn a_split_run_fails_when_no_block_is_large_enough() {
+    let mut allocator = released(4);
+    assert!(allocator.allocate_split(3).is_err());
+    assert_eq!(allocator.free_frames(), 4);
+}

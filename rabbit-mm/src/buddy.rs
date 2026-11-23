@@ -171,6 +171,23 @@ impl<S: BlockStore> BuddyAllocator<S> {
         Ok(current)
     }
 
+    /// Allocate a block of `1 << order` frames and hand it out as that many
+    /// separate order 0 frames. Returns the first frame; the rest follow it.
+    ///
+    /// One search and one split chain pay for the whole run instead of one per
+    /// frame, which is what a caller that takes frames one at a time, such as
+    /// the page fault handler, needs. Every frame of the run is then owned on
+    /// its own, so it can be freed with `deallocate(frame, 0)` and merges with
+    /// its buddy exactly like a frame taken by `allocate(0)`. The run as a whole
+    /// cannot be freed at `order`: the allocator no longer knows it as a block.
+    pub fn allocate_split(&mut self, order: u8) -> Result<usize, FrameError> {
+        let head = self.allocate(order)?;
+        for offset in 0..(1usize << order) {
+            self.store.set(head + offset, OWNED);
+        }
+        Ok(head)
+    }
+
     /// Free a block of `1 << order` frames that starts at `frame`.
     ///
     /// The block must come from [`BuddyAllocator::allocate`] with the same

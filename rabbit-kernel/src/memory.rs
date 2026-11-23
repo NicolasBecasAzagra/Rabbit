@@ -26,7 +26,8 @@ use rabbit_mm::heap::{HeapError, SizeClassHeap, MIN_ALIGN, SIZE_CLASSES};
 use rabbit_mm::store::SliceStore;
 use rabbit_mm::{phys_to_virt, FrameError, DIRECT_MAP_SPAN, FRAME_SIZE};
 
-use crate::sync::IrqSpinLock;
+use crate::percpu;
+use crate::sync::{self, IrqSpinLock};
 
 /// Largest number of frames the kernel can describe.
 ///
@@ -166,6 +167,16 @@ impl MemoryManager {
     pub fn alloc_frame(&mut self) -> Option<u64> {
         self.frames
             .allocate(0)
+            .ok()
+            .map(|frame| frame as u64 * FRAME_SIZE as u64)
+    }
+
+    /// Take `1 << order` frames at once, owned one by one, and return the first.
+    ///
+    /// The frames are not zeroed. See [`BuddyAllocator::allocate_split`].
+    pub fn alloc_frame_run(&mut self, order: u8) -> Option<u64> {
+        self.frames
+            .allocate_split(order)
             .ok()
             .map(|frame| frame as u64 * FRAME_SIZE as u64)
     }
@@ -360,6 +371,91 @@ pub fn with<R>(f: impl FnOnce(&mut MemoryManager) -> R) -> Option<R> {
     // caller, so the exclusive borrow cannot overlap.
     let slot = unsafe { &mut *MANAGER.0.get() };
     slot.as_mut().map(f)
+}
+
+/// Order of the run of frames a processor takes from the allocator at once.
+///
+/// 32 frames, 128 KiB. A page fault then takes the lock and walks the allocator
+/// once per 32 faults instead of once per fault.
+const CACHE_ORDER: u8 = 5;
+
+/// The unused part of the last run one processor took.
+struct FrameCache {
+    /// Physical address of the next frame to hand out.
+    next: u64,
+    /// Frames left in the run.
+    remaining: u32,
+}
+
+struct Caches([UnsafeCell<FrameCache>; percpu::MAX_CPUS]);
+
+// SAFETY: each processor only touches its own entry, and only with interrupts
+// disabled, so neither another processor nor an interrupt handler on the same
+// one can hold a reference to it at the same time.
+unsafe impl Sync for Caches {}
+
+static CACHES: Caches = Caches(
+    [const {
+        UnsafeCell::new(FrameCache {
+            next: 0,
+            remaining: 0,
+        })
+    }; percpu::MAX_CPUS],
+);
+
+/// Allocate one zeroed 4 KiB frame for a page fault, without the global lock
+/// on most calls.
+///
+/// A processor takes a run of [`CACHE_ORDER`] frames from the allocator under
+/// the lock and hands them out one by one from its own cache. A frame freed
+/// later goes straight back to the allocator, so the frames still in a cache
+/// are the only ones that are held and not in use: at most `(1 << CACHE_ORDER)
+/// - 1` per processor. When the allocator has no run of that size left, the
+/// call falls back to a single frame, so a nearly full machine behaves as it
+/// did without the cache.
+pub fn alloc_zeroed_frame_cached() -> Option<u64> {
+    let flags = sync::interrupt_save_disable();
+    let index = percpu::this().index;
+    // SAFETY: the entry belongs to this processor and interrupts are disabled,
+    // so no other reference to it exists.
+    let cache = unsafe { &mut *CACHES.0[index].get() };
+    if cache.remaining == 0 {
+        match with(|manager| manager.alloc_frame_run(CACHE_ORDER)).flatten() {
+            Some(base) => {
+                cache.next = base;
+                cache.remaining = 1 << CACHE_ORDER;
+            }
+            None => {
+                sync::interrupt_restore(flags);
+                return with(|manager| manager.alloc_zeroed_frame()).flatten();
+            }
+        }
+    }
+    let frame = cache.next;
+    cache.next += FRAME_SIZE as u64;
+    cache.remaining -= 1;
+    sync::interrupt_restore(flags);
+
+    let mut lap = crate::profile::Lap::start();
+    // SAFETY: the frame came out of the allocator and nothing else references
+    // it, so the zero fill is exclusive. The direct map translates it.
+    unsafe {
+        core::ptr::write_bytes(phys_to_virt(frame) as *mut u8, 0, FRAME_SIZE);
+    }
+    lap.mark(crate::profile::Phase::Zero);
+    Some(frame)
+}
+
+/// Frames the processors hold in their caches: taken from the allocator, not
+/// yet handed out. A diagnostic, read without stopping the other processors.
+pub fn cached_frames() -> u64 {
+    let mut total = 0;
+    for entry in &CACHES.0 {
+        // SAFETY: a racy read of a counter that only its own processor writes;
+        // the value is a diagnostic and a stale one does no harm.
+        total += u64::from(unsafe { (*entry.get()).remaining });
+    }
+    total
 }
 
 /// Boot self test for the frame allocator and the heap.
