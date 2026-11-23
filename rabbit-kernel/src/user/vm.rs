@@ -32,6 +32,12 @@
 //! a 2 MiB block is pinned at [`LARGE_PAGE_ORDER`], so the last page of a
 //! partial unlock gives the whole block back at that order.
 //!
+//! A range of a file mapping is not faulted at all: the pin maps the archive
+//! pages where they are, in one pass, and records one pin for the run. It does
+//! not copy them into 2 MiB blocks, which a fault does when the mapping asked
+//! for large pages, because the copy is a pass over every byte of the file
+//! inside the call.
+//!
 //! The program break keeps its eager behaviour: `brk` maps and unmaps its
 //! frames directly, without a record in the mapping table. `mremap` is not
 //! supported and rejects with `EINVAL`; no program of this milestone needs it.
@@ -115,6 +121,9 @@ static FILE_LARGE_PAGES: AtomicU64 = AtomicU64::new(0);
 ///
 /// A 4 KiB file page counts once, and a copied 2 MiB block counts once.
 static FILE_PAGE_FAULTS: AtomicU64 = AtomicU64::new(0);
+
+/// Pages of file mappings that `mlock` mapped in place, with no copy.
+static FILE_PINNED_IN_PLACE: AtomicU64 = AtomicU64::new(0);
 
 /// Page fault error code: the fault is a protection violation, not a missing
 /// translation. The hardware sets this bit when the entry is present.
@@ -570,6 +579,9 @@ enum LockKind {
     FreshBlock,
     /// A page of an existing 2 MiB leaf; the value is the block base.
     LargeLeaf(u64),
+    /// A run of read only file pages that the pin maps where the archive holds
+    /// them, with no copy and with one record for the whole run.
+    FileRun,
 }
 
 /// Classify the piece of a locked range that starts at `address`.
@@ -599,6 +611,12 @@ fn lock_unit(address: u64, end: u64) -> Option<LockUnit> {
             kind: LockKind::Page,
         });
     };
+    if let Some(size) = file_run_size(&mapping, address, end) {
+        return Some(LockUnit {
+            size,
+            kind: LockKind::FileRun,
+        });
+    }
     let chunk = address & !(LARGE_PAGE_SIZE - 1);
     if mapping.huge
         && address == chunk
@@ -615,6 +633,38 @@ fn lock_unit(address: u64, end: u64) -> Option<LockUnit> {
         size: PAGE_SIZE,
         kind: LockKind::Page,
     })
+}
+
+/// Length of the run of file pages that starts at `address` and that a pin can
+/// map in place, or `None` when the range does not qualify.
+///
+/// A file page needs no frame: the archive already holds it, and the page table
+/// only has to name it. The weights of a model are such a range, and copying
+/// them into 2 MiB blocks to get large pages costs one pass over every byte of
+/// them inside the call. The run covers the file mapping up to `end` and stops
+/// at the first 2 MiB leaf, which is a copy that an earlier fault made and which
+/// the pin takes as a unit of its own. The archive address of the first page
+/// has to be page aligned, because a page table entry cannot name anything else.
+fn file_run_size(mapping: &Mapping, address: u64, end: u64) -> Option<u64> {
+    if !mapping.is_file() {
+        return None;
+    }
+    let first = mapping.file_physical(address)?;
+    if !first.is_multiple_of(PAGE_SIZE) {
+        return None;
+    }
+    let limit = end.min(mapping.end());
+    if limit <= address {
+        return None;
+    }
+    let mut chunk = (address & !(LARGE_PAGE_SIZE - 1)) + LARGE_PAGE_SIZE;
+    while chunk < limit {
+        if paging::large_page_at(chunk).is_some() {
+            return Some(chunk - address);
+        }
+        chunk += LARGE_PAGE_SIZE;
+    }
+    Some(limit - address)
 }
 
 /// Classify `address` as one 4 KiB page.
@@ -684,6 +734,42 @@ fn pin_unit(address: u64, unit: &LockUnit, generation: u32) -> Result<(), i64> {
                 physical: block,
                 order: LARGE_PAGE_ORDER,
                 owned: true,
+                generation,
+            }
+        }
+        LockKind::FileRun => {
+            let Some(mapping) = mappings::find(address) else {
+                return Err(ENOMEM);
+            };
+            let Some(first) = mapping.file_physical(address) else {
+                return Err(ENOMEM);
+            };
+            let end = address + unit.size;
+            let mut page = address;
+            let mut mapped = 0u64;
+            while page < end {
+                // A page that an earlier fault already mapped stays as it is:
+                // it names the same archive page. Only a missing one is mapped,
+                // and no TLB entry can name a page that was not present, so no
+                // invalidation is needed.
+                if paging::frame_at(page).is_none() {
+                    let Some(physical) = mapping.file_physical(page) else {
+                        return Err(ENOMEM);
+                    };
+                    if paging::map_page(page, physical, false).is_none() {
+                        return Err(ENOMEM);
+                    }
+                    mapped += 1;
+                }
+                page += PAGE_SIZE;
+            }
+            FILE_PINNED_IN_PLACE.fetch_add(mapped, Ordering::Relaxed);
+            Pin {
+                base: address,
+                length: unit.size,
+                physical: first,
+                order: 0,
+                owned: false,
                 generation,
             }
         }
@@ -851,6 +937,11 @@ pub fn file_large_pages() -> u64 {
 /// Number of page faults the kernel resolved from a file mapping since boot.
 pub fn file_page_faults() -> u64 {
     FILE_PAGE_FAULTS.load(Ordering::Relaxed)
+}
+
+/// Number of file pages `mlock` mapped in place since boot.
+pub fn file_pinned_in_place() -> u64 {
+    FILE_PINNED_IN_PLACE.load(Ordering::Relaxed)
 }
 
 /// Number of mapping slots in use and in the table.

@@ -165,6 +165,10 @@ pub fn run(program: &Program) -> u64 {
         vm::file_large_pages()
     );
     crate::kprintln!(
+        "[user] file pages mapped in place by mlock: {}",
+        vm::file_pinned_in_place()
+    );
+    crate::kprintln!(
         "[user] locked pages: {} ({} bytes)",
         vm::locked_pages(),
         vm::locked_bytes()

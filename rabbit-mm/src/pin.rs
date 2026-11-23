@@ -313,6 +313,61 @@ mod tests {
         }
     }
 
+    /// A run of read only file pages: one record, borrowed from the archive.
+    fn file_run(base: u64, physical: u64, pages: u64) -> Pin {
+        Pin {
+            base,
+            length: pages * PAGE_SIZE,
+            physical,
+            order: 0,
+            owned: false,
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn a_file_run_is_one_record_for_every_page() {
+        let mut table = PinTable::<4>::new();
+        table
+            .insert(file_run(0x4000_0000, 0x1000_0000, 65_536))
+            .expect("one record covers the weights");
+        assert_eq!(table.count(), 1);
+        assert_eq!(table.locked_pages(), 65_536);
+        assert!(table.covers(0x4000_0000, 65_536 * PAGE_SIZE));
+    }
+
+    #[test]
+    fn a_partial_unlock_trims_a_file_run_and_it_stays_borrowed() {
+        let mut table = PinTable::<4>::new();
+        let base = 0x4000_0000;
+        table
+            .insert(file_run(base, 0x1000_0000, 100))
+            .expect("pin fits");
+        // Unlock pages 10 to 19: the run splits in two and both halves stay
+        // pinned, borrowed, with no frame to give back.
+        let released = table
+            .claim(base + 10 * PAGE_SIZE, base + 20 * PAGE_SIZE)
+            .expect("a free slot exists")
+            .expect("the range is pinned");
+        assert_eq!(released.pages(), 10);
+        assert!(!released.owned);
+        assert_eq!(table.count(), 2);
+        assert_eq!(table.locked_pages(), 90);
+        assert!(table.covers(base, 10 * PAGE_SIZE));
+        assert!(table.covers(base + 20 * PAGE_SIZE, 80 * PAGE_SIZE));
+        assert!(!table.overlaps(base + 10 * PAGE_SIZE, 10 * PAGE_SIZE));
+    }
+
+    #[test]
+    fn a_file_run_never_claims_to_hold_an_anonymous_frame() {
+        let mut table = PinTable::<4>::new();
+        table
+            .insert(file_run(0x4000_0000, 0x1000_0000, 100))
+            .expect("pin fits");
+        // An anonymous frame elsewhere in memory is not held by the run.
+        assert!(!table.holds_physical(0x2000_0000, PAGE_SIZE));
+    }
+
     #[test]
     fn finds_a_pin_inside_a_range() {
         let mut table = PinTable::<4>::new();
