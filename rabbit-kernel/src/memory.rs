@@ -409,8 +409,8 @@ static CACHES: Caches = Caches(
 /// A processor takes a run of [`CACHE_ORDER`] frames from the allocator under
 /// the lock and hands them out one by one from its own cache. A frame freed
 /// later goes straight back to the allocator, so the frames still in a cache
-/// are the only ones that are held and not in use: at most `(1 << CACHE_ORDER)
-/// - 1` per processor. When the allocator has no run of that size left, the
+/// are the only ones that are held and not in use, which is one run less one
+/// frame per processor. When the allocator has no run of that size left, the
 /// call falls back to a single frame, so a nearly full machine behaves as it
 /// did without the cache.
 pub fn alloc_zeroed_frame_cached() -> Option<u64> {
