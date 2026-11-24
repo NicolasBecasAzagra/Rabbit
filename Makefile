@@ -25,7 +25,16 @@ KERNEL_FLAGS := --target $(KERNEL_TARGET) \
 
 # The kernel binary is `no_std` + `no_main`: it cannot be built as a host test
 # target and is excluded from the host runs.
-HOST_ONLY := --exclude rabbit-kernel
+HOST_ONLY := --exclude rabbit-kernel --exclude rabbit-uefi
+
+# The UEFI loader is a PE32+ application for the firmware target, built from
+# source like the kernel. The artifact is x86_64-unknown-uefi/release/rabbit-uefi.efi.
+UEFI_TARGET := x86_64-unknown-uefi
+UEFI_FLAGS := --target $(UEFI_TARGET) \
+	--target-dir $(TARGET_DIR)/uefi \
+	-Z build-std=core,compiler_builtins \
+	-Z build-std-features=compiler-builtins-mem
+UEFI_EFI := $(TARGET_DIR)/uefi/$(UEFI_TARGET)/release/rabbit-uefi.efi
 
 # The user program is a separate workspace and a normal Rust program built
 # against the standard library of the Linux musl target. That target is
@@ -124,7 +133,7 @@ QEMU_FLAGS := -M q35 -m 512M \
 	-serial stdio \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all build run run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs agent agent-initramfs agent-net-initramfs run-infer quantize
+.PHONY: all build uefi run run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs agent agent-initramfs agent-net-initramfs run-infer quantize
 
 # The path of the built kernel, so the CI does not have to repeat it.
 print-kernel-path:
@@ -249,6 +258,9 @@ run-infer: infer-initramfs build
 build: userland infer
 	$(CARGO) build --release $(KERNEL_FLAGS)
 
+uefi:
+	$(CARGO) build -p rabbit-uefi --release $(UEFI_FLAGS)
+
 # The multiprocessor boot. The kernel finds the processors in the ACPI table
 # and starts them, so this is the only way to exercise that path.
 run-smp: build
@@ -316,7 +328,7 @@ fmt-check:
 # The kernel build reads the embedded user program, so both lint targets need
 # the userland binary to exist.
 clippy: userland
-	$(CARGO) clippy --workspace --bins --lib $(KERNEL_FLAGS) -- -D warnings
+	$(CARGO) clippy --workspace --exclude rabbit-uefi --bins --lib $(KERNEL_FLAGS) -- -D warnings
 	$(CARGO) clippy --manifest-path $(NET_DIR)/Cargo.toml --lib $(KERNEL_FLAGS) -- -D warnings
 	$(CARGO) clippy --manifest-path $(HTTP_DIR)/Cargo.toml --lib $(KERNEL_FLAGS) -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(USERLAND_FLAGS) -- -D warnings

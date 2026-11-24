@@ -10,6 +10,20 @@ members = [
     "rabbit-mm",
     "rabbit-policy",
     "rabbit-sched",
+    "rabbit-uefi",
+]
+# The UEFI loader targets the firmware, not the kernel: a plain `cargo build`
+# with the kernel target must not try to link it with the kernel script.
+default-members = [
+    "rabbit-arch",
+    "rabbit-bootinfo",
+    "rabbit-drivers",
+    "rabbit-elf",
+    "rabbit-initramfs",
+    "rabbit-kernel",
+    "rabbit-mm",
+    "rabbit-policy",
+    "rabbit-sched",
 ]
 # Crates that carry their own workspace must be named here, or the paths that
 # point into them make cargo see two workspace roots in the same tree.

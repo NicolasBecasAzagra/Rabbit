@@ -1,0 +1,13 @@
+[package]
+name = "rabbit-uefi"
+description = "Rabbit UEFI loader: PE32+ EFI application that leaves boot services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "rabbit-uefi"
+path = "src/main.rs"
+test = false
+bench = false

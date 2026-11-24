@@ -55,3 +55,7 @@ version = "0.1.0"
 [[package]]
 name = "rabbit-sched"
 version = "0.1.0"
+
+[[package]]
+name = "rabbit-uefi"
+version = "0.1.0"
