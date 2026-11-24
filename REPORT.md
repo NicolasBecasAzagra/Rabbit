@@ -373,7 +373,68 @@ The memory of the guest falls with the format and the speed does not
 improve: the block kernels are scalar while the floating point path is
 vectorised, so the tokens per second go from 1.51 to 0.65 on Rabbit and
 from 1.25 to 0.20 on the reference kernel. The format buys memory, and the
-rows say so.
+rows say so. That measurement is of the scalar kernels; the vector kernels
+that came after it are in the next section, and they are not measured yet.
+
+## Results: vector kernels for Q8 and Q4, checked and not yet measured
+
+The block kernels of the two quantized formats were scalar, which is why the
+formats lost speed. Issue 29 gave them SSE2 and AVX2 kernels, and this section
+says what was shown about them and what was not. It contains no speed.
+
+**The order of the sums.** The scalar kernels were rewritten with one
+canonical order: a block of 32 weights is summed in eight lanes, each lane
+starting from zero and adding a separate product, with no fused multiply add,
+the lanes are reduced by a fixed tree, and the scale is applied per block in
+scalar arithmetic. The SSE2 kernel (two registers of four lanes) and the AVX2
+kernel (one of eight) follow the same order, so they are meant to be bit for
+bit equal to the scalar one. The bfloat16 kernels keep their fused multiply
+add and are not bit for bit.
+
+**What was checked.**
+
+- A check that runs inside the Rabbit guest compares every path with the
+  scalar one by the bits of the result over 51 shapes of each format, with
+  signed zeros, subnormals, extreme scales, all 256 byte values as weights of
+  Q8 and every nibble in both positions of Q4. It passes in the CI, in a guest
+  whose emulated processor offers AVX2 and in one without AVX2 and FMA, where it
+  is required to check the scalar and SSE2 paths and says that it skipped AVX2.
+  The guest runs under the emulator, so this shows that the kernels give the
+  right bits and not how fast they are.
+- Changing the reduction tree of an AVX2 kernel, or the order of the nibbles,
+  makes the check fail. That was tried by hand, and it is the evidence that
+  the check can fail.
+- A decoder check decodes seven prompts for 8 and for 64 steps on every path
+  of a synthetic model in bfloat16 and in the Q8 and Q4 copies that the
+  repository's own quantizer writes from it. The greedy tokens are identical
+  on every path; the logits of Q8 and Q4 are bit for bit equal; those of
+  bfloat16 differ by 2e-6 at most; no step is closer than twice the largest
+  difference.
+
+**What was not shown.**
+
+- No speed. The runtime can now be limited to a path, and `bench/kvm/paths.sh`
+  measures tokens per second for each path and format on a KVM host, but it was
+  run only under the emulator, whose numbers say nothing about speed. The first
+  run on the host with KVM is still to be done.
+- No real checkpoint. The checks use a synthetic model with fixed seed. The
+  tokens of the real SmolLM2 checkpoint against the reference tokens are not
+  yet compared for the vector paths, nor for the rewritten scalar order, whose
+  rounding differs from the previous scalar code (on the synthetic models the
+  largest logit difference was 4.3e-6 against a smallest margin of 0.0022).
+- Not the whole decoder. Only the matrix by vector products change by path.
+  The norms, the attention, the softmax and the activation are the same code
+  on every path, so equal tokens do not test them.
+- Not the quality of the quantization. Each format is compared with its own
+  scalar kernel and not with bfloat16.
+- No AVX-512. It cannot run on the only host for the rig (a Zen 2 processor)
+  or under the emulator, so it was split off as issue 39.
+
+**What a speedup would mean.** The same user program runs on Rabbit and on
+Linux, so a faster kernel speeds up both. If the decode is bound by memory
+bandwidth, the vector kernels may tie with the scalar ones. A speedup of a
+kernel over the scalar path is a statement about the runtime, and it does not
+count for the stop rule of the fair comparison (issue 33).
 
 ## Results: the same rig under KVM
 
@@ -734,6 +795,13 @@ python3 bench/run.py \
 
 # the oracle for the runtime
 python3 bench/reference/reference_tokens.py --out reference.json
+
+# the vector kernels of Q8 and Q4 on every path, in the guest
+make matvec-check
+make matvec-check-run MATVEC_CPU="Skylake-Client,-avx2,-fma" MATVEC_REQUIRE="scalar sse2"
+
+# tokens per second per path, on a host with KVM (see bench/kvm/README.md)
+bench/kvm/paths.sh --accel kvm
 ```
 
 Every assertion in the continuous integration runs the kernel and checks the
@@ -745,6 +813,10 @@ serial log, so the claims in this document are checked on every push.
   under KVM, 0.73 times, and 2000 cycles per page of it are not accounted for. A
   host that exposes the counters of the guest, or a profiler inside the guest, would
   say where they go.
+- **The vector kernels of Q8 and Q4 on KVM.** They are written, tested and
+  gated in the CI, and not measured. One session on the host with KVM runs
+  `bench/kvm/paths.sh` and compares the tokens of the real checkpoint with the
+  reference ones.
 - **Real hardware.** The numbers under KVM are one virtualised processor. A
   physical machine booting Rabbit is the next rung of the roadmap.
 - **A scheduler with a better tail, and more than one processor.** A server

@@ -330,7 +330,7 @@ export const milestones: Milestone[] = [
     name: 'Fast on the CPU',
     delivers: 'Vector kernels, the GGUF format and a model of one billion parameters or more, on the processor alone.',
     state: 'next',
-    exit: 'The AVX2 and AVX-512 paths give the same tokens as the scalar path, and a model of one billion parameters or more runs with its weights mapped.',
+    exit: 'The SSE2 and AVX2 paths of Q8 and Q4 give the same tokens as the scalar path (AVX-512 is tracked apart until a machine can run it), and a model of one billion parameters or more runs with its weights mapped.',
     verification: 'Token for token against the reference in CI, and a dataset with the raw logs.',
   },
   {
