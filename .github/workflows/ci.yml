@@ -548,6 +548,23 @@ jobs:
           grep -qF "SMP processors=4" uefi-smp-clean.log
           grep -qF "SMP OK cpus=4" uefi-smp-clean.log
 
+      - name: Same tokens on every code path
+        timeout-minutes: 20
+        run: |
+          # The vector kernels of the products must give the same bits as the
+          # scalar ones, and a model decoded on every path must give the same
+          # tokens. The check runs inside the Rabbit guest, on the processor
+          # the emulator offers, with a synthetic model in bfloat16, Q8 and Q4.
+          # Changing the order of the sums of a kernel makes it fail.
+          make matvec-check
+
+      - name: Same tokens without AVX2
+        timeout-minutes: 15
+        run: |
+          # The same check on a processor model without AVX2 and FMA, which
+          # must still pass on the paths it offers and say which it skipped.
+          make matvec-check-run MATVEC_CPU="Skylake-Client,-avx2,-fma" MATVEC_REQUIRE="scalar sse2"
+
       - name: Boot kernel with the initramfs
         run: |
           # The weights workload touches the whole region it measures, so the

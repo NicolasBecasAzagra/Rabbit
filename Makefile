@@ -134,7 +134,7 @@ QEMU_FLAGS := -M q35 -m 512M \
 	-serial stdio \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs matvec-check-initramfs matvec-check agent agent-initramfs agent-net-initramfs run-infer quantize
+.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs matvec-check-initramfs matvec-check matvec-check-run agent agent-initramfs agent-net-initramfs run-infer quantize
 
 # The path of the built kernel, so the CI does not have to repeat it.
 print-kernel-path:
@@ -297,6 +297,11 @@ matvec-check-initramfs: musl-std
 	EXTRA_DIR=$(MATVEC_STAGE) bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
 
 matvec-check: matvec-check-initramfs build
+	@$(MAKE) --no-print-directory matvec-check-run
+
+# The run and the gates alone, on what `matvec-check` built, so a second
+# processor model does not build the model and the archive again.
+matvec-check-run:
 	@$(QEMU) -M q35 -cpu $(MATVEC_CPU) -m 512M \
 		-kernel $(KERNEL) -initrd $(MATVEC_INITRAMFS) \
 		-append console=ttyS0 \
