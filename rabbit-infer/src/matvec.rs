@@ -33,6 +33,8 @@
 //! order (eight lanes, a fixed tree, one scale per block) that the vector
 //! kernels of those formats must reproduce bit for bit.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use crate::error::{Error, Result};
 
 /// Rows of the output computed together.
@@ -116,12 +118,61 @@ pub fn select(limit: Path) -> Path {
     limit.min(detected())
 }
 
+/// The code of "no limit" in [`LIMIT`]; no path has it.
+const NO_LIMIT: u8 = u8::MAX;
+
+/// The process wide limit of [`set_path_limit`], as the code of a [`Path`].
+static LIMIT: AtomicU8 = AtomicU8::new(NO_LIMIT);
+
+/// Limit the path of [`matvec_bf16`], [`matvec_q8`] and [`matvec_q4`] for the
+/// whole process, or lift the limit with `None`.
+///
+/// Opt in and off by default: with no limit the three products run on
+/// [`detected`], exactly as before, and the runtime never calls this. The
+/// guest check of the whole model calls it to decode the same prompts on one
+/// path after the other, because the decoder reaches the products through
+/// those three functions and has no parameter to carry a path.
+///
+/// The limit is global state. A test that runs in a thread of the parallel test
+/// harness must not call it, because every other test would run on the
+/// limited path; tests use [`matvec_bf16_with`], [`matvec_q8_with`] and
+/// [`matvec_q4_with`] instead. Call it from a single threaded program, before
+/// the products it is meant to affect. As with [`select`], a limit above what
+/// the processor has runs on [`detected`].
+pub fn set_path_limit(limit: Option<Path>) {
+    LIMIT.store(limit.map_or(NO_LIMIT, |path| path as u8), Ordering::Relaxed);
+}
+
+/// The path the three products of the process run on: [`detected`] when no
+/// limit is set, and the limit lowered by [`select`] otherwise.
+pub fn active() -> Path {
+    match path_from_code(LIMIT.load(Ordering::Relaxed)) {
+        Some(limit) => select(limit),
+        None => detected(),
+    }
+}
+
+/// The path with this code, or `None` for [`NO_LIMIT`] and any other value.
+fn path_from_code(code: u8) -> Option<Path> {
+    match code {
+        0 => Some(Path::Scalar),
+        #[cfg(target_arch = "x86_64")]
+        1 => Some(Path::Sse2),
+        #[cfg(target_arch = "x86_64")]
+        2 => Some(Path::Avx2),
+        #[cfg(target_arch = "aarch64")]
+        1 => Some(Path::Neon),
+        _ => None,
+    }
+}
+
 /// Multiply `weights` by `input`, writing one value per row.
 ///
 /// `weights` is a row major `bfloat16` matrix of `rows * columns` elements and
 /// `input` has `columns` values. The caller validated the shapes; a length that
 /// still disagrees is reported as an error rather than indexed. The product
-/// runs on the best path the processor offers.
+/// runs on the best path the processor offers, or on the lower path a
+/// [`set_path_limit`] asked for.
 pub fn matvec_bf16(
     weights: &[u8],
     rows: usize,
@@ -129,7 +180,7 @@ pub fn matvec_bf16(
     input: &[f32],
     out: &mut [f32],
 ) -> Result<()> {
-    matvec_bf16_with(detected(), weights, rows, columns, input, out)
+    matvec_bf16_with(active(), weights, rows, columns, input, out)
 }
 
 /// The product of [`matvec_bf16`] on an explicit path, for the tests that
@@ -214,7 +265,8 @@ fn reduce8(lane: [f32; 8]) -> f32 {
 
 /// Multiply a `Q4B32` matrix by `input`, writing one value per row.
 ///
-/// The product runs on the best path the processor offers, and every path gives
+/// The product runs on the best path the processor offers (or the lower one a
+/// [`set_path_limit`] asked for), and every path gives
 /// the same bits as [`matvec_q4_scalar`], which defines the order of the
 /// floating point operations.
 pub fn matvec_q4(
@@ -224,7 +276,7 @@ pub fn matvec_q4(
     input: &[f32],
     out: &mut [f32],
 ) -> Result<()> {
-    matvec_q4_with(detected(), weights, rows, columns, input, out)
+    matvec_q4_with(active(), weights, rows, columns, input, out)
 }
 
 /// The product of [`matvec_q4`] on an explicit path, for the tests and the
@@ -351,7 +403,8 @@ pub fn kernel_name() -> &'static str {
 
 /// Multiply an eight bit block matrix by `input`, writing one value per row.
 ///
-/// The product runs on the best path the processor offers, and every path gives
+/// The product runs on the best path the processor offers (or the lower one a
+/// [`set_path_limit`] asked for), and every path gives
 /// the same bits as [`matvec_q8_scalar`], which defines the order of the
 /// floating point operations.
 pub fn matvec_q8(
@@ -361,7 +414,7 @@ pub fn matvec_q8(
     input: &[f32],
     out: &mut [f32],
 ) -> Result<()> {
-    matvec_q8_with(detected(), weights, rows, columns, input, out)
+    matvec_q8_with(active(), weights, rows, columns, input, out)
 }
 
 /// The product of [`matvec_q8`] on an explicit path, for the tests and the
@@ -1182,9 +1235,9 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::{
-        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q4_scalar, matvec_q4_with,
-        matvec_q8, matvec_q8_scalar, matvec_q8_with, matvec_scalar, reduce8, select, Path,
-        COLUMN_TILE, ROW_TILE,
+        active, detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q4_scalar,
+        matvec_q4_with, matvec_q8, matvec_q8_scalar, matvec_q8_with, matvec_scalar, reduce8,
+        select, Path, COLUMN_TILE, ROW_TILE,
     };
     use crate::quant::{
         f32_to_half, matrix_bytes, q8_matrix_bytes, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES, SCALE_BYTES,
@@ -1289,6 +1342,14 @@ mod tests {
         }
         assert_eq!(select(Path::Scalar), Path::Scalar);
         assert_eq!(select(*ALL_PATHS.last().unwrap()), detected());
+    }
+
+    #[test]
+    fn without_a_limit_the_products_run_on_the_detected_path() {
+        // The limit is process wide, so no test sets it: the tests run in
+        // parallel threads and every product of every other test would follow.
+        // This one only reads it.
+        assert_eq!(active(), detected());
     }
 
     #[test]
@@ -1961,5 +2022,288 @@ mod tests {
         assert!(matvec_q4(&[0u8; BLOCK_BYTES - 1], 1, BLOCK, &input, &mut out).is_err());
         // An input that disagrees with the columns.
         assert!(matvec_q4(&[0u8; BLOCK_BYTES], 1, BLOCK, &input[..1], &mut out).is_err());
+    }
+    /// The weight format of the small decoder below.
+    #[derive(Clone, Copy, Debug)]
+    enum Format {
+        Bf16,
+        Q8,
+        Q4,
+    }
+
+    /// A deterministic matrix of `rows * columns` values in the given format,
+    /// quantized row by row with the quantizer of the crate.
+    fn format_matrix(
+        format: Format,
+        rows: usize,
+        columns: usize,
+        seed: u64,
+        scale: f32,
+    ) -> Vec<u8> {
+        let mut state = seed;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+        };
+        let mut bytes = Vec::new();
+        for _ in 0..rows {
+            let row: Vec<f32> = (0..columns).map(|_| next() * scale).collect();
+            match format {
+                Format::Bf16 => {
+                    for value in &row {
+                        let bits = value.to_bits();
+                        let rounded = bits.wrapping_add(0x7fff + ((bits >> 16) & 1));
+                        bytes.extend_from_slice(&((rounded >> 16) as u16).to_le_bytes());
+                    }
+                }
+                Format::Q8 => {
+                    for block in row.chunks(BLOCK) {
+                        let mut out = [0u8; Q8_BLOCK_BYTES];
+                        crate::quant::quantize_block_q8(block, &mut out).expect("a block");
+                        bytes.extend_from_slice(&out);
+                    }
+                }
+                Format::Q4 => {
+                    for block in row.chunks(BLOCK) {
+                        let mut out = [0u8; BLOCK_BYTES];
+                        crate::quant::quantize_block(block, &mut out).expect("a block");
+                        bytes.extend_from_slice(&out);
+                    }
+                }
+            }
+        }
+        bytes
+    }
+
+    /// The product of the decoder below on an explicit path.
+    fn product(
+        format: Format,
+        path: Path,
+        weights: &[u8],
+        rows: usize,
+        columns: usize,
+        input: &[f32],
+        out: &mut [f32],
+    ) {
+        match format {
+            Format::Bf16 => matvec_bf16_with(path, weights, rows, columns, input, out),
+            Format::Q8 => matvec_q8_with(path, weights, rows, columns, input, out),
+            Format::Q4 => matvec_q4_with(path, weights, rows, columns, input, out),
+        }
+        .expect("the shapes agree");
+    }
+
+    /// A small decoder over the three formats: a tied embedding, a few gated
+    /// feed forward layers with a residual and a hidden state that carries the
+    /// history, so every token depends on the whole prompt. Every product goes
+    /// through an explicit path, so no global state is touched.
+    struct Decoder {
+        format: Format,
+        embed: Vec<u8>,
+        embed_rows: Vec<Vec<f32>>,
+        layers: Vec<[Vec<u8>; 3]>,
+    }
+
+    const DECODER_HIDDEN: usize = 64;
+    const DECODER_FFN: usize = 96;
+    const DECODER_VOCAB: usize = 384;
+    const DECODER_LAYERS: usize = 3;
+
+    impl Decoder {
+        fn new(format: Format) -> Self {
+            let embed = format_matrix(format, DECODER_VOCAB, DECODER_HIDDEN, 11, 0.4);
+            // The input rows are the dequantized weights of the same matrix, so
+            // the embedding the decoder reads is what the output product reads.
+            let row_bytes = match format {
+                Format::Bf16 => DECODER_HIDDEN * 2,
+                Format::Q8 => DECODER_HIDDEN / BLOCK * Q8_BLOCK_BYTES,
+                Format::Q4 => DECODER_HIDDEN / BLOCK * BLOCK_BYTES,
+            };
+            let embed_rows = embed
+                .chunks(row_bytes)
+                .map(|bytes| {
+                    let mut row = vec![0.0f32; DECODER_HIDDEN];
+                    match format {
+                        Format::Bf16 => {
+                            for (slot, pair) in row.iter_mut().zip(bytes.chunks(2)) {
+                                *slot = f32::from_bits(
+                                    (u16::from_le_bytes([pair[0], pair[1]]) as u32) << 16,
+                                );
+                            }
+                        }
+                        Format::Q8 => {
+                            crate::quant::dequantize_row_q8(bytes, &mut row).expect("a row")
+                        }
+                        Format::Q4 => crate::quant::dequantize_row(bytes, &mut row).expect("a row"),
+                    }
+                    row
+                })
+                .collect();
+            let layers = (0..DECODER_LAYERS as u64)
+                .map(|layer| {
+                    [
+                        format_matrix(format, DECODER_FFN, DECODER_HIDDEN, 100 + layer, 0.1),
+                        format_matrix(format, DECODER_FFN, DECODER_HIDDEN, 200 + layer, 0.1),
+                        format_matrix(format, DECODER_HIDDEN, DECODER_FFN, 300 + layer, 0.1),
+                    ]
+                })
+                .collect();
+            Self {
+                format,
+                embed,
+                embed_rows,
+                layers,
+            }
+        }
+
+        /// Greedy decoding of `steps` tokens after `prompt` on `path`. Returns
+        /// the tokens and the logits every token was sampled from.
+        fn decode(&self, path: Path, prompt: &[u32], steps: usize) -> (Vec<u32>, Vec<Vec<f32>>) {
+            let ones = vec![1.0f32; DECODER_HIDDEN];
+            let mut state = vec![0.0f32; DECODER_HIDDEN];
+            let mut tokens = Vec::new();
+            let mut all_logits = Vec::new();
+            let mut feed: Vec<u32> = prompt.to_vec();
+            while tokens.len() < steps {
+                let mut logits = vec![0.0f32; DECODER_VOCAB];
+                for &token in &feed {
+                    let mut x: Vec<f32> = self.embed_rows[token as usize]
+                        .iter()
+                        .zip(&state)
+                        .map(|(embedding, carried)| embedding + 0.5 * carried)
+                        .collect();
+                    let mut normal = vec![0.0f32; DECODER_HIDDEN];
+                    for [gate_weights, up_weights, down_weights] in &self.layers {
+                        crate::math::rms_norm(&x, &ones, 1e-5, &mut normal).expect("lengths");
+                        let mut gate = vec![0.0f32; DECODER_FFN];
+                        let mut up = vec![0.0f32; DECODER_FFN];
+                        let mut down = vec![0.0f32; DECODER_HIDDEN];
+                        let format = self.format;
+                        product(
+                            format,
+                            path,
+                            gate_weights,
+                            DECODER_FFN,
+                            DECODER_HIDDEN,
+                            &normal,
+                            &mut gate,
+                        );
+                        product(
+                            format,
+                            path,
+                            up_weights,
+                            DECODER_FFN,
+                            DECODER_HIDDEN,
+                            &normal,
+                            &mut up,
+                        );
+                        for (gate, up) in gate.iter_mut().zip(&up) {
+                            *gate = crate::math::silu(*gate) * up;
+                        }
+                        product(
+                            format,
+                            path,
+                            down_weights,
+                            DECODER_HIDDEN,
+                            DECODER_FFN,
+                            &gate,
+                            &mut down,
+                        );
+                        for (slot, value) in x.iter_mut().zip(&down) {
+                            *slot += value;
+                        }
+                    }
+                    crate::math::rms_norm(&x, &ones, 1e-5, &mut normal).expect("lengths");
+                    product(
+                        self.format,
+                        path,
+                        &self.embed,
+                        DECODER_VOCAB,
+                        DECODER_HIDDEN,
+                        &normal,
+                        &mut logits,
+                    );
+                    state.copy_from_slice(&normal);
+                }
+                let token = crate::math::argmax(&logits).expect("logits") as u32;
+                tokens.push(token);
+                all_logits.push(logits);
+                feed = vec![token];
+            }
+            (tokens, all_logits)
+        }
+    }
+
+    /// The margin between the two best logits.
+    fn margin(logits: &[f32]) -> f32 {
+        let best = crate::math::argmax(logits).expect("logits");
+        let second = logits
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != best)
+            .map(|(_, value)| *value)
+            .fold(f32::NEG_INFINITY, f32::max);
+        logits[best] - second
+    }
+
+    #[test]
+    fn every_path_of_the_host_decodes_the_same_tokens() {
+        let prompts: [&[u32]; 4] = [
+            &[5],
+            &[17, 301, 42],
+            &[3, 99, 250, 7, 120, 61, 8, 300, 22],
+            &[
+                11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+            ],
+        ];
+        let steps = 12;
+        for format in [Format::Bf16, Format::Q8, Format::Q4] {
+            let decoder = Decoder::new(format);
+            for &path in &available_paths() {
+                assert_eq!(select(path), path);
+                let mut largest = 0.0f32;
+                let mut undecided = 0;
+                for prompt in prompts {
+                    let (expected, expected_logits) = decoder.decode(Path::Scalar, prompt, steps);
+                    let (tokens, logits) = decoder.decode(path, prompt, steps);
+                    assert_eq!(
+                        tokens,
+                        expected,
+                        "{format:?} on {} changed the tokens of a prompt of {}",
+                        path.name(),
+                        prompt.len()
+                    );
+                    for (actual, reference) in logits.iter().zip(&expected_logits) {
+                        assert!(
+                            actual
+                                .iter()
+                                .chain(reference)
+                                .all(|value| value.is_finite()),
+                            "a logit is not finite"
+                        );
+                        let step = error(actual, reference);
+                        largest = largest.max(step);
+                        // A tie after the error can flip the first index that
+                        // wins the argmax, so the border counts as undecided.
+                        if step > 0.0 && margin(reference) <= 2.0 * step {
+                            undecided += 1;
+                        }
+                    }
+                }
+                println!(
+                    "decoder format={format:?} path={} prompts={} steps={steps} max_abs_logit_diff={largest} undecided={undecided}",
+                    path.name(),
+                    prompts.len()
+                );
+                assert_eq!(undecided, 0, "a step is too close to call");
+                match format {
+                    // The quantized kernels are bit for bit with the scalar one.
+                    Format::Q8 | Format::Q4 => assert_eq!(largest, 0.0),
+                    Format::Bf16 => assert!(largest < 1e-3, "bf16 logits differ by {largest}"),
+                }
+            }
+        }
     }
 }

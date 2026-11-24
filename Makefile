@@ -256,11 +256,18 @@ run-infer: infer-initramfs build
 		echo "unexpected QEMU exit status $$status"; exit $$status; \
 	fi
 
-# The self-check of the vector kernels of the eight and four bit products. It
-# is a second program of the inference crate, packed alone into an initramfs of
-# the same kind, so Rabbit runs it as init on the processor of the guest. The
+# The self-check of the vector kernels and of the decoder on every path. It is
+# a second program of the inference crate, packed alone into an initramfs of
+# the same kind, so Rabbit runs it as init on the processor of the guest. It
+# checks the eight and four bit products bit for bit, and then decodes whole
+# prompts with the synthetic model, in bfloat16 and in the Q8 and Q4 copies
+# the repository's own quantizer writes from it, and compares the greedy tokens
+# and the logits of every path with the scalar one. The model is the synthetic
+# development model, written under MATVEC_DIR and not taken from INFER_MODEL_DIR,
+# which can hold a real checkpoint far too large for the emulated guest. The
 # outputs live outside the repository. MATVEC_CPU picks the processor model, for
-# example `Skylake-Client,-avx2,-fma` to leave the AVX2 path out.
+# example `Skylake-Client,-avx2,-fma` to leave the AVX2 path out; then pass
+# MATVEC_REQUIRE="scalar sse2" too, or the gate fails on the missing avx2 lines.
 MATVEC_CPU ?= Skylake-Client
 # The paths that must appear as exact, so a path the guest does not offer is a
 # failure and not a silent skip. Use `scalar sse2` with a CPU model without AVX2.
@@ -268,6 +275,8 @@ MATVEC_REQUIRE ?= scalar sse2 avx2
 MATVEC_DIR := $(TARGET_DIR)/matvec-check
 MATVEC_ELF := $(MATVEC_DIR)/rabbit-infer-matvec-check.elf
 MATVEC_INITRAMFS := $(MATVEC_DIR)/initramfs.cpio
+MATVEC_MODEL := $(MATVEC_DIR)/model
+MATVEC_STAGE := $(MATVEC_DIR)/stage
 MATVEC_LOG := $(MATVEC_DIR)/serial.log
 
 matvec-check-initramfs: musl-std
@@ -275,7 +284,17 @@ matvec-check-initramfs: musl-std
 		--features matvec-check --bin rabbit-infer-matvec-check
 	mkdir -p $(MATVEC_DIR)
 	cp $(INFER_TARGET_DIR)/$(USER_TARGET)/release/rabbit-infer-matvec-check $(MATVEC_ELF)
-	bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
+	rm -rf "$(MATVEC_MODEL)" "$(MATVEC_DIR)/q8" "$(MATVEC_DIR)/q4" "$(MATVEC_STAGE)"
+	$(CARGO) run --release --manifest-path $(INFER_DIR)/Cargo.toml \
+		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host \
+		--bin rabbit-infer-gen -- --out $(MATVEC_MODEL)
+	$(MAKE) quantize QUANT_BITS=8 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q8
+	$(MAKE) quantize QUANT_BITS=4 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q4
+	mkdir -p $(MATVEC_STAGE)
+	cp $(MATVEC_MODEL)/config.json $(MATVEC_MODEL)/model.safetensors $(MATVEC_STAGE)/
+	cp $(MATVEC_DIR)/q8/model.safetensors $(MATVEC_STAGE)/model-q8.safetensors
+	cp $(MATVEC_DIR)/q4/model.safetensors $(MATVEC_STAGE)/model-q4.safetensors
+	EXTRA_DIR=$(MATVEC_STAGE) bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
 
 matvec-check: matvec-check-initramfs build
 	@$(QEMU) -M q35 -cpu $(MATVEC_CPU) -m 512M \
@@ -296,6 +315,25 @@ matvec-check: matvec-check-initramfs build
 			if ! tr -d '\r' < $(MATVEC_LOG) | grep -q "^MATVEC $$format path=$$path shapes=[0-9]* bit_exact=true$$"; then \
 				echo "matvec-check: path $$path was not checked as exact for $$format"; exit 1; \
 			fi; \
+		done; \
+	done; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | grep -q '^MATVEC model OK$$'; then \
+		echo "matvec-check: no MATVEC model OK line"; exit 1; \
+	fi; \
+	if tr -d '\r' < $(MATVEC_LOG) | grep -q 'tokens_equal=false\|^MATVEC model MISMATCH'; then \
+		echo "matvec-check: a path generated other tokens than the scalar one"; exit 1; \
+	fi; \
+	for path in $(MATVEC_REQUIRE); do \
+		for format in bf16 q8 q4; do \
+			case $$format in \
+				bf16) difference='[0-9.e+-]*' ;; \
+				*) difference='0' ;; \
+			esac; \
+			for steps in 8 64; do \
+				if ! tr -d '\r' < $(MATVEC_LOG) | grep -q "^MATVEC model format=$$format path=$$path prompts=[0-9]* steps=$$steps tokens_equal=true max_abs_logit_diff=$$difference undecided=0$$"; then \
+					echo "matvec-check: path $$path did not decode the same $$steps tokens as the scalar one for $$format, or a step was undecided, or the logits of a quantized format differ"; exit 1; \
+				fi; \
+			done; \
 		done; \
 	done; \
 	echo "matvec-check OK (cpu $(MATVEC_CPU), QEMU exit status 33)"
