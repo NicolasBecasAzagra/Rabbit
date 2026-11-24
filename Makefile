@@ -24,7 +24,8 @@ KERNEL_FLAGS := --target $(KERNEL_TARGET) \
 	-Z build-std-features=compiler-builtins-mem
 
 # The kernel binary is `no_std` + `no_main`: it cannot be built as a host test
-# target and is excluded from the host runs.
+# target and is excluded from the host runs. The same goes for the loader
+# binary, which embeds the kernel; its library part is tested on its own below.
 HOST_ONLY := --exclude rabbit-kernel --exclude rabbit-uefi
 
 # The UEFI loader is a PE32+ application for the firmware target, built from
@@ -287,6 +288,8 @@ run: build
 
 test:
 	$(CARGO) test --workspace --target $(HOST_TARGET) --target-dir $(TARGET_DIR) $(HOST_ONLY)
+	$(CARGO) test -p rabbit-uefi --lib \
+		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)
 	$(CARGO) test --manifest-path $(INFER_DIR)/Cargo.toml --lib \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host
 	$(CARGO) test --manifest-path $(AGENT_DIR)/Cargo.toml \
@@ -343,6 +346,8 @@ clippy: userland
 clippy-host:
 	$(CARGO) clippy --workspace --all-targets --target $(HOST_TARGET) \
 		--target-dir $(TARGET_DIR) $(HOST_ONLY) -- -D warnings
+	$(CARGO) clippy -p rabbit-uefi --lib --tests --target $(HOST_TARGET) \
+		--target-dir $(TARGET_DIR) -- -D warnings
 	$(CARGO) clippy --manifest-path $(INFER_DIR)/Cargo.toml --all-targets \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host -- -D warnings
 	$(CARGO) clippy --manifest-path $(AGENT_DIR)/Cargo.toml --all-targets \

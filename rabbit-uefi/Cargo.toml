@@ -9,6 +9,10 @@ publish = false
 [dependencies]
 rabbit-bootinfo = { path = "../rabbit-bootinfo" }
 
+[lib]
+name = "rabbit_uefi"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rabbit-uefi"
 path = "src/main.rs"

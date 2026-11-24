@@ -37,11 +37,16 @@ name `Xen`, whose descriptor is the physical address of the 32-bit entry
 point:
 
 ```text
-namesz = 4, descsz = 4, type = 0x12, name = "Xen\0", desc = <u32 entry address>
+namesz = 4, descsz = 8, type = 0x12, name = "Xen\0", desc = <u32 entry address> + 4 zero bytes
 ```
 
-The note is emitted by the linker script in the `.note.Xen` output section so
-the descriptor always matches the real entry address. Verify it with:
+The descriptor is 8 bytes because QEMU reads a 64-bit word there when it boots
+an ELF64 image. The UEFI loader accepts a descriptor of 4 or 8 bytes.
+
+The note is emitted by `rabbit-kernel/src/trampoline.s` in the `.note.Xen`
+input section, so the descriptor always matches the real entry address. The
+linker script only places that section in the `PT_NOTE` segment, at a 4-byte
+alignment. Verify it with:
 
 ```sh
 llvm-readelf -n target/x86_64-rabbit/release/rabbit-kernel
@@ -205,6 +210,37 @@ The `DIV0` line comes from a deliberate fault injection that proves the
 exception path saves the full register context, reports the faulting RIP and
 returns to the interrupted code. QEMU then exits with status 33 through the
 `isa-debug-exit` device.
+
+## UEFI path
+
+`rabbit-uefi` is a PE32+ application (`BOOTX64.EFI`) that embeds the kernel ELF
+and boots it on firmware that has no PVH loader. It reaches the same 32-bit
+entry as the QEMU handover:
+
+- It validates the embedded ELF (header, `PT_LOAD` segments, the `Xen` note),
+  reserves `0x100000` up to the end of the image and the AP trampoline page at
+  `0x8000` with exact allocations, copies the segments to their physical
+  addresses and zeroes the rest.
+- It finds the ACPI RSDP in the firmware configuration table and builds the
+  same `hvm_start_info` below 1 MiB, with a memory map converted from the UEFI
+  one (version 1, no modules, no command line). It checks the result with the
+  parser the kernel uses.
+- It leaves boot services and jumps to a small thunk, copied to a page below
+  1 MiB (`EfiLoaderCode`, so a no-execute policy cannot fault the jump). The
+  thunk disables interrupts, clears `EFLAGS`, leaves long mode and paging, and
+  recreates the entry state above: `cr0` = PE, `cr4` = 0, flat 32-bit `cs`,
+  `ds`, `es`, `ss`, a 32-bit TSS with base 0 and limit `0x67`, `ebx` = the
+  `start_info` address. It also loads a null IDT, so a 64-bit gate left by the
+  firmware cannot be taken with paging off. The kernel loads its own GDT, TSS
+  and IDT before it enables interrupts, and a fault before that is a reset.
+
+Limits of this first stage:
+
+- `0x100000..0x300000` and the page at `0x8000` must be free in the firmware
+  memory map; otherwise the loader reports the error on COM1 and halts.
+- The only output is COM1 (`0x3F8`); there is no framebuffer.
+- There is no initramfs and no command line yet.
+- It has only been tested with QEMU and OVMF.
 
 ## Debugging
 

@@ -5,8 +5,10 @@
 //! loads it at its physical addresses, finds the ACPI RSDP in the
 //! configuration table, builds a PVH `hvm_start_info` with a memory map below
 //! 1 MiB, leaves boot services and checks its own output with the same parser
-//! the kernel uses, reporting on COM1. The jump to the kernel comes in a later
-//! change.
+//! the kernel uses, reporting on COM1. It then jumps to the 32-bit PVH entry
+//! the kernel's `Xen` note names, with the state QEMU's PVH loader gives: a
+//! small thunk, copied below 1 MiB before boot services end, drops the
+//! processor from long mode to flat 32-bit protected mode with paging off.
 //!
 //! The firmware structures are declared by hand with the layout of the UEFI
 //! specification, and every offset this program relies on is asserted at
@@ -24,8 +26,7 @@ use core::ptr;
 
 use rabbit_bootinfo::uefi::{memmap_kind_from_uefi, merge_adjacent, Range, StartInfoWriter};
 use rabbit_bootinfo::{BootInfo, HvmMemmapEntry, HvmModule, HvmStartInfo, MemmapKind};
-
-mod elf;
+use rabbit_uefi::elf;
 
 /// The kernel ELF, embedded at build time. `RABBIT_KERNEL_ELF` is the absolute
 /// path of the kernel the `uefi` make target builds first.
@@ -47,8 +48,10 @@ mod alloc_type {
     pub const ADDRESS: u32 = 2;
 }
 
-/// `EFI_MEMORY_TYPE` of the buffers this program allocates.
+/// `EFI_MEMORY_TYPE` of the buffers this program allocates and the kernel reads.
 const LOADER_DATA: u32 = 2;
+/// `EFI_MEMORY_TYPE` of the page that holds code the processor executes.
+const LOADER_CODE: u32 = 1;
 
 /// Vendor GUID of the ACPI 2.0 table in the configuration table.
 const ACPI_20_GUID: [u8; 16] = [
@@ -84,6 +87,92 @@ const MODULE_SLOTS: usize = 1;
 const MODLIST_OFFSET: usize = size_of::<HvmStartInfo>();
 /// Offset of the memory map array, right after the module slots.
 const MEMMAP_OFFSET: usize = MODLIST_OFFSET + MODULE_SLOTS * size_of::<HvmModule>();
+
+// The handover thunk: position independent, so it runs from any copy of it.
+// It is entered in 64-bit mode with RDI = physical address of the start info
+// and RSI = physical address of the 32-bit entry, and it never returns.
+//
+// Long mode part: interrupts off, EFLAGS = 2 (IF = 0, DF = 0), CR4.PCIDE
+// cleared (the processor refuses to leave paging with it set), then the GDT
+// below is loaded and a far return enters 32-bit compatibility mode. The GDTR
+// base is filled in at run time, since the copy can be anywhere.
+//
+// Compatibility mode part: flat data selectors, paging off, EFER = 0, CR4 = 0,
+// CR0 = PE | ET, and a jump through ESI. The code runs from memory the
+// firmware identity maps, so EIP stays valid when paging goes off. The stack
+// is not used once paging is gone. With long mode off the descriptors are
+// 8 bytes again, so the thunk then loads the 32-bit TSS the PVH entry state
+// names (base 0, limit 0x67, selector 0x18) and a null IDT: a gate the
+// firmware left would be a 64-bit gate, which must not be taken with paging
+// off. The kernel loads its own GDT, TSS and IDT before it can take an
+// interrupt, so the null IDT only turns an early fault into a reset.
+core::arch::global_asm!(
+    ".text",
+    ".global rabbit_handover_start",
+    ".global rabbit_handover_end",
+    ".balign 16",
+    "rabbit_handover_start:",
+    ".code64",
+    "cli",
+    "cld",
+    "pushq $2",
+    "popfq",
+    "movl %edi, %ebx",
+    "movq %cr4, %rax",
+    "btrq $17, %rax",
+    "movq %rax, %cr4",
+    "leaq .Lhandover_idtr(%rip), %rbp",
+    "leaq .Lhandover_gdt(%rip), %rax",
+    "movq %rax, .Lhandover_gdtr + 2(%rip)",
+    "lgdt .Lhandover_gdtr(%rip)",
+    "pushq $0x08",
+    "leaq .Lhandover_compat(%rip), %rax",
+    "pushq %rax",
+    "lretq",
+    ".code32",
+    ".Lhandover_compat:",
+    "movw $0x10, %ax",
+    "movw %ax, %ds",
+    "movw %ax, %es",
+    "movw %ax, %ss",
+    "movw %ax, %fs",
+    "movw %ax, %gs",
+    "movl %cr0, %eax",
+    "andl $0x7fffffff, %eax",
+    "movl %eax, %cr0",
+    "movl $0xC0000080, %ecx",
+    "xorl %eax, %eax",
+    "xorl %edx, %edx",
+    "wrmsr",
+    "movl %eax, %cr4",
+    "lidt (%ebp)",
+    "xorl %ebp, %ebp",
+    "movw $0x18, %ax",
+    "ltr %ax",
+    "movl $0x11, %eax",
+    "movl %eax, %cr0",
+    "jmpl *%esi",
+    ".balign 8",
+    ".Lhandover_gdt:",
+    ".quad 0",
+    ".quad 0x00cf9b000000ffff",
+    ".quad 0x00cf93000000ffff",
+    ".quad 0x0000890000000067",
+    ".Lhandover_gdtr:",
+    ".word 4 * 8 - 1",
+    ".quad 0",
+    ".Lhandover_idtr:",
+    ".word 0",
+    ".quad 0",
+    "rabbit_handover_end:",
+    ".code64",
+    options(att_syntax)
+);
+
+extern "C" {
+    static rabbit_handover_start: u8;
+    static rabbit_handover_end: u8;
+}
 
 /// `EFI_TABLE_HEADER`.
 #[repr(C)]
@@ -386,6 +475,7 @@ const REG_LCR: u16 = 3;
 const REG_MCR: u16 = 4;
 const REG_LSR: u16 = 5;
 const LSR_THRE: u8 = 1 << 5;
+const LSR_TEMT: u8 = 1 << 6;
 const LCR_DLAB: u8 = 1 << 7;
 const LCR_8N1: u8 = 0x03;
 const FCR_ENABLE_CLEAR_14: u8 = 0xC7;
@@ -429,6 +519,21 @@ fn serial_byte(byte: u8) {
         core::hint::spin_loop();
     }
     outb(COM1 + REG_DATA, byte);
+}
+
+/// Polls of the line status register `serial_flush` makes before it gives up.
+const FLUSH_SPINS: u32 = 1_000_000;
+
+/// Wait until the transmitter has sent every byte, so the kernel resetting the
+/// UART right after the handover cannot drop the last line. The wait is
+/// bounded: a missing or stuck UART must not hang the loader.
+fn serial_flush() {
+    for _ in 0..FLUSH_SPINS {
+        if inb(COM1 + REG_LSR) & LSR_TEMT != 0 {
+            return;
+        }
+        core::hint::spin_loop();
+    }
 }
 
 fn serial_str(text: &str) {
@@ -481,14 +586,20 @@ fn fail_status(reason: &str, status: Status) -> ! {
     halt()
 }
 
-/// Ask the firmware for `pages` pages of loader data. `address` is the exact
+/// Ask the firmware for `pages` pages of `memory_type`. `address` is the exact
 /// address for `alloc_type::ADDRESS` and the highest byte for
 /// `alloc_type::MAX_ADDRESS`. Returns the address of the pages.
-fn allocate_pages(bs: &BootServices, kind: u32, address: u64, pages: usize) -> Result<u64, Status> {
+fn allocate_pages(
+    bs: &BootServices,
+    kind: u32,
+    memory_type: u32,
+    address: u64,
+    pages: usize,
+) -> Result<u64, Status> {
     let mut memory = address;
     // SAFETY: `memory` is a live local that holds the request and receives the
     // address of the allocation.
-    let status = unsafe { (bs.allocate_pages)(kind, LOADER_DATA, pages, &mut memory) };
+    let status = unsafe { (bs.allocate_pages)(kind, memory_type, pages, &mut memory) };
     if status == EFI_SUCCESS {
         Ok(memory)
     } else {
@@ -637,6 +748,8 @@ fn collect_ranges(map: &MemoryMap, ranges: &mut [Range]) -> Result<usize, &'stat
 struct Buffers {
     /// Physical address of the start info area.
     area: u64,
+    /// Physical address of the copy of the handover thunk, below 1 MiB.
+    handover: u64,
     /// Capacity, in entries, of the memory map in the area and of both range
     /// arrays.
     entries: usize,
@@ -644,15 +757,77 @@ struct Buffers {
     merged: &'static mut [Range],
 }
 
+/// Copy the handover thunk into a page below 1 MiB. The AP trampoline page at
+/// 0x8000 is already reserved by `efi_main`, with an exact `AllocatePages`,
+/// before this runs, so the firmware cannot hand it out here; the start info
+/// area is allocated after this page. Returns the address of the copy.
+fn install_handover(bs: &BootServices) -> u64 {
+    // The only buffer that is code: firmware that applies a no-execute policy
+    // to `EfiLoaderData` (EDK2 can) would fault on the jump into the copy, so
+    // the page is `EfiLoaderCode`. Everything the kernel reads stays data.
+    let page = match allocate_pages(
+        bs,
+        alloc_type::MAX_ADDRESS,
+        LOADER_CODE,
+        START_INFO_LIMIT,
+        1,
+    ) {
+        Ok(page) => page,
+        Err(status) => fail_status("cannot allocate the handover page below 1 MiB", status),
+    };
+    // Only the addresses of the symbols are taken: they delimit the thunk
+    // defined by the `global_asm!` block above.
+    let (start, end) = (
+        ptr::addr_of!(rabbit_handover_start),
+        ptr::addr_of!(rabbit_handover_end),
+    );
+    let length = end as usize - start as usize;
+    if length > PAGE_SIZE {
+        fail("the handover thunk does not fit in a page");
+    }
+    // SAFETY: the page was just allocated, is `PAGE_SIZE` bytes and identity
+    // mapped, and holds nothing else; the thunk is `length` bytes of the image.
+    unsafe { ptr::copy_nonoverlapping(start, page as *mut u8, length) };
+    page
+}
+
+/// Jump to the copied thunk, which does not return.
+///
+/// # Safety
+///
+/// `thunk` must be the address `install_handover` returned, `start_info` the
+/// physical address of a valid start info, `entry` the PVH entry of a loaded
+/// kernel, and boot services must have exited.
+unsafe fn enter_handover(thunk: u64, start_info: u64, entry: u64) -> ! {
+    // SAFETY: the thunk is entered in 64-bit mode with the registers it
+    // expects, and it never returns.
+    unsafe {
+        asm!(
+            "jmp rax",
+            in("rax") thunk,
+            in("rdi") start_info,
+            in("rsi") entry,
+            options(noreturn)
+        )
+    }
+}
+
 /// Allocate everything the start info needs. The firmware map changes with
 /// each allocation, so this runs before the map that feeds `ExitBootServices`.
 fn allocate_buffers(bs: &BootServices) -> Buffers {
+    let handover = install_handover(bs);
     let Some((size, stride)) = memory_map_size(bs) else {
         fail("cannot size the memory map");
     };
     let entries = size / stride + MEMMAP_SLACK_ENTRIES;
     let pages = (MEMMAP_OFFSET + entries * size_of::<HvmMemmapEntry>()).div_ceil(PAGE_SIZE);
-    let area = match allocate_pages(bs, alloc_type::MAX_ADDRESS, START_INFO_LIMIT, pages) {
+    let area = match allocate_pages(
+        bs,
+        alloc_type::MAX_ADDRESS,
+        LOADER_DATA,
+        START_INFO_LIMIT,
+        pages,
+    ) {
         Ok(area) => area,
         Err(status) => fail_status("cannot allocate the start info area below 1 MiB", status),
     };
@@ -663,6 +838,7 @@ fn allocate_buffers(bs: &BootServices) -> Buffers {
     };
     Buffers {
         area,
+        handover,
         entries,
         sorted,
         merged,
@@ -726,16 +902,24 @@ extern "efiapi" fn efi_main(image: Handle, st: *const SystemTable) -> usize {
     // Reserve the kernel and the AP trampoline page before anything else asks
     // for memory, then load. If the firmware keeps either, nothing is touched.
     let kernel_pages = ((kernel.physical_end - elf::LOAD_MIN) / elf::PAGE_SIZE) as usize;
-    if let Err(status) = allocate_pages(bs, alloc_type::ADDRESS, elf::LOAD_MIN, kernel_pages) {
+    if let Err(status) = allocate_pages(
+        bs,
+        alloc_type::ADDRESS,
+        LOADER_DATA,
+        elf::LOAD_MIN,
+        kernel_pages,
+    ) {
         fail_status("cannot reserve the kernel range at 0x100000", status);
     }
-    if let Err(status) = allocate_pages(bs, alloc_type::ADDRESS, AP_TRAMPOLINE_PHYS, 1) {
+    if let Err(status) = allocate_pages(bs, alloc_type::ADDRESS, LOADER_DATA, AP_TRAMPOLINE_PHYS, 1)
+    {
         fail_status("cannot reserve the trampoline page at 0x8000", status);
     }
     // SAFETY: the kernel range was just allocated and nothing else uses it.
     unsafe { load_kernel(&kernel) };
 
     let buffers = allocate_buffers(bs);
+    let (area, handover) = (buffers.area, buffers.handover);
     let mut map = first_memory_map(bs).unwrap_or_else(|reason| fail(reason));
     exit_boot_services(image, bs, &mut map).unwrap_or_else(|reason| fail(reason));
 
@@ -755,5 +939,13 @@ extern "efiapi" fn efi_main(image: Handle, st: *const SystemTable) -> usize {
     serial_str("..0x");
     serial_hex(kernel.physical_end);
     serial_str("\n");
-    halt()
+
+    serial_str("rabbit-uefi: entering PVH entry at 0x");
+    serial_hex(kernel.entry);
+    serial_str("\n");
+    serial_flush();
+    // SAFETY: the thunk was installed by `allocate_buffers`, the start info at
+    // `area` passed `BootInfo::parse`, `kernel.entry` was validated against
+    // the loaded segments, and boot services have exited.
+    unsafe { enter_handover(handover, area, kernel.entry) }
 }
