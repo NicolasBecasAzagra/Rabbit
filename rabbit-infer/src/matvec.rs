@@ -800,7 +800,11 @@ mod tests {
         for &limit in ALL_PATHS {
             let chosen = select(limit);
             assert!(chosen <= limit, "{} above the limit", chosen.name());
-            assert!(chosen <= detected(), "{} above the processor", chosen.name());
+            assert!(
+                chosen <= detected(),
+                "{} above the processor",
+                chosen.name()
+            );
             if limit <= detected() {
                 assert_eq!(chosen, limit);
             } else {
