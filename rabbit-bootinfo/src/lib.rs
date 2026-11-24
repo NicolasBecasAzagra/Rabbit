@@ -8,6 +8,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![forbid(unsafe_code)]
 
+pub mod uefi;
+
 /// Magic value of `struct hvm_start_info` (`HVM_START_MAGIC`).
 pub const HVM_START_MAGIC: u32 = 0x336e_c578;
 
@@ -232,6 +234,23 @@ mod tests {
         assert_eq!(core::mem::align_of::<HvmStartInfo>(), 8);
         assert_eq!(core::mem::align_of::<HvmMemmapEntry>(), 8);
         assert_eq!(core::mem::align_of::<HvmModule>(), 8);
+    }
+
+    #[test]
+    fn field_offsets_match_pvh_abi() {
+        use core::mem::offset_of;
+        assert_eq!(offset_of!(HvmStartInfo, magic), 0);
+        assert_eq!(offset_of!(HvmStartInfo, version), 4);
+        assert_eq!(offset_of!(HvmStartInfo, flags), 8);
+        assert_eq!(offset_of!(HvmStartInfo, nr_modules), 12);
+        assert_eq!(offset_of!(HvmStartInfo, modlist_paddr), 16);
+        assert_eq!(offset_of!(HvmStartInfo, cmdline_paddr), 24);
+        assert_eq!(offset_of!(HvmStartInfo, rsdp_paddr), 32);
+        assert_eq!(offset_of!(HvmStartInfo, memmap_paddr), 40);
+        assert_eq!(offset_of!(HvmStartInfo, memmap_entries), 48);
+        assert_eq!(offset_of!(HvmStartInfo, reserved), 52);
+        assert_eq!(offset_of!(HvmMemmapEntry, kind), 16);
+        assert_eq!(offset_of!(HvmModule, cmdline_paddr), 16);
     }
 
     #[test]
