@@ -134,7 +134,7 @@ QEMU_FLAGS := -M q35 -m 512M \
 	-serial stdio \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all build uefi run run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs agent agent-initramfs agent-net-initramfs run-infer quantize
+.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs agent agent-initramfs agent-net-initramfs run-infer quantize
 
 # The path of the built kernel, so the CI does not have to repeat it.
 print-kernel-path:
@@ -263,6 +263,46 @@ build: userland infer
 # absolute path reaches the compiler through RABBIT_KERNEL_ELF.
 uefi: build
 	RABBIT_KERNEL_ELF=$(abspath $(KERNEL)) $(CARGO) build -p rabbit-uefi --release $(UEFI_FLAGS)
+
+# The firmware images of the UEFI boot. They are looked for where Ubuntu (the
+# `ovmf` package) and Homebrew (`qemu`) put them; pass OVMF_CODE and OVMF_VARS
+# to use others. The variable store is copied, so a run never changes the
+# original.
+OVMF_CODE ?= $(firstword $(wildcard \
+	/usr/share/OVMF/OVMF_CODE_4M.fd \
+	/usr/share/OVMF/OVMF_CODE.fd \
+	/opt/homebrew/share/qemu/edk2-x86_64-code.fd \
+	/usr/local/share/qemu/edk2-x86_64-code.fd))
+OVMF_VARS ?= $(firstword $(wildcard \
+	/usr/share/OVMF/OVMF_VARS_4M.fd \
+	/usr/share/OVMF/OVMF_VARS.fd \
+	/opt/homebrew/share/qemu/edk2-i386-vars.fd \
+	/usr/local/share/qemu/edk2-i386-vars.fd))
+UEFI_ESP := $(TARGET_DIR)/uefi-esp
+UEFI_VARS := $(TARGET_DIR)/uefi-vars.fd
+UEFI_MEM ?= 512M
+
+# The same kernel booted through the UEFI loader: QEMU starts the firmware,
+# the firmware starts BOOTX64.EFI from a directory used as a FAT disk, and the
+# loader hands over to the PVH entry. It ends like `run`, with status 33.
+run-uefi: uefi
+	@test -n "$(OVMF_CODE)" -a -n "$(OVMF_VARS)" || { \
+		echo "no OVMF firmware found: install the ovmf package or pass OVMF_CODE and OVMF_VARS"; exit 1; }
+	@rm -rf $(UEFI_ESP) && mkdir -p $(UEFI_ESP)/EFI/BOOT
+	@cp $(UEFI_EFI) $(UEFI_ESP)/EFI/BOOT/BOOTX64.EFI
+	@cp $(OVMF_VARS) $(UEFI_VARS)
+	@$(QEMU) -M q35 -m $(UEFI_MEM) \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(UEFI_VARS) \
+		-drive format=raw,file=fat:rw:$(UEFI_ESP) \
+		-display none -monitor none -no-reboot \
+		-serial stdio \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04; status=$$?; \
+	if [ $$status -eq 33 ]; then \
+		echo "boot OK through UEFI (QEMU exit status 33)"; \
+	else \
+		echo "unexpected QEMU exit status $$status"; exit $$status; \
+	fi
 
 # The multiprocessor boot. The kernel finds the processors in the ACPI table
 # and starts them, so this is the only way to exercise that path.
