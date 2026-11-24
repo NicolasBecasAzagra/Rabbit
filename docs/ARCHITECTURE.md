@@ -255,6 +255,7 @@ A cargo workspace with one crate per concern:
 | `rabbit-arch` | x86_64 hardware access: port I/O, control registers, MSRs, the boot trampoline. The only crate allowed to be architecture-specific. |
 | `rabbit-bootinfo` | Pure parsing of the boot handover structures (PVH `start_info`, memory map). Host-testable, no hardware access. |
 | `rabbit-drivers` | Device drivers: the 16550A UART and the isa-debug-exit device. |
+| `rabbit-uefi` | The UEFI loader, a PE32+ application for `x86_64-unknown-uefi` with its own minimal FFI. It embeds the kernel ELF, builds a PVH `start_info` from the UEFI memory map, leaves boot services and hands over to the PVH entry. Not part of the kernel build; `make uefi` builds it. |
 | `rabbit-kernel` | The `no_std` kernel binary: entry, memory management, scheduler, the PIC, the PIT and the syscall layer. |
 | `rabbit-elf` | ELF parser. Pure, host-testable. |
 | `rabbit-mm` | Physical frame allocator (buddy), kernel heap (slab), virtual memory. |

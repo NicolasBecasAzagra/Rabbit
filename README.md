@@ -321,13 +321,14 @@ The full Linux VM setup (for building mainline Linux and a distro rootfs) is in
 
 ```text
 rabbit-arch/       x86_64 hardware access, port I/O, boot trampoline
-rabbit-bootinfo/   pure parsing of the PVH boot handover structures
+rabbit-bootinfo/   pure parsing of the PVH boot handover structures, and the helpers that build them from a UEFI memory map
 rabbit-drivers/    16550A UART, isa-debug-exit
 rabbit-mm/         paging, the buddy allocator, the heap, the mappings
 rabbit-sched/      the scheduler and its policy
 rabbit-elf/        the ELF64 reader
 rabbit-initramfs/  the reader of the cpio archive of the initramfs
 rabbit-kernel/     the no_std kernel binary
+rabbit-uefi/       the UEFI loader: a PE32+ application that starts the kernel from firmware
 rabbit-userland/   the test program that runs unmodified in ring 3
 rabbit-net/        Ethernet, ARP, IPv4, UDP and TCP, pure and tested on the host
 rabbit-http/       the HTTP/1.1 messages of the client of the agent
@@ -369,6 +370,16 @@ QEMU supports natively for 64-bit ELF kernels. Multiboot2 is not an option:
 QEMU's Multiboot loader rejects 64-bit images. The same path also boots
 mainline Linux (`vmlinux` with a PVH note), which is what makes the benchmark
 comparison fair. Details in [docs/BOOT.md](docs/BOOT.md).
+
+There is also a UEFI path, which is the first step toward a physical machine
+([#26](https://github.com/NicolasBecasAzagra/Rabbit/issues/26)). `make uefi`
+builds `rabbit-uefi`, a PE32+ application that embeds the kernel, loads it at
+its physical address, builds the same PVH start info from the UEFI memory map,
+leaves boot services and jumps to the PVH entry. `make run-uefi` boots it under
+QEMU with OVMF, and the CI does the same with one and four processors. That is
+all it is tested on: an emulated firmware. It needs `0x100000` and the page at
+`0x8000` to be free, writes only to COM1, and has no framebuffer, no initramfs
+and no command line yet, so no physical machine has booted it.
 
 ## How this was built
 

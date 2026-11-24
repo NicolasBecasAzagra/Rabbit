@@ -642,12 +642,13 @@ export const build = {
 
 export const repository = [
   { crate: 'rabbit-arch', what: 'x86_64 hardware access, port I/O, boot trampoline' },
-  { crate: 'rabbit-bootinfo', what: 'pure parsing of the PVH boot handover structures' },
+  { crate: 'rabbit-bootinfo', what: 'pure parsing of the PVH boot handover structures, and the helpers that build them from a UEFI memory map' },
   { crate: 'rabbit-drivers', what: '16550A UART, isa-debug-exit' },
   { crate: 'rabbit-mm', what: 'paging, the buddy allocator, the heap, the mappings' },
   { crate: 'rabbit-sched', what: 'the scheduler and its policy' },
   { crate: 'rabbit-elf', what: 'the ELF64 reader' },
   { crate: 'rabbit-initramfs', what: 'the reader of the cpio archive of the initramfs' },
+  { crate: 'rabbit-uefi', what: 'the UEFI loader, a PE32+ application that starts the kernel from firmware' },
   { crate: 'rabbit-kernel', what: 'the no_std kernel binary' },
   { crate: 'rabbit-userland', what: 'the test program that runs unmodified in ring 3' },
   { crate: 'rabbit-bench', what: 'the workload that measures the kernel' },
