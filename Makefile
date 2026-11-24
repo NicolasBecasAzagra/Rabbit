@@ -258,8 +258,10 @@ run-infer: infer-initramfs build
 build: userland infer
 	$(CARGO) build --release $(KERNEL_FLAGS)
 
-uefi:
-	$(CARGO) build -p rabbit-uefi --release $(UEFI_FLAGS)
+# The loader embeds the PVH kernel, so the kernel is built first and its
+# absolute path reaches the compiler through RABBIT_KERNEL_ELF.
+uefi: build
+	RABBIT_KERNEL_ELF=$(abspath $(KERNEL)) $(CARGO) build -p rabbit-uefi --release $(UEFI_FLAGS)
 
 # The multiprocessor boot. The kernel finds the processors in the ACPI table
 # and starts them, so this is the only way to exercise that path.
@@ -358,7 +360,7 @@ clippy-host:
 
 
 check: userland
-	$(CARGO) check --workspace --bins --lib $(KERNEL_FLAGS)
+	$(CARGO) check --workspace --exclude rabbit-uefi --bins --lib $(KERNEL_FLAGS)
 
 clean:
 	$(CARGO) clean --target-dir $(TARGET_DIR)

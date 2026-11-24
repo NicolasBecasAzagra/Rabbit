@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 //! Rabbit UEFI loader (first stage).
 //!
-//! A `no_std`, `no_main` PE32+ EFI application. It finds the ACPI RSDP in the
-//! configuration table, reads the memory map, leaves boot services and reports
-//! the result on COM1. The handover to the kernel comes in a later change.
+//! A `no_std`, `no_main` PE32+ EFI application. It embeds the kernel ELF and
+//! loads it at its physical addresses, finds the ACPI RSDP in the
+//! configuration table, builds a PVH `hvm_start_info` with a memory map below
+//! 1 MiB, leaves boot services and checks its own output with the same parser
+//! the kernel uses, reporting on COM1. The jump to the kernel comes in a later
+//! change.
 //!
 //! The firmware structures are declared by hand with the layout of the UEFI
 //! specification, and every offset this program relies on is asserted at
@@ -16,8 +19,17 @@
 
 use core::arch::asm;
 use core::ffi::c_void;
-use core::mem::{offset_of, size_of};
+use core::mem::{align_of, offset_of, size_of};
 use core::ptr;
+
+use rabbit_bootinfo::uefi::{memmap_kind_from_uefi, merge_adjacent, Range, StartInfoWriter};
+use rabbit_bootinfo::{BootInfo, HvmMemmapEntry, HvmModule, HvmStartInfo, MemmapKind};
+
+mod elf;
+
+/// The kernel ELF, embedded at build time. `RABBIT_KERNEL_ELF` is the absolute
+/// path of the kernel the `uefi` make target builds first.
+static KERNEL_ELF: &[u8] = include_bytes!(env!("RABBIT_KERNEL_ELF"));
 
 /// An opaque firmware handle.
 type Handle = *mut c_void;
@@ -56,6 +68,22 @@ const DEFAULT_DESCRIPTOR_SIZE: usize = 48;
 const MAP_SIZE_ATTEMPTS: usize = 4;
 /// Attempts at `ExitBootServices` before the loader gives up.
 const EXIT_ATTEMPTS: usize = 8;
+
+const PAGE_SIZE: usize = elf::PAGE_SIZE as usize;
+/// Physical address of the AP trampoline page (`rabbit-kernel/src/smp.rs`).
+const AP_TRAMPOLINE_PHYS: u64 = 0x8000;
+/// Highest byte the start info area may use: it lives below 1 MiB, where a
+/// kernel that follows the PVH contract expects to find it.
+const START_INFO_LIMIT: u64 = 0xF_FFFF;
+/// Descriptors of headroom over the map size seen before the buffers below are
+/// allocated: allocating and merging both change the count.
+const MEMMAP_SLACK_ENTRIES: usize = 64;
+/// Module slots reserved in the start info area; none is used yet.
+const MODULE_SLOTS: usize = 1;
+/// Offset of the module list in the start info area, right after the header.
+const MODLIST_OFFSET: usize = size_of::<HvmStartInfo>();
+/// Offset of the memory map array, right after the module slots.
+const MEMMAP_OFFSET: usize = MODLIST_OFFSET + MODULE_SLOTS * size_of::<HvmModule>();
 
 /// `EFI_TABLE_HEADER`.
 #[repr(C)]
@@ -149,6 +177,11 @@ const _: () = {
     assert!(offset_of!(ConfigurationTable, vendor_guid) == 0);
     assert!(offset_of!(ConfigurationTable, vendor_table) == 16);
     assert!(size_of::<ConfigurationTable>() == 24);
+    // The start info area is page aligned, so 8-byte offsets keep every
+    // structure in it aligned.
+    assert!(MODLIST_OFFSET.is_multiple_of(8) && MEMMAP_OFFSET.is_multiple_of(8));
+    assert!(align_of::<HvmStartInfo>() == 8 && align_of::<HvmModule>() == 8);
+    assert!(align_of::<HvmMemmapEntry>() == 8 && align_of::<Range>() == 8);
 };
 
 /// A memory map buffer and what the firmware reported about it.
@@ -156,6 +189,8 @@ struct MemoryMap {
     buffer: *mut u8,
     capacity: usize,
     key: usize,
+    /// Bytes of the buffer the last successful `GetMemoryMap` filled.
+    size: usize,
     /// Stride of the descriptors, as the last successful `GetMemoryMap`
     /// returned it. A map is always walked with this and never with the size
     /// of `MemoryDescriptor`.
@@ -231,9 +266,20 @@ fn allocate_pool(bs: &BootServices, size: usize) -> Option<*mut u8> {
     (status == EFI_SUCCESS && !buffer.is_null()).then_some(buffer)
 }
 
-/// Read the memory map into the buffer. On `EFI_BUFFER_TOO_SMALL` the error
-/// carries the size the firmware wants.
-fn read_memory_map(bs: &BootServices, map: &mut MemoryMap) -> Result<(), (Status, usize)> {
+/// Why a `GetMemoryMap` call did not give a usable map.
+enum MapError {
+    /// The firmware returned this status; with `EFI_BUFFER_TOO_SMALL` the size
+    /// is what it wants.
+    Firmware(Status, usize),
+    /// The firmware reported a descriptor size below that of `MemoryDescriptor`.
+    Stride,
+}
+
+const STRIDE_ERROR: &str = "firmware reports a memory map descriptor size below 40";
+
+/// Read the memory map into the buffer. A map whose descriptor size is below
+/// that of `MemoryDescriptor` is rejected, so no key from such a call is used.
+fn read_memory_map(bs: &BootServices, map: &mut MemoryMap) -> Result<(), MapError> {
     let mut size = map.capacity;
     let mut descriptor_size = 0usize;
     let mut version = 0u32;
@@ -248,65 +294,88 @@ fn read_memory_map(bs: &BootServices, map: &mut MemoryMap) -> Result<(), (Status
             &mut version,
         )
     };
-    if status == EFI_SUCCESS {
-        map.descriptor_size = descriptor_size;
-        Ok(())
-    } else {
-        Err((status, size))
+    if status != EFI_SUCCESS {
+        return Err(MapError::Firmware(status, size));
     }
+    if descriptor_size < size_of::<MemoryDescriptor>() {
+        return Err(MapError::Stride);
+    }
+    map.size = size;
+    map.descriptor_size = descriptor_size;
+    Ok(())
 }
 
 /// Allocate a buffer for the memory map and read it, growing the buffer when
 /// the firmware asks for more.
-fn first_memory_map(bs: &BootServices) -> Option<MemoryMap> {
-    let (mut size, descriptor_size) = memory_map_size(bs)?;
+fn first_memory_map(bs: &BootServices) -> Result<MemoryMap, &'static str> {
+    let (mut size, descriptor_size) = memory_map_size(bs).ok_or("cannot size the memory map")?;
     for _ in 0..MAP_SIZE_ATTEMPTS {
         let capacity = size + MAP_SLACK_DESCRIPTORS * descriptor_size;
-        let buffer = allocate_pool(bs, capacity)?;
+        let buffer = allocate_pool(bs, capacity).ok_or("cannot allocate the memory map buffer")?;
         let mut map = MemoryMap {
             buffer,
             capacity,
             key: 0,
+            size: 0,
             descriptor_size,
         };
         match read_memory_map(bs, &mut map) {
-            Ok(()) => return Some(map),
-            Err((EFI_BUFFER_TOO_SMALL, wanted)) => size = wanted.max(capacity),
-            Err(_) => return None,
+            Ok(()) => return Ok(map),
+            Err(MapError::Firmware(EFI_BUFFER_TOO_SMALL, wanted)) => size = wanted.max(capacity),
+            Err(MapError::Firmware(..)) => return Err("cannot read the memory map"),
+            Err(MapError::Stride) => return Err(STRIDE_ERROR),
         }
     }
-    None
+    Err("the memory map keeps growing")
+}
+
+/// Allocate a larger buffer for a map that no longer fits and read it again,
+/// as many times as the firmware keeps asking for more.
+fn regrow_memory_map(
+    bs: &BootServices,
+    map: &mut MemoryMap,
+    mut wanted: usize,
+) -> Result<(), &'static str> {
+    for _ in 0..MAP_SIZE_ATTEMPTS {
+        // Allocating changes the map once more, so the slack covers that.
+        let capacity = wanted + MAP_SLACK_DESCRIPTORS * map.descriptor_size;
+        map.buffer =
+            allocate_pool(bs, capacity).ok_or("cannot allocate a larger memory map buffer")?;
+        map.capacity = capacity;
+        match read_memory_map(bs, map) {
+            Ok(()) => return Ok(()),
+            Err(MapError::Firmware(EFI_BUFFER_TOO_SMALL, more)) => wanted = more.max(capacity),
+            Err(MapError::Firmware(..)) => return Err("cannot read the grown memory map"),
+            Err(MapError::Stride) => return Err(STRIDE_ERROR),
+        }
+    }
+    Err("the memory map keeps growing")
 }
 
 /// Leave boot services. A failure means the map changed since the key was
 /// taken, so the map is read again; nothing else is called in between.
-fn exit_boot_services(image: Handle, bs: &BootServices, map: &mut MemoryMap) -> bool {
+fn exit_boot_services(
+    image: Handle,
+    bs: &BootServices,
+    map: &mut MemoryMap,
+) -> Result<(), &'static str> {
     for _ in 0..EXIT_ATTEMPTS {
         // SAFETY: `image` is the handle the firmware passed to `efi_main` and
         // `key` comes from the latest `GetMemoryMap`.
         let status = unsafe { (bs.exit_boot_services)(image, map.key) };
         if status == EFI_SUCCESS {
-            return true;
+            return Ok(());
         }
         match read_memory_map(bs, map) {
             Ok(()) => {}
-            Err((EFI_BUFFER_TOO_SMALL, wanted)) => {
-                // The map grew. Allocating changes it once more, so the slack
-                // covers that, and the map is read again before the next exit.
-                let capacity = wanted + MAP_SLACK_DESCRIPTORS * map.descriptor_size;
-                let Some(buffer) = allocate_pool(bs, capacity) else {
-                    return false;
-                };
-                map.buffer = buffer;
-                map.capacity = capacity;
-                if read_memory_map(bs, map).is_err() {
-                    return false;
-                }
+            Err(MapError::Firmware(EFI_BUFFER_TOO_SMALL, wanted)) => {
+                regrow_memory_map(bs, map, wanted)?
             }
-            Err(_) => return false,
+            Err(MapError::Firmware(..)) => return Err("cannot read the memory map again"),
+            Err(MapError::Stride) => return Err(STRIDE_ERROR),
         }
     }
-    false
+    Err("boot services did not exit after repeated attempts")
 }
 
 const COM1: u16 = 0x3F8;
@@ -375,8 +444,276 @@ fn serial_hex(value: u64) {
     }
 }
 
+/// Send `value` in decimal.
+fn serial_dec(value: u64) {
+    let mut digits = [0u8; 20];
+    let mut count = 0;
+    let mut rest = value;
+    loop {
+        digits[count] = b'0' + (rest % 10) as u8;
+        count += 1;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    digits[..count]
+        .iter()
+        .rev()
+        .for_each(|&digit| serial_byte(digit));
+}
+
+/// Report why the loader stops and halt.
+fn fail(reason: &str) -> ! {
+    serial_str("rabbit-uefi: error: ");
+    serial_str(reason);
+    serial_str("\n");
+    halt()
+}
+
+/// Like [`fail`], for a firmware call that returned `status`.
+fn fail_status(reason: &str, status: Status) -> ! {
+    serial_str("rabbit-uefi: error: ");
+    serial_str(reason);
+    serial_str(" (status 0x");
+    serial_hex(status as u64);
+    serial_str(")\n");
+    halt()
+}
+
+/// Ask the firmware for `pages` pages of loader data. `address` is the exact
+/// address for `alloc_type::ADDRESS` and the highest byte for
+/// `alloc_type::MAX_ADDRESS`. Returns the address of the pages.
+fn allocate_pages(bs: &BootServices, kind: u32, address: u64, pages: usize) -> Result<u64, Status> {
+    let mut memory = address;
+    // SAFETY: `memory` is a live local that holds the request and receives the
+    // address of the allocation.
+    let status = unsafe { (bs.allocate_pages)(kind, LOADER_DATA, pages, &mut memory) };
+    if status == EFI_SUCCESS {
+        Ok(memory)
+    } else {
+        Err(status)
+    }
+}
+
+/// Copy the segments of the kernel to their physical addresses and zero the
+/// rest of the range, so `.bss` and the pages between segments are clean.
+///
+/// # Safety
+///
+/// `[LOAD_MIN, kernel.physical_end)` must be owned by the caller: allocated
+/// with `AllocatePages` and not used by anything else.
+unsafe fn load_kernel(kernel: &elf::Image) {
+    let length = (kernel.physical_end - elf::LOAD_MIN) as usize;
+    // SAFETY: the caller owns the range, and boot services identity map it.
+    unsafe { ptr::write_bytes(elf::LOAD_MIN as *mut u8, 0, length) };
+    for segment in kernel.segments() {
+        // `parse` checked that the file bytes lie inside the image and that the
+        // segment lies inside the range, so both slices are in bounds.
+        let source = &KERNEL_ELF[segment.offset..segment.offset + segment.file_size];
+        // SAFETY: the destination is inside the owned range, which no source
+        // byte of the embedded image overlaps.
+        unsafe {
+            ptr::copy_nonoverlapping(source.as_ptr(), segment.paddr as *mut u8, source.len())
+        };
+    }
+}
+
+/// Zero `pages` pages at `paddr`.
+///
+/// # Safety
+///
+/// The pages must be owned by the caller.
+unsafe fn zero_pages(paddr: u64, pages: usize) {
+    // SAFETY: the caller owns the pages, which boot services identity map.
+    unsafe { ptr::write_bytes(paddr as *mut u8, 0, pages * PAGE_SIZE) };
+}
+
+/// The memory map and module list inside the start info area at `paddr`.
+///
+/// # Safety
+///
+/// `paddr` must be the start of a zeroed area of at least
+/// `MEMMAP_OFFSET + entries * size_of::<HvmMemmapEntry>()` bytes that nothing
+/// else references, and it must stay allocated for the rest of the program.
+unsafe fn area_tables(
+    paddr: u64,
+    entries: usize,
+) -> (&'static mut [HvmMemmapEntry], &'static mut [HvmModule]) {
+    let base = paddr as *mut u8;
+    // SAFETY: both ranges are inside the area and disjoint, they are 8-byte
+    // aligned (asserted at compile time), and zero is a valid value of both
+    // plain integer structures.
+    unsafe {
+        (
+            core::slice::from_raw_parts_mut(
+                base.add(MEMMAP_OFFSET) as *mut HvmMemmapEntry,
+                entries,
+            ),
+            core::slice::from_raw_parts_mut(
+                base.add(MODLIST_OFFSET) as *mut HvmModule,
+                MODULE_SLOTS,
+            ),
+        )
+    }
+}
+
+/// Store the finished header at the start of the area and borrow it back, so
+/// the check reads the bytes the kernel would read.
+///
+/// # Safety
+///
+/// `paddr` must satisfy the contract of [`area_tables`].
+unsafe fn store_header(paddr: u64, start: HvmStartInfo) -> &'static HvmStartInfo {
+    let header = paddr as *mut HvmStartInfo;
+    // SAFETY: the header slot is aligned, inside the area, and disjoint from
+    // the tables, which are the only other references into the area.
+    unsafe {
+        header.write(start);
+        &*header
+    }
+}
+
+/// Carve two arrays of `entries` ranges out of one pool allocation.
+fn allocate_ranges(
+    bs: &BootServices,
+    entries: usize,
+) -> Option<(&'static mut [Range], &'static mut [Range])> {
+    let bytes = entries.checked_mul(2 * size_of::<Range>())?;
+    let buffer = allocate_pool(bs, bytes)?;
+    if !(buffer as usize).is_multiple_of(align_of::<Range>()) {
+        return None;
+    }
+    let start = buffer as *mut Range;
+    for index in 0..entries * 2 {
+        // SAFETY: `index` is inside the allocation, which is aligned for `Range`.
+        unsafe { start.add(index).write((0, 0, MemmapKind::Reserved)) };
+    }
+    // SAFETY: the allocation holds `2 * entries` initialised ranges, nothing
+    // else references it and it is never freed.
+    let all = unsafe { core::slice::from_raw_parts_mut(start, entries * 2) };
+    Some(all.split_at_mut(entries))
+}
+
+/// Convert the final firmware map into `(start, length, kind)` ranges sorted
+/// by start, which the firmware does not promise. Returns how many there are.
+fn collect_ranges(map: &MemoryMap, ranges: &mut [Range]) -> Result<usize, &'static str> {
+    let stride = map.descriptor_size;
+    if stride < size_of::<MemoryDescriptor>() {
+        return Err("memory map descriptors are too small");
+    }
+    let count = map.size / stride;
+    if count > ranges.len() {
+        return Err("memory map grew past the room reserved for it");
+    }
+    for index in 0..count {
+        // SAFETY: `index < size / stride` and `stride >= 40`, so the descriptor
+        // lies inside the `size` bytes the firmware wrote. The stride need not
+        // keep the structure aligned, hence the unaligned read.
+        let descriptor = unsafe {
+            ptr::read_unaligned(map.buffer.add(index * stride) as *const MemoryDescriptor)
+        };
+        let length = descriptor
+            .number_of_pages
+            .checked_mul(PAGE_SIZE as u64)
+            .ok_or("memory descriptor length overflows")?;
+        let entry = (
+            descriptor.physical_start,
+            length,
+            memmap_kind_from_uefi(descriptor.kind),
+        );
+        // Insertion into the sorted prefix: linear for a map that is sorted.
+        let mut slot = index;
+        while slot > 0 && ranges[slot - 1].0 > entry.0 {
+            ranges[slot] = ranges[slot - 1];
+            slot -= 1;
+        }
+        ranges[slot] = entry;
+    }
+    Ok(count)
+}
+
+/// The start info area below 1 MiB and the buffers the final map is built in.
+struct Buffers {
+    /// Physical address of the start info area.
+    area: u64,
+    /// Capacity, in entries, of the memory map in the area and of both range
+    /// arrays.
+    entries: usize,
+    sorted: &'static mut [Range],
+    merged: &'static mut [Range],
+}
+
+/// Allocate everything the start info needs. The firmware map changes with
+/// each allocation, so this runs before the map that feeds `ExitBootServices`.
+fn allocate_buffers(bs: &BootServices) -> Buffers {
+    let Some((size, stride)) = memory_map_size(bs) else {
+        fail("cannot size the memory map");
+    };
+    let entries = size / stride + MEMMAP_SLACK_ENTRIES;
+    let pages = (MEMMAP_OFFSET + entries * size_of::<HvmMemmapEntry>()).div_ceil(PAGE_SIZE);
+    let area = match allocate_pages(bs, alloc_type::MAX_ADDRESS, START_INFO_LIMIT, pages) {
+        Ok(area) => area,
+        Err(status) => fail_status("cannot allocate the start info area below 1 MiB", status),
+    };
+    // SAFETY: the pages were just allocated and nothing else uses them.
+    unsafe { zero_pages(area, pages) };
+    let Some((sorted, merged)) = allocate_ranges(bs, entries) else {
+        fail("cannot allocate the memory map ranges");
+    };
+    Buffers {
+        area,
+        entries,
+        sorted,
+        merged,
+    }
+}
+
+/// Build the start info from the final memory map and check it with the parser
+/// the kernel uses.
+///
+/// It takes the buffers by value, so the area behind them is turned into
+/// `&'static mut` tables once: `Buffers` is only made by `allocate_buffers`.
+///
+/// The map is written as the firmware reports it. The areas the loader itself
+/// holds (the start info area below 1 MiB, the page at 0x8000 and the kernel
+/// image) are loader data, so they come out as RAM. That is deliberate: the
+/// kernel reserves `[0, 1 MiB)` and its whole image before it frees any frame,
+/// so nothing it hands out can overlap them, and the map does not need to hide
+/// them. The start info area never relies on the map for that: it lives below
+/// 1 MiB, which the kernel reserves.
+fn build_start_info(
+    map: &MemoryMap,
+    rsdp: u64,
+    buffers: Buffers,
+) -> Result<BootInfo<'static>, &'static str> {
+    let count = collect_ranges(map, buffers.sorted)?;
+    let merged = merge_adjacent(&buffers.sorted[..count], buffers.merged)
+        .map_err(|_| "memory map cannot be merged")?;
+    // SAFETY: `allocate_buffers` allocated and zeroed the area with room for
+    // `entries` memory map entries, `buffers` is consumed so this runs once per
+    // area, nothing else references it, and it is never freed.
+    let (memmap, modules) = unsafe { area_tables(buffers.area, buffers.entries) };
+    let mut writer = StartInfoWriter::new(memmap, modules);
+    writer.set_rsdp(rsdp);
+    writer.set_table_paddrs(
+        buffers.area + MEMMAP_OFFSET as u64,
+        buffers.area + MODLIST_OFFSET as u64,
+    );
+    for &(start, length, kind) in &buffers.merged[..merged] {
+        writer
+            .push_memmap(start, length, kind)
+            .map_err(|_| "memory map does not fit the start info area")?;
+    }
+    let (start, memmap, modules) = writer.finish();
+    // SAFETY: same area, and the tables above are the only other references.
+    let start = unsafe { store_header(buffers.area, start) };
+    BootInfo::parse(start, memmap, modules).map_err(|_| "start info rejected")
+}
+
 #[no_mangle]
 extern "efiapi" fn efi_main(image: Handle, st: *const SystemTable) -> usize {
+    serial_init();
     // SAFETY: the firmware passes a valid system table that stays readable
     // until the end of the program.
     let st = unsafe { &*st };
@@ -384,16 +721,39 @@ extern "efiapi" fn efi_main(image: Handle, st: *const SystemTable) -> usize {
     let bs = unsafe { &*st.boot_services };
 
     let rsdp = find_rsdp(st);
-    let Some(mut map) = first_memory_map(bs) else {
-        halt()
-    };
-    if !exit_boot_services(image, bs, &mut map) {
-        halt();
-    }
+    let kernel = elf::parse(KERNEL_ELF).unwrap_or_else(|reason| fail(reason));
 
-    serial_init();
+    // Reserve the kernel and the AP trampoline page before anything else asks
+    // for memory, then load. If the firmware keeps either, nothing is touched.
+    let kernel_pages = ((kernel.physical_end - elf::LOAD_MIN) / elf::PAGE_SIZE) as usize;
+    if let Err(status) = allocate_pages(bs, alloc_type::ADDRESS, elf::LOAD_MIN, kernel_pages) {
+        fail_status("cannot reserve the kernel range at 0x100000", status);
+    }
+    if let Err(status) = allocate_pages(bs, alloc_type::ADDRESS, AP_TRAMPOLINE_PHYS, 1) {
+        fail_status("cannot reserve the trampoline page at 0x8000", status);
+    }
+    // SAFETY: the kernel range was just allocated and nothing else uses it.
+    unsafe { load_kernel(&kernel) };
+
+    let buffers = allocate_buffers(bs);
+    let mut map = first_memory_map(bs).unwrap_or_else(|reason| fail(reason));
+    exit_boot_services(image, bs, &mut map).unwrap_or_else(|reason| fail(reason));
+
     serial_str("rabbit-uefi: boot services exited, rsdp=0x");
     serial_hex(rsdp);
+    serial_str("\n");
+
+    let info = build_start_info(&map, rsdp, buffers).unwrap_or_else(|reason| fail(reason));
+    serial_str("rabbit-uefi: start info ok, memmap=");
+    serial_dec(info.memmap().len() as u64);
+    serial_str(" entries, ram=");
+    serial_dec(info.total_ram() >> 20);
+    serial_str(" MiB, rsdp=0x");
+    serial_hex(info.start_info().rsdp_paddr);
+    serial_str(", kernel=0x");
+    serial_hex(elf::LOAD_MIN);
+    serial_str("..0x");
+    serial_hex(kernel.physical_end);
     serial_str("\n");
     halt()
 }
