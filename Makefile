@@ -256,10 +256,10 @@ run-infer: infer-initramfs build
 		echo "unexpected QEMU exit status $$status"; exit $$status; \
 	fi
 
-# The self-check of the vector kernels of the eight bit product. It is a second
-# program of the inference crate, packed alone into an initramfs of the same
-# kind, so Rabbit runs it as init on the processor of the guest. The outputs
-# live outside the repository. MATVEC_CPU picks the processor model, for
+# The self-check of the vector kernels of the eight and four bit products. It
+# is a second program of the inference crate, packed alone into an initramfs of
+# the same kind, so Rabbit runs it as init on the processor of the guest. The
+# outputs live outside the repository. MATVEC_CPU picks the processor model, for
 # example `Skylake-Client,-avx2,-fma` to leave the AVX2 path out.
 MATVEC_CPU ?= Skylake-Client
 # The paths that must appear as exact, so a path the guest does not offer is a
@@ -288,13 +288,15 @@ matvec-check: matvec-check-initramfs build
 	if [ $$status -ne 33 ]; then \
 		echo "unexpected QEMU exit status $$status"; exit 1; \
 	fi; \
-	if ! tr -d '\r' < $(MATVEC_LOG) | grep -qx 'MATVEC OK'; then \
+	if ! tr -d '\r' < $(MATVEC_LOG) | grep -q '^MATVEC OK checked='; then \
 		echo "matvec-check: no MATVEC OK line"; exit 1; \
 	fi; \
 	for path in $(MATVEC_REQUIRE); do \
-		if ! tr -d '\r' < $(MATVEC_LOG) | grep -q "^MATVEC q8 path=$$path shapes=[0-9]* bit_exact=true$$"; then \
-			echo "matvec-check: path $$path was not checked as exact"; exit 1; \
-		fi; \
+		for format in q8 q4; do \
+			if ! tr -d '\r' < $(MATVEC_LOG) | grep -q "^MATVEC $$format path=$$path shapes=[0-9]* bit_exact=true$$"; then \
+				echo "matvec-check: path $$path was not checked as exact for $$format"; exit 1; \
+			fi; \
+		done; \
 	done; \
 	echo "matvec-check OK (cpu $(MATVEC_CPU), QEMU exit status 33)"
 

@@ -7,16 +7,21 @@
 //!
 //! ```text
 //! MATVEC q8 path=<name> shapes=<n> bit_exact=<true|false>
+//! MATVEC q4 path=<name> shapes=<n> bit_exact=<true|false>
 //! ```
 //!
-//! and `MATVEC OK` at the end, only when every line is exact. The exit status is
+//! and `MATVEC OK checked=<paths> skipped=<paths>` at the end, only when every
+//! line is exact. The exit status is
 //! nonzero otherwise. The binary is packed into an initramfs by `make
 //! matvec-check`, so the x86 kernels run on the processor of the guest.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use rabbit_infer::matvec::{detected, matvec_q8_scalar, matvec_q8_with, select, Path, ROW_TILE};
-use rabbit_infer::quant::{f32_to_half, BLOCK, Q8_BLOCK_BYTES};
+use rabbit_infer::matvec::{
+    detected, matvec_q4_scalar, matvec_q4_with, matvec_q8_scalar, matvec_q8_with, select, Path,
+    ROW_TILE,
+};
+use rabbit_infer::quant::{f32_to_half, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES};
 
 /// The paths with a kernel of their own for this format, lowest first.
 const PATHS: &[Path] = &[
@@ -71,6 +76,32 @@ fn matrix(stream: &mut Stream, blocks: usize, awkward: bool) -> Vec<u8> {
     bytes
 }
 
+/// A four bit matrix of `blocks` random blocks. The awkward form uses zero,
+/// negative, subnormal and large scales and often the extreme nibbles.
+fn matrix_q4(stream: &mut Stream, blocks: usize, awkward: bool) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(blocks * BLOCK_BYTES);
+    for _ in 0..blocks {
+        let half = match (awkward, stream.next() % 6) {
+            (true, 0) => 0x0000,
+            (true, 1) => 0x8000,
+            (true, 2) => 0x0001 + (stream.next() as u16 & 0x03ff),
+            (true, 3) => 0x7bff,
+            _ => f32_to_half(stream.unit() * 2.0),
+        };
+        bytes.extend_from_slice(&half.to_le_bytes());
+        for _ in 0..BLOCK / 2 {
+            bytes.push(match (awkward, stream.next() % 8) {
+                (true, 0) => 0x88,
+                (true, 1) => 0x77,
+                (true, 2) => 0x00,
+                (true, 3) => 0xff,
+                _ => stream.next() as u8,
+            });
+        }
+    }
+    bytes
+}
+
 /// An input of `columns` values. The awkward form has signed zeros,
 /// subnormals and large and small magnitudes.
 fn input(stream: &mut Stream, columns: usize, awkward: bool) -> Vec<f32> {
@@ -88,8 +119,9 @@ fn input(stream: &mut Stream, columns: usize, awkward: bool) -> Vec<f32> {
         .collect()
 }
 
-/// Run every shape on `path`; the number of shapes and whether all were exact.
-fn check(path: Path) -> (usize, bool) {
+/// Run every eight bit shape on `path`; the number of shapes and whether all
+/// were exact.
+fn check_q8(path: Path) -> (usize, bool) {
     let mut stream = Stream(0x00c0_ffee_f00d_0001);
     let mut shapes = 0;
     let mut exact = select(path) == path;
@@ -139,24 +171,98 @@ fn check(path: Path) -> (usize, bool) {
     (shapes, exact)
 }
 
+/// Run every four bit shape on `path`; the number of shapes and whether all
+/// were exact.
+fn check_q4(path: Path) -> (usize, bool) {
+    let mut stream = Stream(0x00c0_ffee_f00d_0004);
+    let mut shapes = 0;
+    let mut exact = select(path) == path;
+    for rows in [1usize, 3, ROW_TILE, ROW_TILE + 1, 37] {
+        for blocks in [1usize, 2, 3, 18, 48] {
+            for awkward in [false, true] {
+                let columns = blocks * BLOCK;
+                let weights = matrix_q4(&mut stream, rows * blocks, awkward);
+                let input = input(&mut stream, columns, awkward);
+                let mut expected = vec![0.0f32; rows];
+                let mut actual = vec![0.0f32; rows];
+                shapes += 1;
+                let done = matvec_q4_scalar(&weights, rows, columns, &input, &mut expected)
+                    .and_then(|()| {
+                        matvec_q4_with(path, &weights, rows, columns, &input, &mut actual)
+                    });
+                if done.is_err()
+                    || expected
+                        .iter()
+                        .zip(&actual)
+                        .any(|(left, right)| left.to_bits() != right.to_bits())
+                {
+                    exact = false;
+                }
+            }
+        }
+    }
+    // 256 packed bytes over 16 blocks with every byte value once, so each of
+    // the 16 nibble values is checked in the even and in the odd position and
+    // the sign extension of each is covered exhaustively, not by sampling.
+    let sweep: Vec<u8> = (0..16)
+        .flat_map(|block| {
+            let scale = 0x3c00u16.to_le_bytes(); // 1.0
+            let packed = (0..BLOCK / 2).map(move |index| (block * (BLOCK / 2) + index) as u8);
+            scale.into_iter().chain(packed)
+        })
+        .collect();
+    let columns = 16 * BLOCK;
+    let input = input(&mut stream, columns, false);
+    let mut expected = [0.0f32; 1];
+    let mut actual = [0.0f32; 1];
+    shapes += 1;
+    let done = matvec_q4_scalar(&sweep, 1, columns, &input, &mut expected)
+        .and_then(|()| matvec_q4_with(path, &sweep, 1, columns, &input, &mut actual));
+    if done.is_err() || expected[0].to_bits() != actual[0].to_bits() {
+        exact = false;
+    }
+    (shapes, exact)
+}
+
 fn main() {
     let mut all = true;
+    let mut checked = Vec::new();
+    let mut skipped = Vec::new();
     for &path in PATHS {
         if path > detected() {
+            skipped.push(path.name());
             // The guest does not offer this path. The line says so, and the
             // Makefile fails when it requires a path that was skipped.
             println!("MATVEC q8 path={} skipped", path.name());
+            println!("MATVEC q4 path={} skipped", path.name());
             continue;
         }
-        let (shapes, exact) = check(path);
+        checked.push(path.name());
+        let (shapes, exact) = check_q8(path);
         println!(
             "MATVEC q8 path={} shapes={shapes} bit_exact={exact}",
             path.name()
         );
         all &= exact;
+        let (shapes, exact) = check_q4(path);
+        println!(
+            "MATVEC q4 path={} shapes={shapes} bit_exact={exact}",
+            path.name()
+        );
+        all &= exact;
     }
     if all {
-        println!("MATVEC OK");
+        // The line names what was and was not checked, so an OK that skipped a
+        // path cannot be mistaken for one that ran it.
+        println!(
+            "MATVEC OK checked={} skipped={}",
+            checked.join(","),
+            if skipped.is_empty() {
+                "none".to_string()
+            } else {
+                skipped.join(",")
+            }
+        );
     } else {
         println!("MATVEC FAIL");
     }
