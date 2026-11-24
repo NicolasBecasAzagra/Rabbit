@@ -26,9 +26,12 @@
 //! kernel can be measured by a host benchmark on an ARM machine. The
 //! architecture chooses the module at compile time and, on `x86_64`, the
 //! feature detection chooses at run time. The scalar path is always available
-//! and produces the same values to floating point tolerance. The vector paths
-//! sum eight (or four) products per accumulator and the scalar path sums one,
-//! so the rounding order differs; the tokens the runtime generates do not.
+//! and produces the same values to floating point tolerance. The `bfloat16`
+//! vector paths sum eight (or four) products per accumulator and the scalar
+//! path sums one, so the rounding order differs; the tokens the runtime
+//! generates do not. The scalar Q8 and Q4 kernels instead define a canonical
+//! order (eight lanes, a fixed tree, one scale per block) that the vector
+//! kernels of those formats must reproduce bit for bit.
 
 use crate::error::{Error, Result};
 
@@ -186,6 +189,28 @@ pub fn matvec_scalar(weights: &[u8], rows: usize, columns: usize, input: &[f32],
     }
 }
 
+// The block is a whole number of eight wide groups, so the canonical order of
+// the block dot products below has no tail.
+const _: () = assert!(crate::quant::BLOCK % 8 == 0);
+
+/// Sum eight lane accumulators with the fixed tree of the block dot products.
+///
+/// `t[j] = lane[j] + lane[j + 4]` for `j` in `0..4`, then
+/// `u[j] = t[j] + t[j + 2]` for `j` in `0..2`, then `u[0] + u[1]`. The tree is
+/// the one a vector kernel gets by adding the high half of a register to the
+/// low half until one lane is left, so a kernel can be tested against this
+/// function bit for bit.
+#[inline]
+fn reduce8(lane: [f32; 8]) -> f32 {
+    let t0 = lane[0] + lane[4];
+    let t1 = lane[1] + lane[5];
+    let t2 = lane[2] + lane[6];
+    let t3 = lane[3] + lane[7];
+    let u0 = t0 + t2;
+    let u1 = t1 + t3;
+    u0 + u1
+}
+
 /// Multiply a `Q4B32` matrix by `input`, writing one value per row.
 ///
 /// The weights are never expanded into a floating point matrix: the kernel
@@ -196,6 +221,18 @@ pub fn matvec_scalar(weights: &[u8], rows: usize, columns: usize, input: &[f32],
 ///
 /// The nibble is sign extended before the product and the block sum is scaled
 /// once, so the rounding of the scale is not repeated thirty-two times.
+///
+/// The order of the floating point operations is canonical, so that a vector
+/// kernel can reproduce the result bit for bit. Weight `k` of a block is the
+/// low nibble of packed byte `k / 2` when `k` is even and the high nibble when
+/// it is odd, sign extended and converted to `f32`. For one block, eight lane
+/// accumulators `acc[0..8]` start at zero and the block is walked in groups of
+/// eight consecutive weights: for each group `g` and lane `j`,
+/// `acc[j] = acc[j] + w[8g + j] * x[8g + j]`, with a separate multiply and add
+/// (no fused multiply add). The lanes are then summed by [`reduce8`], giving
+/// `block_sum`, and the row is `row = row + block_sum * scale` over the blocks
+/// in order, starting at `0.0`. The columns are a whole number of blocks and a
+/// block is a whole number of groups, so there is no tail.
 pub fn matvec_q4(
     weights: &[u8],
     rows: usize,
@@ -215,16 +252,21 @@ pub fn matvec_q4(
                 weights[offset],
                 weights[offset + 1],
             ]));
-            let mut accumulator = 0.0f32;
-            let mut column = block * crate::quant::BLOCK;
-            for pair in 0..crate::quant::PACKED_BYTES {
-                let packed = weights[offset + crate::quant::SCALE_BYTES + pair];
-                let low = ((packed & 0x0f) as i32) << 28 >> 28;
-                let high = ((packed >> 4) as i32) << 28 >> 28;
-                accumulator += low as f32 * input[column] + high as f32 * input[column + 1];
-                column += 2;
+            let packed =
+                &weights[offset + crate::quant::SCALE_BYTES..offset + crate::quant::BLOCK_BYTES];
+            let column = block * crate::quant::BLOCK;
+            let mut lane = [0.0f32; 8];
+            for group in 0..crate::quant::BLOCK / 8 {
+                for (j, slot) in lane.iter_mut().enumerate() {
+                    let k = group * 8 + j;
+                    let nibble = (packed[k / 2] >> (4 * (k % 2))) & 0x0f;
+                    let weight = ((nibble as i32) << 28 >> 28) as f32;
+                    let product = weight * input[column + k];
+                    *slot += product;
+                }
             }
-            sum += accumulator * scale;
+            let block_sum = reduce8(lane);
+            sum += block_sum * scale;
         }
         *slot = sum;
     }
@@ -259,6 +301,17 @@ pub fn kernel_name() -> &'static str {
 /// never expanded into a floating point matrix. The reason the eight bit form
 /// exists is fidelity, not speed: it costs 34 bytes per 32 weights instead of
 /// 18, and it is the width that keeps the tokens of the reference checkpoint.
+///
+/// The order of the floating point operations is canonical, so that a vector
+/// kernel can reproduce the result bit for bit. Weight `k` of a block is the
+/// signed byte `k` after the scale, converted to `f32`. For one block, eight
+/// lane accumulators `acc[0..8]` start at zero and the block is walked in
+/// groups of eight consecutive weights: for each group `g` and lane `j`,
+/// `acc[j] = acc[j] + w[8g + j] * x[8g + j]`, with a separate multiply and add
+/// (no fused multiply add). The lanes are then summed by [`reduce8`], giving
+/// `block_sum`, and the row is `row = row + block_sum * scale` over the blocks
+/// in order, starting at `0.0`. The columns are a whole number of blocks and a
+/// block is a whole number of groups, so there is no tail.
 pub fn matvec_q8(
     weights: &[u8],
     rows: usize,
@@ -278,13 +331,20 @@ pub fn matvec_q8(
                 weights[offset],
                 weights[offset + 1],
             ]));
-            let mut accumulator = 0.0f32;
+            let quantized =
+                &weights[offset + crate::quant::SCALE_BYTES..offset + crate::quant::Q8_BLOCK_BYTES];
             let column = block * crate::quant::BLOCK;
-            for index in 0..crate::quant::BLOCK {
-                let weight = weights[offset + crate::quant::SCALE_BYTES + index] as i8 as f32;
-                accumulator += weight * input[column + index];
+            let mut lane = [0.0f32; 8];
+            for group in 0..crate::quant::BLOCK / 8 {
+                for (j, slot) in lane.iter_mut().enumerate() {
+                    let k = group * 8 + j;
+                    let weight = quantized[k] as i8 as f32;
+                    let product = weight * input[column + k];
+                    *slot += product;
+                }
             }
-            sum += accumulator * scale;
+            let block_sum = reduce8(lane);
+            sum += block_sum * scale;
         }
         *slot = sum;
     }
@@ -707,8 +767,8 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::{
-        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q8, matvec_scalar, select, Path,
-        COLUMN_TILE, ROW_TILE,
+        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q8, matvec_scalar, reduce8,
+        select, Path, COLUMN_TILE, ROW_TILE,
     };
     use crate::quant::{
         f32_to_half, matrix_bytes, q8_matrix_bytes, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES, SCALE_BYTES,
@@ -1049,6 +1109,193 @@ mod tests {
                 "row {row}: {actual} against {expected}"
             );
         }
+    }
+
+    /// A deterministic stream of `u64` values.
+    struct Stream(u64);
+
+    impl Stream {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 24
+        }
+
+        /// A value in `[-1, 1)`, negative about half of the time.
+        fn unit(&mut self) -> f32 {
+            (self.next() & 0xff_ffff) as f32 / (1u32 << 23) as f32 - 1.0
+        }
+    }
+
+    /// Scales with both signs, a spread of magnitudes and an exact zero.
+    fn scale(stream: &mut Stream) -> f32 {
+        match stream.next() % 5 {
+            0 => 0.0,
+            1 => -stream.unit() * 0.001,
+            _ => stream.unit() * 3.0,
+        }
+    }
+
+    /// The canonical order written out plainly: the weights of a block are
+    /// decoded first, then every group of eight is added into its lane, then
+    /// the lanes meet in the fixed tree. Only `f32` operations, one multiply
+    /// and one add each.
+    fn canonical_block(weights: &[f32; BLOCK], input: &[f32]) -> f32 {
+        let mut acc = [0.0f32; 8];
+        let mut group = 0;
+        while group < BLOCK / 8 {
+            let mut lane = 0;
+            while lane < 8 {
+                let product = weights[8 * group + lane] * input[8 * group + lane];
+                acc[lane] += product;
+                lane += 1;
+            }
+            group += 1;
+        }
+        let t0 = acc[0] + acc[4];
+        let t1 = acc[1] + acc[5];
+        let t2 = acc[2] + acc[6];
+        let t3 = acc[3] + acc[7];
+        let u0 = t0 + t2;
+        let u1 = t1 + t3;
+        u0 + u1
+    }
+
+    /// The canonical product of a quantized matrix, `decode` turning the bytes
+    /// of one block after the scale into its thirty-two weights.
+    fn canonical_matvec(
+        matrix: &[u8],
+        block_bytes: usize,
+        decode: fn(&[u8]) -> [f32; BLOCK],
+        rows: usize,
+        columns: usize,
+        input: &[f32],
+    ) -> Vec<f32> {
+        let blocks = columns / BLOCK;
+        let mut out = Vec::new();
+        for row in 0..rows {
+            let mut row_sum = 0.0f32;
+            for block in 0..blocks {
+                let start = (row * blocks + block) * block_bytes;
+                let bytes = &matrix[start..start + block_bytes];
+                let scale = crate::quant::half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]));
+                let weights = decode(&bytes[SCALE_BYTES..]);
+                let block_sum = canonical_block(&weights, &input[block * BLOCK..]);
+                let scaled = block_sum * scale;
+                row_sum += scaled;
+            }
+            out.push(row_sum);
+        }
+        out
+    }
+
+    fn decode_q4(bytes: &[u8]) -> [f32; BLOCK] {
+        let mut weights = [0.0f32; BLOCK];
+        for (k, weight) in weights.iter_mut().enumerate() {
+            let byte = bytes[k / 2];
+            let nibble = if k % 2 == 0 { byte & 0x0f } else { byte >> 4 };
+            *weight = if nibble >= 8 {
+                nibble as f32 - 16.0
+            } else {
+                nibble as f32
+            };
+        }
+        weights
+    }
+
+    fn decode_q8(bytes: &[u8]) -> [f32; BLOCK] {
+        let mut weights = [0.0f32; BLOCK];
+        for (k, weight) in weights.iter_mut().enumerate() {
+            *weight = bytes[k] as i8 as f32;
+        }
+        weights
+    }
+
+    /// A matrix of random blocks: random scales (with zeros and negatives) and
+    /// random payload bytes, the payload being `payload` bytes per block.
+    fn random_matrix(stream: &mut Stream, blocks: usize, payload: usize) -> Vec<u8> {
+        let mut matrix = Vec::new();
+        for _ in 0..blocks {
+            matrix.extend_from_slice(&f32_to_half(scale(stream)).to_le_bytes());
+            for _ in 0..payload {
+                matrix.push(stream.next() as u8);
+            }
+        }
+        matrix
+    }
+
+    fn random_input(stream: &mut Stream, columns: usize) -> Vec<f32> {
+        (0..columns).map(|_| stream.unit() * 4.0).collect()
+    }
+
+    #[test]
+    fn the_quantized_kernels_follow_the_canonical_order_bit_for_bit() {
+        let mut stream = Stream(0x5eed_1234_abcd_ef01);
+        for rows in [1usize, 3, ROW_TILE, 37] {
+            for blocks in [1usize, 2, 3, 18, 48] {
+                let columns = blocks * BLOCK;
+                let input = random_input(&mut stream, columns);
+
+                let q4 = random_matrix(&mut stream, rows * blocks, BLOCK / 2);
+                let mut actual = vec![0.0f32; rows];
+                matvec_q4(&q4, rows, columns, &input, &mut actual).unwrap();
+                let expected = canonical_matvec(&q4, BLOCK_BYTES, decode_q4, rows, columns, &input);
+                for (row, (a, e)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        e.to_bits(),
+                        "q4 rows {rows} blocks {blocks} row {row}: {a} against {e}"
+                    );
+                }
+
+                let q8 = random_matrix(&mut stream, rows * blocks, BLOCK);
+                let mut actual = vec![0.0f32; rows];
+                matvec_q8(&q8, rows, columns, &input, &mut actual).unwrap();
+                let expected =
+                    canonical_matvec(&q8, Q8_BLOCK_BYTES, decode_q8, rows, columns, &input);
+                for (row, (a, e)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        e.to_bits(),
+                        "q8 rows {rows} blocks {blocks} row {row}: {a} against {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_lane_reduction_is_the_fixed_tree() {
+        let mut stream = Stream(0x0123_4567_89ab_cdef);
+        let mut order_matters = false;
+        for _ in 0..256 {
+            let mut lane = [0.0f32; 8];
+            for value in lane.iter_mut() {
+                // Magnitudes over many octaves, so a different order of the
+                // additions gives a different rounding.
+                *value = stream.unit() * (1u32 << (stream.next() % 24)) as f32;
+            }
+            let tree = ((lane[0] + lane[4]) + (lane[2] + lane[6]))
+                + ((lane[1] + lane[5]) + (lane[3] + lane[7]));
+            assert_eq!(reduce8(lane).to_bits(), tree.to_bits());
+            let mut sequential = 0.0f32;
+            for value in lane {
+                sequential += value;
+            }
+            order_matters |= sequential.to_bits() != tree.to_bits();
+        }
+        assert!(
+            order_matters,
+            "the data cannot tell the tree from a running sum"
+        );
+        assert_eq!(reduce8([1.0; 8]), 8.0);
+        assert_eq!(reduce8([0.0; 8]).to_bits(), 0.0f32.to_bits());
+        // 2^24 + 1 is not representable, so a running sum loses both ones and
+        // gives 2^24. The tree adds the two ones to each other first.
+        let lane = [16_777_216.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+        assert_eq!(reduce8(lane), 16_777_218.0);
     }
 
     #[test]
