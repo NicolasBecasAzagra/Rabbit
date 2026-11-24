@@ -60,7 +60,8 @@ pub enum Path {
     /// Four wide SSE2, the `x86_64` baseline.
     #[cfg(target_arch = "x86_64")]
     Sse2 = 1,
-    /// Eight wide AVX2 with fused multiply add.
+    /// Eight wide AVX2. The `bfloat16` kernel uses fused multiply add here and
+    /// the Q8 kernel does not, so it can match the scalar path bit for bit.
     #[cfg(target_arch = "x86_64")]
     Avx2 = 2,
     /// Four wide NEON, the `aarch64` baseline.
@@ -296,6 +297,60 @@ pub fn kernel_name() -> &'static str {
 
 /// Multiply an eight bit block matrix by `input`, writing one value per row.
 ///
+/// The product runs on the best path the processor offers, and every path gives
+/// the same bits as [`matvec_q8_scalar`], which defines the order of the
+/// floating point operations.
+pub fn matvec_q8(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    matvec_q8_with(detected(), weights, rows, columns, input, out)
+}
+
+/// The product of [`matvec_q8`] on an explicit path, for the tests and the
+/// guest check that compare paths. The path is lowered to what the processor
+/// has through [`select`], so a request above it runs on the best path
+/// available instead of an instruction the processor lacks. `aarch64` and the
+/// other architectures have no vector kernel for this format yet, so every path
+/// runs the scalar one there.
+pub fn matvec_q8_with(
+    path: Path,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_q8(weights, rows, columns, input, out)?;
+    match select(path) {
+        #[cfg(target_arch = "x86_64")]
+        Path::Sse2 => {
+            // SAFETY: SSE2 is part of the x86-64 baseline, and `validate_q8`
+            // checked every length the kernel indexes.
+            unsafe {
+                q8_x86::sse2(weights, rows, columns, input, out);
+            }
+            Ok(())
+        }
+        #[cfg(target_arch = "x86_64")]
+        Path::Avx2 => {
+            // SAFETY: `select` only returns this path when the detection
+            // reported `avx2`, and `validate_q8` checked every length the
+            // kernel indexes.
+            unsafe {
+                q8_x86::avx2(weights, rows, columns, input, out);
+            }
+            Ok(())
+        }
+        _ => matvec_q8_scalar(weights, rows, columns, input, out),
+    }
+}
+
+/// The scalar eight bit kernel: the reference the vector kernels reproduce.
+///
 /// The loop is the four bit one with a wider payload: the block is read, its
 /// scale is applied to the sum of the thirty-two products, and the weights are
 /// never expanded into a floating point matrix. The reason the eight bit form
@@ -312,7 +367,7 @@ pub fn kernel_name() -> &'static str {
 /// `block_sum`, and the row is `row = row + block_sum * scale` over the blocks
 /// in order, starting at `0.0`. The columns are a whole number of blocks and a
 /// block is a whole number of groups, so there is no tail.
-pub fn matvec_q8(
+pub fn matvec_q8_scalar(
     weights: &[u8],
     rows: usize,
     columns: usize,
@@ -673,6 +728,150 @@ mod sse2 {
     }
 }
 
+/// The SSE2 and AVX2 kernels of the eight bit product. Both reproduce the
+/// canonical order of [`matvec_q8_scalar`] bit for bit: eight lane accumulators
+/// that start at zero, a separate multiply and add per lane (no fused multiply
+/// add, and the `fma` feature is not enabled), the fixed tree of `reduce8`, and
+/// the scale and the row sum in scalar `f32` in block order.
+#[cfg(target_arch = "x86_64")]
+mod q8_x86 {
+    use crate::quant::{half_to_f32, BLOCK, Q8_BLOCK_BYTES, SCALE_BYTES};
+    use core::arch::x86_64::{
+        __m128, __m128i, _mm256_add_ps, _mm256_castps256_ps128, _mm256_cvtepi32_ps,
+        _mm256_cvtepi8_epi32, _mm256_extractf128_ps, _mm256_loadu_ps, _mm256_mul_ps,
+        _mm256_setzero_ps, _mm_add_ps, _mm_add_ss, _mm_cmplt_epi16, _mm_cmplt_epi8,
+        _mm_cvtepi32_ps, _mm_cvtss_f32, _mm_loadl_epi64, _mm_loadu_ps, _mm_movehl_ps, _mm_mul_ps,
+        _mm_setzero_ps, _mm_setzero_si128, _mm_shuffle_ps, _mm_unpackhi_epi16, _mm_unpacklo_epi16,
+        _mm_unpacklo_epi8,
+    };
+
+    /// The binary16 scale at the start of the block at `offset`.
+    #[inline(always)]
+    fn block_scale(weights: &[u8], offset: usize) -> f32 {
+        half_to_f32(u16::from_le_bytes([weights[offset], weights[offset + 1]]))
+    }
+
+    /// The AVX2 kernel.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have validated the lengths with `validate_q8` and must
+    /// run on a processor that reports `avx2`.
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn avx2(
+        weights: &[u8],
+        rows: usize,
+        columns: usize,
+        input: &[f32],
+        out: &mut [f32],
+    ) {
+        let blocks = columns / BLOCK;
+        for (row, slot) in out.iter_mut().enumerate().take(rows) {
+            let mut sum = 0.0f32;
+            for block in 0..blocks {
+                let offset = (row * blocks + block) * Q8_BLOCK_BYTES;
+                let scale = block_scale(weights, offset);
+                // SAFETY: `validate_q8` checked that the matrix holds
+                // `rows * blocks` whole blocks and that `input` has
+                // `columns` values, so every 8 byte weight load and every
+                // 8 value input load below is inside its slice, and `avx2` is
+                // present.
+                let block_sum = unsafe {
+                    let quantized = weights.as_ptr().add(offset + SCALE_BYTES);
+                    let x = input.as_ptr().add(block * BLOCK);
+                    let mut acc = _mm256_setzero_ps();
+                    let mut group = 0;
+                    while group < BLOCK / 8 {
+                        let bytes = _mm_loadl_epi64(quantized.add(8 * group) as *const __m128i);
+                        let w = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(bytes));
+                        let v = _mm256_loadu_ps(x.add(8 * group));
+                        acc = _mm256_add_ps(acc, _mm256_mul_ps(w, v));
+                        group += 1;
+                    }
+                    // t[j] = acc[j] + acc[j + 4], u[j] = t[j] + t[j + 2],
+                    // then u[0] + u[1].
+                    let t = _mm_add_ps(_mm256_castps256_ps128(acc), _mm256_extractf128_ps(acc, 1));
+                    let u = _mm_add_ps(t, _mm_movehl_ps(t, t));
+                    _mm_cvtss_f32(_mm_add_ss(u, _mm_shuffle_ps::<0x55>(u, u)))
+                };
+                sum += block_sum * scale;
+            }
+            *slot = sum;
+        }
+    }
+
+    /// Eight signed bytes at `bytes` as two vectors of four `f32`.
+    ///
+    /// # Safety
+    ///
+    /// `bytes` must be valid for reading eight bytes.
+    #[target_feature(enable = "sse2")]
+    unsafe fn widen(bytes: *const u8) -> (__m128, __m128) {
+        // SAFETY: the caller guarantees the eight bytes the load reads, and
+        // SSE2 is part of the x86-64 baseline.
+        unsafe {
+            let zero = _mm_setzero_si128();
+            let packed = _mm_loadl_epi64(bytes as *const __m128i);
+            // Sign extend by interleaving each byte with its sign mask.
+            let words = _mm_unpacklo_epi8(packed, _mm_cmplt_epi8(packed, zero));
+            let sign = _mm_cmplt_epi16(words, zero);
+            let low = _mm_unpacklo_epi16(words, sign);
+            let high = _mm_unpackhi_epi16(words, sign);
+            (_mm_cvtepi32_ps(low), _mm_cvtepi32_ps(high))
+        }
+    }
+
+    /// The SSE2 kernel: lanes 0 to 3 in one register, lanes 4 to 7 in another.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have validated the lengths with `validate_q8`. SSE2 is
+    /// part of the x86-64 baseline.
+    #[target_feature(enable = "sse2")]
+    pub(super) unsafe fn sse2(
+        weights: &[u8],
+        rows: usize,
+        columns: usize,
+        input: &[f32],
+        out: &mut [f32],
+    ) {
+        let blocks = columns / BLOCK;
+        for (row, slot) in out.iter_mut().enumerate().take(rows) {
+            let mut sum = 0.0f32;
+            for block in 0..blocks {
+                let offset = (row * blocks + block) * Q8_BLOCK_BYTES;
+                let scale = block_scale(weights, offset);
+                // SAFETY: `validate_q8` checked that the matrix holds
+                // `rows * blocks` whole blocks and that `input` has
+                // `columns` values, so every 8 byte weight load and every
+                // 4 value input load below is inside its slice.
+                let block_sum = unsafe {
+                    let quantized = weights.as_ptr().add(offset + SCALE_BYTES);
+                    let x = input.as_ptr().add(block * BLOCK);
+                    let mut low = _mm_setzero_ps();
+                    let mut high = _mm_setzero_ps();
+                    let mut group = 0;
+                    while group < BLOCK / 8 {
+                        let (w_low, w_high) = widen(quantized.add(8 * group));
+                        let v_low = _mm_loadu_ps(x.add(8 * group));
+                        let v_high = _mm_loadu_ps(x.add(8 * group + 4));
+                        low = _mm_add_ps(low, _mm_mul_ps(w_low, v_low));
+                        high = _mm_add_ps(high, _mm_mul_ps(w_high, v_high));
+                        group += 1;
+                    }
+                    // t[j] = acc[j] + acc[j + 4], u[j] = t[j] + t[j + 2],
+                    // then u[0] + u[1].
+                    let t = _mm_add_ps(low, high);
+                    let u = _mm_add_ps(t, _mm_movehl_ps(t, t));
+                    _mm_cvtss_f32(_mm_add_ss(u, _mm_shuffle_ps::<0x55>(u, u)))
+                };
+                sum += block_sum * scale;
+            }
+            *slot = sum;
+        }
+    }
+}
+
 /// The NEON kernel.
 #[cfg(target_arch = "aarch64")]
 mod neon {
@@ -767,8 +966,8 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::{
-        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q8, matvec_scalar, reduce8,
-        select, Path, COLUMN_TILE, ROW_TILE,
+        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q8, matvec_q8_scalar,
+        matvec_q8_with, matvec_scalar, reduce8, select, Path, COLUMN_TILE, ROW_TILE,
     };
     use crate::quant::{
         f32_to_half, matrix_bytes, q8_matrix_bytes, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES, SCALE_BYTES,
@@ -1263,6 +1462,118 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The input values the vector kernels must not round differently: signed
+    /// zeros, subnormals, large magnitudes and ordinary values of both signs.
+    fn awkward_input(stream: &mut Stream, columns: usize) -> Vec<f32> {
+        (0..columns)
+            .map(|index| match stream.next() % 9 {
+                0 => -0.0,
+                1 => 0.0,
+                2 => f32::from_bits(1 + (stream.next() as u32 & 0x3f_ffff)),
+                3 => -f32::from_bits(1 + (stream.next() as u32 & 0x3f_ffff)),
+                4 => stream.unit() * 1.0e18,
+                5 => stream.unit() * 1.0e-30,
+                _ => stream.unit() * 4.0 + (index % 3) as f32,
+            })
+            .collect()
+    }
+
+    /// A matrix of random blocks whose scales are zero, negative, subnormal in
+    /// binary16 or large, and whose payload hits both ends of the `i8` range.
+    fn awkward_q8_matrix(stream: &mut Stream, blocks: usize) -> Vec<u8> {
+        let mut matrix = Vec::new();
+        for _ in 0..blocks {
+            let half = match stream.next() % 6 {
+                0 => 0x0000,
+                1 => 0x8000,
+                2 => 0x0001 + (stream.next() as u16 & 0x03ff),
+                3 => 0x7bff,
+                _ => f32_to_half(stream.unit() * 2.0),
+            };
+            matrix.extend_from_slice(&half.to_le_bytes());
+            for _ in 0..BLOCK {
+                matrix.push(match stream.next() % 8 {
+                    0 => 0x80,
+                    1 => 0x7f,
+                    2 => 0x00,
+                    3 => 0xff,
+                    _ => stream.next() as u8,
+                });
+            }
+        }
+        matrix
+    }
+
+    #[test]
+    fn every_eight_bit_path_is_bit_exact_with_the_canonical_order() {
+        let mut stream = Stream(0x00c0_ffee_f00d_0001);
+        for path in available_paths() {
+            assert_eq!(select(path), path, "{} was lowered", path.name());
+            for rows in [1usize, 3, ROW_TILE, ROW_TILE + 1, 37] {
+                for blocks in [1usize, 2, 3, 18, 48] {
+                    let columns = blocks * BLOCK;
+                    for awkward in [false, true] {
+                        let (matrix, input) = if awkward {
+                            (
+                                awkward_q8_matrix(&mut stream, rows * blocks),
+                                awkward_input(&mut stream, columns),
+                            )
+                        } else {
+                            (
+                                random_matrix(&mut stream, rows * blocks, BLOCK),
+                                random_input(&mut stream, columns),
+                            )
+                        };
+                        let expected = canonical_matvec(
+                            &matrix,
+                            Q8_BLOCK_BYTES,
+                            decode_q8,
+                            rows,
+                            columns,
+                            &input,
+                        );
+                        let mut scalar = vec![0.0f32; rows];
+                        matvec_q8_scalar(&matrix, rows, columns, &input, &mut scalar).unwrap();
+                        let mut actual = vec![0.0f32; rows];
+                        matvec_q8_with(path, &matrix, rows, columns, &input, &mut actual).unwrap();
+                        for row in 0..rows {
+                            assert_eq!(
+                                scalar[row].to_bits(),
+                                expected[row].to_bits(),
+                                "scalar rows {rows} blocks {blocks} row {row}"
+                            );
+                            assert_eq!(
+                                actual[row].to_bits(),
+                                expected[row].to_bits(),
+                                "{} rows {rows} blocks {blocks} awkward {awkward} row {row}: {} against {}",
+                                path.name(),
+                                actual[row],
+                                expected[row]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_eight_bit_paths_keep_the_sign_of_a_zero() {
+        // One block whose products are all `-0.0` or `0.0`: a lane that starts
+        // from the first product instead of from `+0.0` would print `-0.0`.
+        let mut matrix = vec![0u8; Q8_BLOCK_BYTES];
+        matrix[..SCALE_BYTES].copy_from_slice(&f32_to_half(1.0).to_le_bytes());
+        for (index, byte) in matrix[SCALE_BYTES..].iter_mut().enumerate() {
+            *byte = if index % 2 == 0 { 1 } else { 0 };
+        }
+        let input = [-0.0f32; BLOCK];
+        for path in available_paths() {
+            let mut out = [1.0f32; 1];
+            matvec_q8_with(path, &matrix, 1, BLOCK, &input, &mut out).unwrap();
+            assert_eq!(out[0].to_bits(), 0.0f32.to_bits(), "{}", path.name());
         }
     }
 

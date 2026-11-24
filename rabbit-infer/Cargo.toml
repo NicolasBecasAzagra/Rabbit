@@ -14,6 +14,9 @@ publish = false
 [workspace]
 
 [features]
+# Builds the self-check of the vector kernels that `make matvec-check` runs in
+# the guest. Off by default, so the inference build does not carry it.
+matvec-check = []
 # Build the microbenchmark with one allocation per shape instead of one per
 # decoder layer, so it fits a guest whose anonymous memory budget is small.
 small = []
@@ -51,6 +54,13 @@ bench = false
 [[bin]]
 name = "rabbit-infer-compare"
 path = "src/bin/compare.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "rabbit-infer-matvec-check"
+path = "src/bin/matvec_check.rs"
+required-features = ["matvec-check"]
 test = false
 bench = false
 

@@ -134,7 +134,7 @@ QEMU_FLAGS := -M q35 -m 512M \
 	-serial stdio \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs agent agent-initramfs agent-net-initramfs run-infer quantize
+.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs matvec-check-initramfs matvec-check agent agent-initramfs agent-net-initramfs run-infer quantize
 
 # The path of the built kernel, so the CI does not have to repeat it.
 print-kernel-path:
@@ -255,6 +255,48 @@ run-infer: infer-initramfs build
 	else \
 		echo "unexpected QEMU exit status $$status"; exit $$status; \
 	fi
+
+# The self-check of the vector kernels of the eight bit product. It is a second
+# program of the inference crate, packed alone into an initramfs of the same
+# kind, so Rabbit runs it as init on the processor of the guest. The outputs
+# live outside the repository. MATVEC_CPU picks the processor model, for
+# example `Skylake-Client,-avx2,-fma` to leave the AVX2 path out.
+MATVEC_CPU ?= Skylake-Client
+# The paths that must appear as exact, so a path the guest does not offer is a
+# failure and not a silent skip. Use `scalar sse2` with a CPU model without AVX2.
+MATVEC_REQUIRE ?= scalar sse2 avx2
+MATVEC_DIR := $(TARGET_DIR)/matvec-check
+MATVEC_ELF := $(MATVEC_DIR)/rabbit-infer-matvec-check.elf
+MATVEC_INITRAMFS := $(MATVEC_DIR)/initramfs.cpio
+MATVEC_LOG := $(MATVEC_DIR)/serial.log
+
+matvec-check-initramfs: musl-std
+	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) build --release $(INFER_FLAGS) \
+		--features matvec-check --bin rabbit-infer-matvec-check
+	mkdir -p $(MATVEC_DIR)
+	cp $(INFER_TARGET_DIR)/$(USER_TARGET)/release/rabbit-infer-matvec-check $(MATVEC_ELF)
+	bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
+
+matvec-check: matvec-check-initramfs build
+	@$(QEMU) -M q35 -cpu $(MATVEC_CPU) -m 512M \
+		-kernel $(KERNEL) -initrd $(MATVEC_INITRAMFS) \
+		-append console=ttyS0 \
+		-display none -monitor none -no-reboot \
+		-serial file:$(MATVEC_LOG) \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04; status=$$?; \
+	tr -d '\r' < $(MATVEC_LOG); \
+	if [ $$status -ne 33 ]; then \
+		echo "unexpected QEMU exit status $$status"; exit 1; \
+	fi; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | grep -qx 'MATVEC OK'; then \
+		echo "matvec-check: no MATVEC OK line"; exit 1; \
+	fi; \
+	for path in $(MATVEC_REQUIRE); do \
+		if ! tr -d '\r' < $(MATVEC_LOG) | grep -q "^MATVEC q8 path=$$path shapes=[0-9]* bit_exact=true$$"; then \
+			echo "matvec-check: path $$path was not checked as exact"; exit 1; \
+		fi; \
+	done; \
+	echo "matvec-check OK (cpu $(MATVEC_CPU), QEMU exit status 33)"
 
 build: userland infer
 	$(CARGO) build --release $(KERNEL_FLAGS)
@@ -379,6 +421,7 @@ clippy: userland
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(USERLAND_FLAGS) -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(BENCH_FLAGS) -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(INFER_FLAGS) --bins --lib -- -D warnings
+	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(INFER_FLAGS) --features matvec-check --bins -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(AGENT_FLAGS) --bins -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(NETCLIENT_FLAGS) --bins -- -D warnings
 	RUSTFLAGS="$(USERLAND_RUSTFLAGS)" $(CARGO) clippy $(NETSTREAM_FLAGS) --bins -- -D warnings
