@@ -481,6 +481,73 @@ jobs:
           grep -q "SMP processors=4" smp.log
           grep -q "SMP OK cpus=4" smp.log
 
+      - name: Install the UEFI firmware
+        run: sudo apt-get install -y ovmf
+
+      - name: Boot kernel through UEFI
+        run: |
+          # The same kernel, started by the firmware instead of by QEMU: the
+          # loader is a PE32+ application on a FAT disk, and it hands over to
+          # the PVH entry. The kernel part of the log is the one of the PVH
+          # boot, so the gates below are about the loader and the hand over.
+          make uefi
+          efi="$HOME/.cache/rabbit/target/uefi/x86_64-unknown-uefi/release/rabbit-uefi.efi"
+          esp="$RUNNER_TEMP/esp"
+          mkdir -p "$esp/EFI/BOOT"
+          cp "$efi" "$esp/EFI/BOOT/BOOTX64.EFI"
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd "$RUNNER_TEMP/vars.fd"
+          set +e
+          # The firmware takes longer than the kernel to start under emulation.
+          timeout 180 qemu-system-x86_64 -M q35 -m 512M \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file="$RUNNER_TEMP/vars.fd" \
+            -drive format=raw,file=fat:rw:"$esp" \
+            -display none -monitor none -no-reboot \
+            -serial file:uefi.log \
+            -device isa-debug-exit,iobase=0xf4,iosize=0x04
+          status=$?
+          echo "QEMU exit status: $status"
+          set -e
+          cat uefi.log
+          test "$status" -eq 33
+          # The firmware writes escape sequences to the same port, so the lines
+          # are matched as text and not anchored to the start of the line.
+          tr -d '\r' < uefi.log > uefi-clean.log
+          grep -qF "rabbit-uefi: boot services exited, rsdp=0x" uefi-clean.log
+          grep -qE "rabbit-uefi: start info ok, memmap=[0-9]+ entries, ram=[0-9]+ MiB, rsdp=0x[0-9a-f]+, kernel=0x100000\.\.0x[0-9a-f]+" uefi-clean.log
+          grep -qF "rabbit-uefi: entering PVH entry at 0x100000" uefi-clean.log
+          grep -qF "Rabbit: boot OK" uefi-clean.log
+          # The loader speaks before the kernel does.
+          loader="$(grep -nF 'rabbit-uefi: entering PVH entry' uefi-clean.log | head -n1 | cut -d: -f1)"
+          kernel="$(grep -nF 'Rabbit: x86_64 kernel' uefi-clean.log | head -n1 | cut -d: -f1)"
+          test -n "$loader" -a -n "$kernel" -a "$loader" -lt "$kernel"
+          if grep -qF "rabbit-uefi: error" uefi-clean.log; then exit 1; fi
+
+      - name: Boot kernel through UEFI with four processors
+        run: |
+          # The processors start from a page below 1 MiB that the loader
+          # reserves, so the path has its own gate.
+          efi="$HOME/.cache/rabbit/target/uefi/x86_64-unknown-uefi/release/rabbit-uefi.efi"
+          esp="$RUNNER_TEMP/esp"
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd "$RUNNER_TEMP/vars-smp.fd"
+          set +e
+          timeout 240 qemu-system-x86_64 -M q35 -cpu Skylake-Client -smp 4 -m 512M \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file="$RUNNER_TEMP/vars-smp.fd" \
+            -drive format=raw,file=fat:rw:"$esp" \
+            -display none -monitor none -no-reboot \
+            -serial file:uefi-smp.log \
+            -device isa-debug-exit,iobase=0xf4,iosize=0x04
+          status=$?
+          echo "QEMU exit status: $status"
+          set -e
+          cat uefi-smp.log
+          test "$status" -eq 33
+          tr -d '\r' < uefi-smp.log > uefi-smp-clean.log
+          grep -qF "rabbit-uefi: entering PVH entry at 0x100000" uefi-smp-clean.log
+          grep -qF "SMP processors=4" uefi-smp-clean.log
+          grep -qF "SMP OK cpus=4" uefi-smp-clean.log
+
       - name: Boot kernel with the initramfs
         run: |
           # The weights workload touches the whole region it measures, so the
