@@ -15,6 +15,7 @@
 use std::ffi::OsString;
 
 use crate::error::{Error, Result};
+use crate::matvec::Path;
 
 /// Model path in the initramfs root.
 pub const MODEL_PATH: &str = "/model.safetensors";
@@ -27,6 +28,9 @@ pub const CONFIG_PATH: &str = "/config.json";
 
 /// Merges path in the initramfs root.
 pub const MERGES_PATH: &str = "/merges.txt";
+
+/// Optional file that holds the one word of a requested code path.
+pub const INFER_PATH_PATH: &str = "/infer.path";
 
 /// Environment variable that replaces the initramfs root when it is defined.
 pub const ROOT_ENV: &str = "RABBIT_INFER_ROOT";
@@ -44,6 +48,8 @@ pub struct Paths {
     pub config: String,
     /// `merges.txt` under the root.
     pub merges: String,
+    /// `infer.path` under the root, the optional request of a code path.
+    pub infer_path: String,
 }
 
 impl Paths {
@@ -55,6 +61,7 @@ impl Paths {
             vocab: VOCAB_PATH.to_string(),
             config: CONFIG_PATH.to_string(),
             merges: MERGES_PATH.to_string(),
+            infer_path: INFER_PATH_PATH.to_string(),
         }
     }
 
@@ -66,9 +73,33 @@ impl Paths {
             vocab: format!("{root}{separator}vocab.json"),
             config: format!("{root}{separator}config.json"),
             merges: format!("{root}{separator}merges.txt"),
+            infer_path: format!("{root}{separator}infer.path"),
             root,
         }
     }
+}
+
+/// The code path an `infer.path` file asks for: its one word, trimmed.
+///
+/// The words are the names the serial log prints, so the paths of the other
+/// architectures have their own. An unknown word is an error, never a silent
+/// default: a measurement of "avx2" that ran on another path is a lie.
+pub fn parse_path_request(bytes: &[u8]) -> Result<Path> {
+    let word = std::str::from_utf8(bytes)
+        .map_err(|_| Error::new("runtime: infer.path is not valid UTF-8"))?
+        .trim();
+    [
+        Path::Scalar,
+        #[cfg(target_arch = "x86_64")]
+        Path::Sse2,
+        #[cfg(target_arch = "x86_64")]
+        Path::Avx2,
+        #[cfg(target_arch = "aarch64")]
+        Path::Neon,
+    ]
+    .into_iter()
+    .find(|path| path.name() == word)
+    .ok_or_else(|| Error::new(format!("runtime: unknown path {word:?} in infer.path")))
 }
 
 /// Resolve the root and say which source it came from.
@@ -99,8 +130,39 @@ fn resolve_from(value: Option<OsString>) -> Result<(Paths, &'static str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_from, Paths, CONFIG_PATH, MERGES_PATH, MODEL_PATH, VOCAB_PATH};
+    use super::{
+        parse_path_request, resolve_from, Paths, CONFIG_PATH, INFER_PATH_PATH, MERGES_PATH,
+        MODEL_PATH, VOCAB_PATH,
+    };
+    use crate::matvec::Path;
     use std::ffi::OsString;
+
+    #[test]
+    fn the_request_file_sits_at_the_root_like_the_others() {
+        assert_eq!(Paths::guest().infer_path, INFER_PATH_PATH);
+        assert_eq!(
+            Paths::under("/models/x".to_string()).infer_path,
+            "/models/x/infer.path"
+        );
+    }
+
+    #[test]
+    fn a_request_is_one_trimmed_word() {
+        assert_eq!(parse_path_request(b"scalar").unwrap(), Path::Scalar);
+        assert_eq!(parse_path_request(b" scalar\n").unwrap(), Path::Scalar);
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert_eq!(parse_path_request(b"sse2\n").unwrap(), Path::Sse2);
+            assert_eq!(parse_path_request(b"avx2\r\n").unwrap(), Path::Avx2);
+        }
+    }
+
+    #[test]
+    fn an_unknown_empty_or_odd_word_is_an_error() {
+        for word in [&b""[..], b"\n", b"avx512", b"AVX2", b"sse2 avx2", b"\xff"] {
+            assert!(parse_path_request(word).is_err(), "{word:?}");
+        }
+    }
 
     #[test]
     fn the_guest_paths_are_the_root_constants() {

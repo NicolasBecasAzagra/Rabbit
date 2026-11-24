@@ -46,7 +46,7 @@ use crate::grammar::{Grammar, State};
 use crate::mapping::{open_readonly, open_readonly_optional};
 use crate::matvec;
 use crate::model::{Dims, Model, ModelFile};
-use crate::paths::{resolve, Paths};
+use crate::paths::{parse_path_request, resolve, Paths};
 use crate::reference;
 use crate::vocab::Vocab;
 
@@ -134,6 +134,71 @@ fn read_optional(path: &str) -> Result<Option<Vec<u8>>> {
     }
 }
 
+/// The limit an optional `/infer.path` file asks for: `None` without the file,
+/// the code path of its one word with it, an error for any other word.
+fn path_request(bytes: Option<&[u8]>) -> Result<Option<matvec::Path>> {
+    bytes.map(parse_path_request).transpose()
+}
+
+/// The `INFER path_limit` line for a request.
+fn limit_line(limit: Option<matvec::Path>) -> String {
+    format!(
+        "INFER path_limit {}",
+        limit.map_or("none", |path| path.name())
+    )
+}
+
+/// Apply the optional `/infer.path` request before anything else reads a file.
+///
+/// The file holds one word, the name of a code path the products may use at
+/// most. Without the file the limit is lifted, which is the default state, so a
+/// limit left by an earlier call in the same process cannot survive. The
+/// `INFER path_limit` line says what was asked, and the `INFER path` line
+/// further on says what will run, which is lower when the processor lacks the
+/// path. An unknown word stops the run: the numbers of a request that was
+/// ignored would carry the wrong label.
+fn apply_path_request(paths: &Paths) -> Result<()> {
+    let bytes = read_optional(&paths.infer_path)?;
+    match path_request(bytes.as_deref()) {
+        Ok(limit) => {
+            matvec::set_path_limit(limit);
+            println!("{}", limit_line(limit));
+            Ok(())
+        }
+        Err(error) => {
+            println!("INFER error unknown path");
+            Err(error)
+        }
+    }
+}
+
+/// The name of the vector kernel that runs: the one `matvec` names when no
+/// limit lowered the path, and the name of the path when one did.
+fn kernel_label(
+    active: matvec::Path,
+    detected: matvec::Path,
+    kernel_name: &'static str,
+) -> &'static str {
+    if active == detected {
+        kernel_name
+    } else {
+        active.name()
+    }
+}
+
+/// The `INFER matmul kernel` and `INFER path` lines of the path that runs.
+fn kernel_lines(
+    active: matvec::Path,
+    detected: matvec::Path,
+    kernel_name: &'static str,
+) -> [String; 2] {
+    let label = kernel_label(active, detected, kernel_name);
+    [
+        format!("INFER matmul kernel={label}"),
+        format!("INFER path {}", active.name()),
+    ]
+}
+
 /// Load the config and say where every value came from.
 fn load_config(path: &str) -> Result<Config> {
     match read_optional(path)? {
@@ -166,6 +231,7 @@ pub fn generate_with(count: usize, grammar: Option<&Grammar>) -> Result<Generati
         return Err(Error::new("runtime: nothing to generate"));
     }
     let (paths, root_source) = resolve()?;
+    apply_path_request(&paths)?;
     println!("INFER root source={} path={}", root_source, paths.root);
     let config = load_config(&paths.config)?;
     let (prompt, source) = match config.prompt_ids.as_deref() {
@@ -253,6 +319,7 @@ impl Server {
     /// prompt and pin lines.
     fn open_inner(report_pin: bool) -> Result<Self> {
         let (paths, root_source) = resolve()?;
+        apply_path_request(&paths)?;
         println!("INFER root source={} path={}", root_source, paths.root);
         let config = load_config(&paths.config)?;
         let file = Box::leak(Box::new(ModelFile::open(&paths.model)?));
@@ -281,8 +348,9 @@ impl Server {
             file.mapped_len()
         );
         println!("INFER source {}", config.provenance());
-        println!("INFER matmul kernel={}", matvec::kernel_name());
-        println!("INFER path {}", matvec::detected().name());
+        for line in kernel_lines(matvec::active(), matvec::detected(), matvec::kernel_name()) {
+            println!("{line}");
+        }
         println!(
             "INFER dims hidden={} layers={} q_heads={} kv_heads={} head_dim={} ffn={} vocab={} eps={} rope_theta={} rope={} tie={} eos={}",
             dims.hidden,
@@ -416,8 +484,9 @@ fn generate_with_prompt(
         file.mapped_len()
     );
     println!("INFER source {}", config.provenance());
-    println!("INFER matmul kernel={}", matvec::kernel_name());
-    println!("INFER path {}", matvec::detected().name());
+    for line in kernel_lines(matvec::active(), matvec::detected(), matvec::kernel_name()) {
+        println!("{line}");
+    }
     println!(
         "INFER dims hidden={} layers={} q_heads={} kv_heads={} head_dim={} ffn={} vocab={} eps={} rope_theta={} rope={} tie={} eos={}",
         dims.hidden,
@@ -725,10 +794,55 @@ pub fn run(count: usize) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::generate;
+    use super::{generate, kernel_label, kernel_lines, limit_line, path_request};
+    use crate::matvec::{self, Path};
 
     #[test]
     fn refuses_a_zero_token_run_without_touching_the_files() {
         assert!(generate(0).is_err());
+    }
+
+    #[test]
+    fn no_file_means_no_limit_and_the_detected_path() {
+        assert_eq!(path_request(None).unwrap(), None);
+        assert_eq!(limit_line(None), "INFER path_limit none");
+        // Lifting the limit is the default state, so it is safe to call here.
+        matvec::set_path_limit(None);
+        assert_eq!(matvec::active(), matvec::detected());
+    }
+
+    #[test]
+    fn a_request_is_parsed_and_named_in_its_line() {
+        assert_eq!(path_request(Some(b"scalar\n")).unwrap(), Some(Path::Scalar));
+        assert_eq!(limit_line(Some(Path::Scalar)), "INFER path_limit scalar");
+        assert!(path_request(Some(b"avx512")).is_err());
+    }
+
+    #[test]
+    fn a_lowered_request_names_the_path_and_not_the_detected_kernel() {
+        let detected = matvec::detected();
+        let lowered = matvec::select(Path::Scalar);
+        assert_eq!(lowered, Path::Scalar);
+        assert_eq!(
+            kernel_label(detected, detected, "kernel-name"),
+            "kernel-name"
+        );
+        if detected != Path::Scalar {
+            assert_eq!(kernel_label(lowered, detected, "kernel-name"), "scalar");
+        }
+        assert_eq!(
+            kernel_lines(lowered, detected, "kernel-name"),
+            [
+                format!(
+                    "INFER matmul kernel={}",
+                    if detected == Path::Scalar {
+                        "kernel-name"
+                    } else {
+                        "scalar"
+                    }
+                ),
+                "INFER path scalar".to_string()
+            ]
+        );
     }
 }
