@@ -282,6 +282,7 @@ impl Server {
         );
         println!("INFER source {}", config.provenance());
         println!("INFER matmul kernel={}", matvec::kernel_name());
+        println!("INFER path {}", matvec::detected().name());
         println!(
             "INFER dims hidden={} layers={} q_heads={} kv_heads={} head_dim={} ffn={} vocab={} eps={} rope_theta={} rope={} tie={} eos={}",
             dims.hidden,
@@ -416,6 +417,7 @@ fn generate_with_prompt(
     );
     println!("INFER source {}", config.provenance());
     println!("INFER matmul kernel={}", matvec::kernel_name());
+    println!("INFER path {}", matvec::detected().name());
     println!(
         "INFER dims hidden={} layers={} q_heads={} kv_heads={} head_dim={} ffn={} vocab={} eps={} rope_theta={} rope={} tie={} eos={}",
         dims.hidden,

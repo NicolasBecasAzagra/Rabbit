@@ -43,65 +43,132 @@ pub fn macs(rows: usize, columns: usize) -> u64 {
     rows as u64 * columns as u64
 }
 
-/// Multiply `weights` by `input`, writing one value per row.
+/// A code path of the `bfloat16` product.
 ///
-/// `weights` is a row major `bfloat16` matrix of `rows * columns` elements and
-/// `input` has `columns` values. The caller validated the shapes; a length that
-/// still disagrees is reported as an error rather than indexed.
-#[cfg(target_arch = "x86_64")]
-pub fn matvec_bf16(
-    weights: &[u8],
-    rows: usize,
-    columns: usize,
-    input: &[f32],
-    out: &mut [f32],
-) -> Result<()> {
-    validate(weights, rows, columns, input, out)?;
-    if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-        // SAFETY: the detection above reported both features, and `validate`
-        // checked every length the kernel indexes.
-        unsafe {
-            x86::matvec(weights, rows, columns, input, out);
+/// The paths are ordered from the least to the most capable one, so a limit and
+/// a detection compare with `<`. The variants that exist depend on the
+/// architecture: `x86_64` has the three below, `aarch64` has the scalar path
+/// and NEON, and any other architecture has the scalar path alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum Path {
+    /// One product at a time, on any processor.
+    Scalar = 0,
+    /// Four wide SSE2, the `x86_64` baseline.
+    #[cfg(target_arch = "x86_64")]
+    Sse2 = 1,
+    /// Eight wide AVX2 with fused multiply add.
+    #[cfg(target_arch = "x86_64")]
+    Avx2 = 2,
+    /// Four wide NEON, the `aarch64` baseline.
+    #[cfg(target_arch = "aarch64")]
+    Neon = 1,
+}
+
+impl Path {
+    /// The name of the path in the serial log.
+    pub fn name(self) -> &'static str {
+        match self {
+            Path::Scalar => "scalar",
+            #[cfg(target_arch = "x86_64")]
+            Path::Sse2 => "sse2",
+            #[cfg(target_arch = "x86_64")]
+            Path::Avx2 => "avx2",
+            #[cfg(target_arch = "aarch64")]
+            Path::Neon => "neon",
         }
+    }
+}
+
+/// The best path the processor offers. AVX2 needs the processor and the kernel
+/// to report both `avx2` and `fma`.
+#[cfg(target_arch = "x86_64")]
+pub fn detected() -> Path {
+    if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
+        Path::Avx2
     } else {
         // SSE2 is part of the x86-64 baseline, so no detection is needed. A
         // kernel that does not enable the extended register state reports
         // AVX2 as absent, and this path still uses four wide arithmetic.
-        // SAFETY: `validate` checked every length the kernel indexes.
-        unsafe {
-            sse2::matvec(weights, rows, columns, input, out);
+        Path::Sse2
+    }
+}
+
+/// The best path the processor offers.
+#[cfg(target_arch = "aarch64")]
+pub fn detected() -> Path {
+    Path::Neon
+}
+
+/// The best path the processor offers.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub fn detected() -> Path {
+    Path::Scalar
+}
+
+/// The path to run for a request: the lower of `limit` and [`detected`]. A
+/// request never selects a path the processor does not have.
+pub fn select(limit: Path) -> Path {
+    limit.min(detected())
+}
+
+/// Multiply `weights` by `input`, writing one value per row.
+///
+/// `weights` is a row major `bfloat16` matrix of `rows * columns` elements and
+/// `input` has `columns` values. The caller validated the shapes; a length that
+/// still disagrees is reported as an error rather than indexed. The product
+/// runs on the best path the processor offers.
+pub fn matvec_bf16(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    matvec_bf16_with(detected(), weights, rows, columns, input, out)
+}
+
+/// The product of [`matvec_bf16`] on an explicit path, for the tests that
+/// compare paths. The path is lowered to what the processor
+/// has through [`select`], so a request above it runs on the best path
+/// available instead of an instruction the processor lacks.
+pub fn matvec_bf16_with(
+    path: Path,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate(weights, rows, columns, input, out)?;
+    match select(path) {
+        Path::Scalar => matvec_scalar(weights, rows, columns, input, out),
+        #[cfg(target_arch = "x86_64")]
+        Path::Sse2 => {
+            // SAFETY: SSE2 is part of the x86-64 baseline, and `validate`
+            // checked every length the kernel indexes.
+            unsafe {
+                sse2::matvec(weights, rows, columns, input, out);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        Path::Avx2 => {
+            // SAFETY: `select` only returns this path when the detection
+            // reported both features, and `validate` checked every length the
+            // kernel indexes.
+            unsafe {
+                x86::matvec(weights, rows, columns, input, out);
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        Path::Neon => {
+            // SAFETY: NEON is part of the aarch64 baseline, and `validate`
+            // checked every length the kernel indexes.
+            unsafe {
+                neon::matvec(weights, rows, columns, input, out);
+            }
         }
     }
-    Ok(())
-}
-
-#[cfg(target_arch = "aarch64")]
-pub fn matvec_bf16(
-    weights: &[u8],
-    rows: usize,
-    columns: usize,
-    input: &[f32],
-    out: &mut [f32],
-) -> Result<()> {
-    validate(weights, rows, columns, input, out)?;
-    // SAFETY: NEON is part of the aarch64 baseline, and `validate` checked
-    // every length the kernel indexes.
-    unsafe {
-        neon::matvec(weights, rows, columns, input, out);
-    }
-    Ok(())
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub fn matvec_bf16(
-    weights: &[u8],
-    rows: usize,
-    columns: usize,
-    input: &[f32],
-    out: &mut [f32],
-) -> Result<()> {
-    validate(weights, rows, columns, input, out)?;
-    matvec_scalar(weights, rows, columns, input, out);
     Ok(())
 }
 
@@ -167,10 +234,9 @@ pub fn matvec_q4(
 /// Name of the vector kernel this build selects, for the serial log.
 #[cfg(target_arch = "x86_64")]
 pub fn kernel_name() -> &'static str {
-    if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-        "avx2+fma"
-    } else {
-        "sse2"
+    match detected() {
+        Path::Avx2 => "avx2+fma",
+        _ => "sse2",
     }
 }
 
@@ -640,7 +706,10 @@ mod neon {
 
 #[cfg(test)]
 mod tests {
-    use super::{matvec_bf16, matvec_q4, matvec_q8, matvec_scalar, COLUMN_TILE, ROW_TILE};
+    use super::{
+        detected, matvec_bf16, matvec_bf16_with, matvec_q4, matvec_q8, matvec_scalar, select, Path,
+        COLUMN_TILE, ROW_TILE,
+    };
     use crate::quant::{
         f32_to_half, matrix_bytes, q8_matrix_bytes, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES, SCALE_BYTES,
     };
@@ -691,7 +760,76 @@ mod tests {
                     "rows {rows} columns {columns} diff {}",
                     error(&vector, &scalar)
                 );
+                for path in available_paths() {
+                    // A request that the processor can serve must run as asked,
+                    // or the label of the assertion below would be false.
+                    assert_eq!(select(path), path);
+                    let mut explicit = vec![0.0f32; rows];
+                    matvec_bf16_with(path, &weights, rows, columns, &input, &mut explicit)
+                        .expect("shapes agree");
+                    assert!(
+                        error(&explicit, &scalar) <= tolerance,
+                        "path {} rows {rows} columns {columns} diff {}",
+                        path.name(),
+                        error(&explicit, &scalar)
+                    );
+                }
             }
+        }
+    }
+
+    /// Every path of this architecture.
+    #[cfg(target_arch = "x86_64")]
+    const ALL_PATHS: &[Path] = &[Path::Scalar, Path::Sse2, Path::Avx2];
+    #[cfg(target_arch = "aarch64")]
+    const ALL_PATHS: &[Path] = &[Path::Scalar, Path::Neon];
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    const ALL_PATHS: &[Path] = &[Path::Scalar];
+
+    /// The paths this processor can run: none above the detected one.
+    fn available_paths() -> Vec<Path> {
+        ALL_PATHS
+            .iter()
+            .copied()
+            .filter(|path| *path <= detected())
+            .collect()
+    }
+
+    #[test]
+    fn a_selection_never_exceeds_the_limit_or_the_processor() {
+        for &limit in ALL_PATHS {
+            let chosen = select(limit);
+            assert!(chosen <= limit, "{} above the limit", chosen.name());
+            assert!(chosen <= detected(), "{} above the processor", chosen.name());
+            if limit <= detected() {
+                assert_eq!(chosen, limit);
+            } else {
+                assert_eq!(chosen, detected());
+            }
+        }
+        assert_eq!(select(Path::Scalar), Path::Scalar);
+        assert_eq!(select(*ALL_PATHS.last().unwrap()), detected());
+    }
+
+    #[test]
+    fn the_paths_are_ordered_and_named() {
+        for pair in ALL_PATHS.windows(2) {
+            assert!(pair[0] < pair[1]);
+        }
+        assert_eq!(Path::Scalar.name(), "scalar");
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(Path::Scalar < Path::Sse2 && Path::Sse2 < Path::Avx2);
+            assert_eq!(Path::Sse2.name(), "sse2");
+            assert_eq!(Path::Avx2.name(), "avx2");
+            assert!(detected() >= Path::Sse2);
+            assert!(available_paths().contains(&Path::Scalar));
+            assert!(available_paths().contains(&Path::Sse2));
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_eq!(Path::Neon.name(), "neon");
+            assert_eq!(detected(), Path::Neon);
         }
     }
 
