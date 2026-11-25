@@ -671,6 +671,10 @@ pub fn gguf_builder(
     let mut meta = |key: &str, value: Meta| builder.metadata.push((key.to_string(), value));
     meta("general.architecture", Meta::Str("llama".into()));
     meta("general.name", Meta::Str("rabbit-synthetic".into()));
+    // A file with no vocabulary. llama.cpp refuses a file that does not say which
+    // tokenizer it has; `no_vocab` is the value its loader accepts for a model that
+    // takes token ids, which is what the synthetic model and the runtime do.
+    meta("tokenizer.ggml.model", Meta::Str("no_vocab".into()));
     meta("llama.context_length", Meta::U32(CONTEXT_LENGTH));
     meta("llama.embedding_length", Meta::U32(spec.hidden as u32));
     meta("llama.block_count", Meta::U32(spec.layers as u32));

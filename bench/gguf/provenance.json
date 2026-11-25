@@ -1,0 +1,50 @@
+{
+ "date_utc": "2026-11-25T13:57:31Z",
+ "host": {
+  "cpu": "AMD Ryzen 5 PRO 3600 6-Core Processor",
+  "kernel": "6.8.0-149-generic",
+  "os": "Ubuntu 24.04"
+ },
+ "llama_cpp": {
+  "repository": "https://github.com/ggml-org/llama.cpp",
+  "commit": "79c69f4b06805fe53c91596de6c958f86dbbdf41",
+  "cmake": "cmake -B build -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_BLAS=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release",
+  "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+ },
+ "python": {
+  "python": "3.12.3",
+  "torch": "2.11.0+cpu",
+  "transformers": "4.57.6",
+  "numpy": "2.2.6",
+  "gguf": "0.19.0"
+ },
+ "source_model": {
+  "repository": "HuggingFaceTB/SmolLM2-135M",
+  "revision": "93efa2f097d58c2a74874c7e644dbc9b0cee75a2",
+  "sha256": {
+   "model.safetensors": "80521b40281d6ce74e35c9282c22539e75aa0ac8578892b2a59955ef78d55da1",
+   "config.json": "1d556eab73b69c7f11f64c557a2f9c6f440bd4c6b89bb2584a6b498c92603843",
+   "vocab.json": "82b84012e3add4d01d12ba14442026e49b8cbbaead1f79ecf3d919784f82dc79",
+   "tokenizer.json": "9ca9acddb6525a194ec8ac7a87f24fbba7232a9a15ffa1af0c1224fcd888e47c",
+   "tokenizer_config.json": "4bb9af56a342753d39374f4016a16574cab299fe088e896f425ce3c433f61424",
+   "merges.txt": "0b54e8aa4e53d5383e2e4bc635a56b43f9647f7b13832d5d9ecd8f82dac4f510"
+  }
+ },
+ "commands": [
+  "python convert_hf_to_gguf.py MODEL_DIR --outtype f16 --outfile smollm2-135m-f16.gguf",
+  "llama-quantize smollm2-135m-f16.gguf smollm2-135m-Q8_0.gguf Q8_0",
+  "llama-quantize smollm2-135m-f16.gguf smollm2-135m-Q4_K_M.gguf Q4_K_M",
+  "llama_golden MODEL.gguf 32 prompts.txt > golden-MODEL.json",
+  "llama-quantize synth-f32.gguf synth-Q8_0.gguf Q8_0",
+  "llama-quantize synth-f32.gguf synth-Q4_K_M.gguf Q4_K_M",
+  "python dump_reference.py --gguf-py llama.cpp/gguf-py --out ref FILES"
+ ],
+ "sha256_of_gguf_files": {
+  "smollm2-135m-f16.gguf": "9609650ae534c9294ae4853fb10c8332db98181373067cbd7bd366126acb6463",
+  "smollm2-135m-Q8_0.gguf": "8a7bd5f03ded081cd8e04d13b3b3dcdc54c57e0827acfa05098eee11af1d5658",
+  "smollm2-135m-Q4_K_M.gguf": "1fcb37a1f06c8b2e3b42d56a73b8695895e7143efc935fbe015c121fa7e15710",
+  "synth-f32.gguf": "31abc80b7425207d154cb3148e02aec3bd2ee5ef766dce54c97e59453fdfd10a",
+  "synth-Q8_0.gguf": "4b019333f81755c9058ac75be2ae1ed6c021ed7e98304934da343b0d7e2b333d",
+  "synth-Q4_K_M.gguf": "4eda99cc90175d99232716740f2c5092bef6c46db6724dd086968268ddcdab21"
+ }
+}

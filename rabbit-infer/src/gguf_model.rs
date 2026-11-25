@@ -993,11 +993,13 @@ mod tests {
             ("general.file_type", Meta::U32(1)),
             ("general.quantization_version", Meta::U32(2)),
             ("general.size_label", Meta::Str("135M".into())),
-            ("tokenizer.ggml.model", Meta::Str("gpt2".into())),
             ("tokenizer.ggml.bos_token_id", Meta::U32(1)),
         ] {
             file.metadata.push((key.to_string(), value));
         }
+        // The synthetic file already says it has no vocabulary: another value of
+        // the same key must not change what is read.
+        *file.meta("tokenizer.ggml.model").unwrap() = Meta::Str("gpt2".into());
         load_builder(&file).unwrap();
         // The value length is held to the head size like the key length.
         *file.meta(KEY_VALUE_LENGTH).unwrap() = Meta::U32(8);
