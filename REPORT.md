@@ -376,22 +376,75 @@ from 1.25 to 0.20 on the reference kernel. The format buys memory, and the
 rows say so. That measurement is of the scalar kernels; the vector kernels
 that came after it are in the next section, and they are not measured yet.
 
-## Results: vector kernels for Q8 and Q4, checked and not yet measured
+## Results: vector kernels for Q8 and Q4, under KVM
 
 The block kernels of the two quantized formats were scalar, which is why the
-formats lost speed. Issue 29 gave them SSE2 and AVX2 kernels, and this section
-says what was shown about them and what was not. It contains no speed.
+formats lost speed. Issue 29 gave them SSE2 and AVX2 kernels. This section says
+what was shown about them, with the speed measured under KVM, and what was not.
+The data, the script and the tables are in
+[`bench/results/paths-kvm/`](bench/results/paths-kvm/README.md). Every number is
+one host (an AMD Ryzen 5 PRO 3600, Zen 2), one guest CPU model
+(`Skylake-Client`) and one virtual processor, on the checkpoint of the reference
+run (`SmolLM2-135M`, revision `93efa2f`), five repetitions per cell, the cells
+interleaved.
 
 **The order of the sums.** The scalar kernels were rewritten with one
 canonical order: a block of 32 weights is summed in eight lanes, each lane
 starting from zero and adding a separate product, with no fused multiply add,
 the lanes are reduced by a fixed tree, and the scale is applied per block in
 scalar arithmetic. The SSE2 kernel (two registers of four lanes) and the AVX2
-kernel (one of eight) follow the same order, so they are meant to be bit for
-bit equal to the scalar one. The bfloat16 kernels keep their fused multiply
-add and are not bit for bit.
+kernel (one of eight) follow the same order, so they are bit for bit equal to
+the scalar one, which a check in the guest verifies. The bfloat16 kernels keep
+their fused multiply add and are not bit for bit.
 
-**What was checked.**
+**Tokens per second.** The median of five runs, with the range in brackets.
+
+| Format | scalar | SSE2 | AVX2 | AVX2 over scalar |
+|---|---|---|---|---|
+| bfloat16 | 8.21 (8.11 to 8.26) | 26.64 (26.30 to 26.80) | 46.03 (45.89 to 46.43) | 5.61x |
+| Q8B32 | 12.87 (12.86 to 12.94) | 32.07 (32.00 to 32.09) | 60.37 (59.98 to 60.81) | 4.69x |
+| Q4B32 | 11.74 (11.71 to 11.80) | 23.06 (23.03 to 23.08) | 32.41 (32.37 to 32.43) | 2.76x |
+
+The vector kernels are 2 to 5.6 times faster than the scalar ones, with ranges
+that do not overlap. Two readings are worth keeping. The eight bit format on AVX2
+(60.4) is faster than bfloat16 on AVX2 (46.0), which is what a decode that has
+to read half the bytes would do. The four bit format on AVX2 (32.4) is **slower
+than the eight bit one, although it reads half the bytes of it**: its matrix
+products take 0.36 s against 0.19 s of Q8 for the same work. A decode bound by
+memory bandwidth would not do that, so the Q4 kernel is bound by the work of
+unpacking the nibbles, and a faster Q4 kernel is possible. That is a loss
+published as a loss.
+
+**Rabbit against mainline, on the same path.** Both kernels booted the same
+archive on the AVX2 path:
+
+| Format | Rabbit over mainline | Reading |
+|---|---|---|
+| bfloat16 | 0.994 | tie, the ranges overlap |
+| Q8B32 | 1.008 | tie |
+| Q4B32 | 0.984 | tie |
+
+This is what the plan said it would be. The same user program runs on both
+kernels, so a faster kernel speeds up both, and the factor of 2.8 to 5.6 belongs
+to the runtime and not to the operating system. It does not count for the stop
+rule of the fair comparison (issue 33), and it is not evidence that Rabbit is
+faster than Linux at running a model: on this path, on this host, it is not. One
+of the five mainline runs of bfloat16 took 25.5 tokens per second against 46 for
+the others, and the range of that row says so.
+
+**The tokens of the real checkpoint.** The runtime compares what it generates
+with the published reference run, so this was checked on every path:
+
+- bfloat16 and Q8B32 reproduce the reference tokens on the scalar, SSE2 and AVX2
+  paths. For Q8B32 this includes the scalar kernel rewritten with the canonical
+  order, whose rounding differs from the previous code: it was the open item of
+  the change, and it holds.
+- Q4B32 does not reproduce them on any path, as published in the section on
+  quantization, and it generates the **same** tokens as before the canonical
+  order (`260 198 29721 282 4649 30 198 198`) on all three paths. The paths agree
+  with each other; the format is what changes the answer.
+
+**What was checked in the guest and in the CI.**
 
 - A check that runs inside the Rabbit guest compares every path with the
   scalar one by the bits of the result over 51 shapes of each format, with
@@ -399,7 +452,7 @@ add and are not bit for bit.
   Q8 and every nibble in both positions of Q4. It passes in the CI, in a guest
   whose emulated processor offers AVX2 and in one without AVX2 and FMA, where it
   is required to check the scalar and SSE2 paths and says that it skipped AVX2.
-  The guest runs under the emulator, so this shows that the kernels give the
+  The CI guest runs under the emulator, so that shows that the kernels give the
   right bits and not how fast they are.
 - Changing the reduction tree of an AVX2 kernel, or the order of the nibbles,
   makes the check fail. That was tried by hand, and it is the evidence that
@@ -411,30 +464,29 @@ add and are not bit for bit.
   bfloat16 differ by 2e-6 at most; no step is closer than twice the largest
   difference.
 
+**Where the time goes.** On the AVX2 path, 95 to 97 per cent of the time of a run
+is in the matrix products (the share outside them is 4.5 per cent for bfloat16,
+5.3 for Q8 and 2.7 for Q4), and on the scalar path 99. Vectorising the attention
+and the normalisations, which was held back until this number was known, would
+gain at most that share, so it is not done. The prompt is five tokens and the run
+generates eight, so a long context would move the attention up and this number
+with it.
+
 **What was not shown.**
 
-- No speed. The runtime can now be limited to a path, and `bench/kvm/paths.sh`
-  measures tokens per second for each path and format on a KVM host, but it was
-  run only under the emulator, whose numbers say nothing about speed. The first
-  run on the host with KVM is still to be done.
-- No real checkpoint. The checks use a synthetic model with fixed seed. The
-  tokens of the real SmolLM2 checkpoint against the reference tokens are not
-  yet compared for the vector paths, nor for the rewritten scalar order, whose
-  rounding differs from the previous scalar code (on the synthetic models the
-  largest logit difference was 4.3e-6 against a smallest margin of 0.0022).
+- Not another processor. The host is a Zen 2 and the guest model is an Intel
+  one, so QEMU masks five features of it (the dataset records them), and a
+  processor with wider vector units could give other ratios.
 - Not the whole decoder. Only the matrix by vector products change by path.
   The norms, the attention, the softmax and the activation are the same code
   on every path, so equal tokens do not test them.
 - Not the quality of the quantization. Each format is compared with its own
-  scalar kernel and not with bfloat16.
+  scalar kernel for the paths, and with the float reference for the tokens, on
+  one prompt of five tokens and eight generated ones.
+- Not a long context, not more than one virtual processor, and not the instruct
+  checkpoint.
 - No AVX-512. It cannot run on the only host for the rig (a Zen 2 processor)
   or under the emulator, so it was split off as issue 39.
-
-**What a speedup would mean.** The same user program runs on Rabbit and on
-Linux, so a faster kernel speeds up both. If the decode is bound by memory
-bandwidth, the vector kernels may tie with the scalar ones. A speedup of a
-kernel over the scalar path is a statement about the runtime, and it does not
-count for the stop rule of the fair comparison (issue 33).
 
 ## Results: the same rig under KVM
 
@@ -813,10 +865,10 @@ serial log, so the claims in this document are checked on every push.
   under KVM, 0.73 times, and 2000 cycles per page of it are not accounted for. A
   host that exposes the counters of the guest, or a profiler inside the guest, would
   say where they go.
-- **The vector kernels of Q8 and Q4 on KVM.** They are written, tested and
-  gated in the CI, and not measured. One session on the host with KVM runs
-  `bench/kvm/paths.sh` and compares the tokens of the real checkpoint with the
-  reference ones.
+- **A faster Q4 kernel.** On AVX2 it is slower than the Q8 one although it reads
+  half the bytes, so it is bound by the unpacking of the nibbles and not by the
+  memory; a kernel that unpacks fewer bytes per weight, or that keeps the nibbles
+  packed longer, is the next step of the vector work.
 - **Real hardware.** The numbers under KVM are one virtualised processor. A
   physical machine booting Rabbit is the next rung of the roadmap.
 - **A scheduler with a better tail, and more than one processor.** A server

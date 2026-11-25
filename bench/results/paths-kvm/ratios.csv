@@ -1,0 +1,10 @@
+mode,guest_cpu,host,kind,format,path,requested,against,ratio_tok_s,ratio_ttft,reading,note
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,bf16,sse2,sse2,rabbit scalar,3.246,3.215,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,bf16,avx2,avx2,rabbit scalar,5.608,5.512,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,q8,sse2,sse2,rabbit scalar,2.491,2.489,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,q8,avx2,avx2,rabbit scalar,4.689,4.683,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,q4,sse2,sse2,rabbit scalar,1.964,1.967,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,path-vs-scalar,q4,avx2,avx2,rabbit scalar,2.760,2.763,faster,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,rabbit-vs-mainline,bf16,avx2,avx2,mainline same path,0.994,1.043,tie (the ranges overlap),
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,rabbit-vs-mainline,q8,avx2,avx2,mainline same path,1.008,1.017,tie (the ranges overlap),
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,rabbit-vs-mainline,q4,avx2,avx2,mainline same path,0.984,1.013,tie (the ranges overlap),

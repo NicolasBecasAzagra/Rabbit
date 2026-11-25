@@ -1,0 +1,20 @@
+accel=kvm
+cpu=Skylake-Client
+reps=5
+memory=1024M
+timeout=600
+cores=2,3
+formats=bf16 q8 q4
+paths=scalar sse2 avx2
+model=artifacts/model-base
+host_cpu=AMD Ryzen 5 PRO 3600 6-Core Processor
+host_system=Linux 6.8.0-149-generic x86_64
+qemu=QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+date=20261125T134758Z
+commit=64e1bbeb836016df57854b66ad4efe527209b025
+rabbit_kernel=artifacts/rabbit-kernel
+rabbit_sha256=fcff603a007b2e15112b765998a586fdcccfeefb69cc0e55dfa4c791214cffb8
+mainline_kernel=artifacts/vmlinux
+mainline_sha256=0d6e448215c98cbbeba85984268828549ea6b8e89009a41e1edf1c0b1b7deebe
+mainline_append=mitigations=off
+runtime_sha256=8e386b7f514fec4234fc1a7e0a89e0e4b76bbc41bd057d921c4144852c2439ae

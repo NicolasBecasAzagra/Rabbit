@@ -1,0 +1,13 @@
+mode,guest_cpu,host,format,path,requested,kernel,runs,n,median_tok_s,min_tok_s,max_tok_s,median_ttft_ms,reference_match,note
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,bf16,scalar,scalar,rabbit,5,5,8.208,8.112,8.260,611.121,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,bf16,sse2,sse2,rabbit,5,5,26.644,26.303,26.801,190.093,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,bf16,avx2,avx2,rabbit,5,5,46.034,45.889,46.434,110.878,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,bf16,avx2,avx2,mainline,5,5,46.306,25.472,46.933,115.625,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q8,scalar,scalar,rabbit,5,5,12.874,12.856,12.944,387.965,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q8,sse2,sse2,rabbit,5,5,32.071,31.998,32.092,155.862,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q8,avx2,avx2,rabbit,5,5,60.368,59.980,60.805,82.851,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q8,avx2,avx2,mainline,5,5,59.903,59.824,60.216,84.256,true,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q4,scalar,scalar,rabbit,5,5,11.742,11.708,11.803,425.677,false,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q4,sse2,sse2,rabbit,5,5,23.064,23.025,23.075,216.399,false,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q4,avx2,avx2,rabbit,5,5,32.413,32.369,32.433,154.082,false,
+kvm,Skylake-Client,one host: AMD Ryzen 5 PRO 3600 6-Core Processor,q4,avx2,avx2,mainline,5,5,32.937,32.410,32.962,156.070,false,
