@@ -513,6 +513,222 @@ pub fn matvec_q8_scalar(
     Ok(())
 }
 
+/// Multiply a `Q5_0` matrix of a GGUF file by `input`, on an explicit path.
+///
+/// There is no vector kernel for this format yet, so every path runs
+/// [`matvec_q5_0_scalar`], which defines the canonical order.
+pub fn matvec_q5_0_with(
+    _path: Path,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    matvec_q5_0_scalar(weights, rows, columns, input, out)
+}
+
+/// The scalar `Q5_0` kernel: the canonical order of the product.
+///
+/// A block is 22 bytes for 32 weights, see [`crate::quant`] for the layout
+/// (`d` as binary16, then `qh`, then `qs`, at
+/// <https://raw.githubusercontent.com/ggml-org/ggml/d9fe7bf/src/ggml-common.h>).
+/// The structure is that of [`matvec_q8_scalar`]: the integer weight `q - 16`
+/// (in `-16..=15`) of position `k` of a block is converted to `f32`, and for one
+/// block eight lane accumulators start at `+0.0` and
+/// `acc[k % 8] = acc[k % 8] + w[k] * x[column + k]` runs for `k` in `0..32` in
+/// order, with a separate multiply and add (no fused multiply add). The lanes
+/// are summed by [`reduce8`] into `block_sum`, and the row is
+/// `row = row + block_sum * scale` over the blocks in order, from `+0.0`, where
+/// `scale` is the binary16 `d` converted to `f32`. So the scale multiplies the
+/// block sum once, not each weight: the result is not the product of the
+/// dequantised values of [`crate::quant::dequantize_block_q5_0`] with the input.
+///
+/// A scale that is not finite is not refused here, as in the `Q8B32` kernel: the
+/// infinity or the NaN reaches the row.
+pub fn matvec_q5_0_scalar(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_gguf(
+        weights,
+        rows,
+        columns,
+        input,
+        out,
+        crate::quant::BLOCK,
+        crate::quant::q5_0_matrix_bytes,
+    )?;
+    let row_bytes = crate::quant::q5_0_row_bytes(columns)?;
+    let blocks = columns / crate::quant::BLOCK;
+    for (row, slot) in out.iter_mut().enumerate().take(rows) {
+        let base = row * row_bytes;
+        let mut sum = 0.0f32;
+        for block in 0..blocks {
+            let offset = base + block * crate::quant::Q5_0_BLOCK_BYTES;
+            let bytes = &weights[offset..offset + crate::quant::Q5_0_BLOCK_BYTES];
+            let scale = crate::quant::q5_0_scale(bytes);
+            let quantized = crate::quant::q5_0_weights(bytes);
+            let column = block * crate::quant::BLOCK;
+            let mut lane = [0.0f32; 8];
+            for group in 0..crate::quant::BLOCK / 8 {
+                for (j, slot) in lane.iter_mut().enumerate() {
+                    let k = group * 8 + j;
+                    let product = quantized[k] as f32 * input[column + k];
+                    *slot += product;
+                }
+            }
+            let block_sum = reduce8(lane);
+            sum += block_sum * scale;
+        }
+        *slot = sum;
+    }
+    Ok(())
+}
+
+/// Multiply a `Q4_K` matrix of a GGUF file by `input`, on an explicit path.
+///
+/// There is no vector kernel for this format yet, so every path runs
+/// [`matvec_q4_k_scalar`], which defines the canonical order.
+pub fn matvec_q4_k_with(
+    _path: Path,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    matvec_q4_k_scalar(weights, rows, columns, input, out)
+}
+
+/// The scalar `Q4_K` kernel: the canonical order of the product.
+///
+/// A super block is 144 bytes for 256 weights. Each element is first decoded to
+/// `f32` exactly as [`crate::quant::dequantize_block_q4_k`] does (the scales and
+/// the minimums are already inside the value), and then the 256 values follow
+/// the lane order of [`matvec_q8_scalar`] over the whole super block: eight
+/// lane accumulators start at `+0.0` and
+/// `acc[k % 8] = acc[k % 8] + v[k] * x[column + k]` runs for `k` in `0..256` in
+/// order, with a separate multiply and add (no fused multiply add). The lanes
+/// are summed by [`reduce8`] once per super block into `block_sum`, and the row
+/// is `row = row + block_sum` over the super blocks in order, from `+0.0`;
+/// there is no scale to apply.
+///
+/// A scale that is not finite is not refused here, as in the `Q8B32` kernel.
+pub fn matvec_q4_k_scalar(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_gguf(
+        weights,
+        rows,
+        columns,
+        input,
+        out,
+        crate::quant::QK_K,
+        crate::quant::q4_k_matrix_bytes,
+    )?;
+    let row_bytes = crate::quant::q4_k_row_bytes(columns)?;
+    let blocks = columns / crate::quant::QK_K;
+    for (row, slot) in out.iter_mut().enumerate().take(rows) {
+        let base = row * row_bytes;
+        let mut sum = 0.0f32;
+        for block in 0..blocks {
+            let offset = base + block * crate::quant::Q4_K_BLOCK_BYTES;
+            let bytes = &weights[offset..offset + crate::quant::Q4_K_BLOCK_BYTES];
+            let mut values = [0.0f32; crate::quant::QK_K];
+            crate::quant::decode_q4_k(bytes, &mut values);
+            sum += super_block_sum(&values, &input[block * crate::quant::QK_K..]);
+        }
+        *slot = sum;
+    }
+    Ok(())
+}
+
+/// Multiply a `Q6_K` matrix of a GGUF file by `input`, on an explicit path.
+///
+/// There is no vector kernel for this format yet, so every path runs
+/// [`matvec_q6_k_scalar`], which defines the canonical order.
+pub fn matvec_q6_k_with(
+    _path: Path,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    matvec_q6_k_scalar(weights, rows, columns, input, out)
+}
+
+/// The scalar `Q6_K` kernel: the canonical order of the product.
+///
+/// A super block is 210 bytes for 256 weights. The order is the one of
+/// [`matvec_q4_k_scalar`] with the elements of
+/// [`crate::quant::dequantize_block_q6_k`]: each element is decoded to `f32`
+/// (the scale of its sixteen is already inside the value), eight lane
+/// accumulators start at `+0.0` and
+/// `acc[k % 8] = acc[k % 8] + v[k] * x[column + k]` runs for `k` in `0..256` in
+/// order, with a separate multiply and add (no fused multiply add), [`reduce8`]
+/// sums the lanes once per super block, and the row is `row = row + block_sum`
+/// from `+0.0`.
+///
+/// A scale that is not finite is not refused here, as in the `Q8B32` kernel.
+pub fn matvec_q6_k_scalar(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_gguf(
+        weights,
+        rows,
+        columns,
+        input,
+        out,
+        crate::quant::QK_K,
+        crate::quant::q6_k_matrix_bytes,
+    )?;
+    let row_bytes = crate::quant::q6_k_row_bytes(columns)?;
+    let blocks = columns / crate::quant::QK_K;
+    for (row, slot) in out.iter_mut().enumerate().take(rows) {
+        let base = row * row_bytes;
+        let mut sum = 0.0f32;
+        for block in 0..blocks {
+            let offset = base + block * crate::quant::Q6_K_BLOCK_BYTES;
+            let bytes = &weights[offset..offset + crate::quant::Q6_K_BLOCK_BYTES];
+            let mut values = [0.0f32; crate::quant::QK_K];
+            crate::quant::decode_q6_k(bytes, &mut values);
+            sum += super_block_sum(&values, &input[block * crate::quant::QK_K..]);
+        }
+        *slot = sum;
+    }
+    Ok(())
+}
+
+const _: () = assert!(crate::quant::QK_K % 8 == 0);
+
+/// The dot product of one decoded super block with the first 256 values of
+/// `input`: eight lanes with `lane = k % 8`, a separate multiply and add, and
+/// [`reduce8`] once.
+fn super_block_sum(values: &[f32; crate::quant::QK_K], input: &[f32]) -> f32 {
+    let mut lane = [0.0f32; 8];
+    for group in 0..crate::quant::QK_K / 8 {
+        for (j, slot) in lane.iter_mut().enumerate() {
+            let k = group * 8 + j;
+            let product = values[k] * input[k];
+            *slot += product;
+        }
+    }
+    reduce8(lane)
+}
+
 /// Multiply an `F32` matrix by `input`: the reference kernel, not optimised.
 ///
 /// The rows are little endian `f32`, row after row, and `weights` may hold more
@@ -699,6 +915,42 @@ fn validate_q8(
     }
     let needed = crate::quant::q8_matrix_bytes(rows, columns)?;
     if weights.len() < needed {
+        return Err(Error::new(
+            "matvec: quantized weights are shorter than the matrix",
+        ));
+    }
+    Ok(())
+}
+
+/// Check every length and the block alignment the `Q5_0`, `Q4_K` and `Q6_K`
+/// kernels index: `elements` is the weights of one block and `matrix_bytes` the
+/// byte size of the format.
+fn validate_gguf(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &[f32],
+    elements: usize,
+    matrix_bytes: fn(usize, usize) -> Result<usize>,
+) -> Result<()> {
+    if rows == 0 || columns == 0 {
+        return Err(Error::new("matvec: an empty matrix has no product"));
+    }
+    if input.len() != columns {
+        return Err(Error::new(
+            "matvec: input length disagrees with the columns",
+        ));
+    }
+    if out.len() < rows {
+        return Err(Error::new("matvec: output is shorter than the rows"));
+    }
+    if !columns.is_multiple_of(elements) {
+        return Err(Error::new(format!(
+            "matvec: {columns} columns is not a multiple of the {elements} weight block"
+        )));
+    }
+    if weights.len() < matrix_bytes(rows, columns)? {
         return Err(Error::new(
             "matvec: quantized weights are shorter than the matrix",
         ));
@@ -2494,5 +2746,549 @@ mod float_tests {
         assert!(matvec_f32(&weights, 2, 4, &input, &mut short).is_err());
         assert!(matvec_f16(&weights, 2, 4, &input, &mut out).is_ok());
         assert!(matvec_f16(&weights[..15], 2, 4, &input, &mut out).is_err());
+    }
+}
+
+#[cfg(test)]
+mod gguf_tests {
+    use super::{
+        matvec_q4_k_scalar, matvec_q4_k_with, matvec_q5_0_scalar, matvec_q5_0_with,
+        matvec_q6_k_scalar, matvec_q6_k_with, Path,
+    };
+    use crate::quant::{
+        f32_to_half, half_to_f32, oracle, BLOCK, Q4_K_BLOCK_BYTES, Q5_0_BLOCK_BYTES,
+        Q6_K_BLOCK_BYTES, QK_K,
+    };
+
+    /// The three formats, by the name of the type in `vectors.json`.
+    #[derive(Clone, Copy, Debug)]
+    enum Kind {
+        Q5_0,
+        Q4K,
+        Q6K,
+    }
+
+    impl Kind {
+        const ALL: [Kind; 3] = [Kind::Q5_0, Kind::Q4K, Kind::Q6K];
+
+        fn name(self) -> &'static str {
+            match self {
+                Kind::Q5_0 => "Q5_0",
+                Kind::Q4K => "Q4_K",
+                Kind::Q6K => "Q6_K",
+            }
+        }
+
+        /// Weights in one block.
+        fn elements(self) -> usize {
+            match self {
+                Kind::Q5_0 => BLOCK,
+                Kind::Q4K | Kind::Q6K => QK_K,
+            }
+        }
+
+        /// Bytes in one block.
+        fn bytes(self) -> usize {
+            match self {
+                Kind::Q5_0 => Q5_0_BLOCK_BYTES,
+                Kind::Q4K => Q4_K_BLOCK_BYTES,
+                Kind::Q6K => Q6_K_BLOCK_BYTES,
+            }
+        }
+
+        /// The byte ranges of the binary16 scales of a block.
+        fn scale_offsets(self) -> &'static [usize] {
+            match self {
+                Kind::Q5_0 => &[0],
+                Kind::Q4K => &[0, 2],
+                Kind::Q6K => &[208],
+            }
+        }
+
+        fn matvec(
+            self,
+            weights: &[u8],
+            rows: usize,
+            columns: usize,
+            input: &[f32],
+            out: &mut [f32],
+        ) -> crate::error::Result<()> {
+            match self {
+                Kind::Q5_0 => matvec_q5_0_scalar(weights, rows, columns, input, out),
+                Kind::Q4K => matvec_q4_k_scalar(weights, rows, columns, input, out),
+                Kind::Q6K => matvec_q6_k_scalar(weights, rows, columns, input, out),
+            }
+        }
+
+        fn matvec_with(
+            self,
+            path: Path,
+            weights: &[u8],
+            rows: usize,
+            columns: usize,
+            input: &[f32],
+            out: &mut [f32],
+        ) -> crate::error::Result<()> {
+            match self {
+                Kind::Q5_0 => matvec_q5_0_with(path, weights, rows, columns, input, out),
+                Kind::Q4K => matvec_q4_k_with(path, weights, rows, columns, input, out),
+                Kind::Q6K => matvec_q6_k_with(path, weights, rows, columns, input, out),
+            }
+        }
+    }
+
+    /// A deterministic stream of `u64` values.
+    struct Stream(u64);
+
+    impl Stream {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 24
+        }
+
+        /// A value in `[-1, 1)`.
+        fn unit(&mut self) -> f32 {
+            (self.next() & 0xff_ffff) as f32 / (1u32 << 23) as f32 - 1.0
+        }
+    }
+
+    fn random_input(stream: &mut Stream, columns: usize) -> Vec<f32> {
+        (0..columns).map(|_| stream.unit() * 4.0).collect()
+    }
+
+    /// Signed zeros, subnormals, large magnitudes and ordinary values.
+    fn awkward_input(stream: &mut Stream, columns: usize) -> Vec<f32> {
+        (0..columns)
+            .map(|index| match stream.next() % 9 {
+                0 => -0.0,
+                1 => 0.0,
+                2 => f32::from_bits(1 + (stream.next() as u32 & 0x3f_ffff)),
+                3 => -f32::from_bits(1 + (stream.next() as u32 & 0x3f_ffff)),
+                4 => stream.unit() * 1.0e18,
+                5 => stream.unit() * 1.0e-30,
+                _ => stream.unit() * 4.0 + (index % 3) as f32,
+            })
+            .collect()
+    }
+
+    /// A finite binary16 scale: zero, negative zero, subnormal, large, or an
+    /// ordinary value of either sign.
+    fn finite_scale(stream: &mut Stream) -> u16 {
+        match stream.next() % 8 {
+            0 => 0x0000,
+            1 => 0x8000,
+            2 => 0x0001 | ((stream.next() as u16 & 1) << 15),
+            3 => 0x7bff,
+            4 => 0xfbff,
+            _ => f32_to_half(stream.unit() * 3.0),
+        }
+    }
+
+    /// One block of `kind` of deterministic random bytes with finite scales.
+    fn random_block(kind: Kind, stream: &mut Stream) -> Vec<u8> {
+        let mut block: Vec<u8> = (0..kind.bytes()).map(|_| stream.next() as u8).collect();
+        for &offset in kind.scale_offsets() {
+            block[offset..offset + 2].copy_from_slice(&finite_scale(stream).to_le_bytes());
+        }
+        block
+    }
+
+    /// Where the blocks of a matrix come from.
+    #[derive(Clone, Copy, Debug)]
+    enum Source {
+        Oracle,
+        Random,
+        Mixed,
+    }
+
+    /// A block and, when it is one of the oracle, the `float32` values that
+    /// `gguf-py` gave for it.
+    struct Block {
+        bytes: Vec<u8>,
+        oracle: Option<Vec<f32>>,
+    }
+
+    /// The oracle blocks of `kind` of both models.
+    fn oracle_blocks(kind: Kind) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        for (_, text) in oracle::SOURCES {
+            for block in oracle::load(text, kind.name()).blocks {
+                blocks.push(Block {
+                    bytes: block.bytes,
+                    oracle: Some(block.values),
+                });
+            }
+        }
+        assert_eq!(blocks.len(), 12);
+        blocks
+    }
+
+    fn blocks_of(kind: Kind, source: Source, count: usize, stream: &mut Stream) -> Vec<Block> {
+        let known = oracle_blocks(kind);
+        (0..count)
+            .map(|index| {
+                let from_oracle = match source {
+                    Source::Oracle => true,
+                    Source::Random => false,
+                    Source::Mixed => index % 2 == 0,
+                };
+                if from_oracle {
+                    let pick = &known[(stream.next() as usize) % known.len()];
+                    Block {
+                        bytes: pick.bytes.clone(),
+                        oracle: pick.oracle.clone(),
+                    }
+                } else {
+                    Block {
+                        bytes: random_block(kind, stream),
+                        oracle: None,
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// The canonical order, written plainly: every product is a multiply and a
+    /// separate add into the lane `k % 8`, and the lanes meet in the fixed tree
+    /// `(l0 + l4) + (l2 + l6)` with `(l1 + l5) + (l3 + l7)`.
+    fn canonical_sum(values: &[f32], input: &[f32]) -> f32 {
+        assert!(values.len() % 8 == 0);
+        let mut acc = [0.0f32; 8];
+        for k in 0..values.len() {
+            let product = values[k] * input[k];
+            acc[k % 8] += product;
+        }
+        let t0 = acc[0] + acc[4];
+        let t1 = acc[1] + acc[5];
+        let t2 = acc[2] + acc[6];
+        let t3 = acc[3] + acc[7];
+        let u0 = t0 + t2;
+        let u1 = t1 + t3;
+        u0 + u1
+    }
+
+    /// The contribution of one block to its row, from the definition of each
+    /// format. The weights come from the oracle bits when the block has them
+    /// and from the closed form of the oracle module otherwise.
+    fn canonical_block(kind: Kind, block: &Block, input: &[f32]) -> f32 {
+        match kind {
+            Kind::Q5_0 => {
+                let scale = oracle::q5_0_scale(&block.bytes);
+                let weights: Vec<f32> = (0..BLOCK)
+                    .map(|k| oracle::q5_0_weight(&block.bytes, k) as f32)
+                    .collect();
+                if let Some(values) = &block.oracle {
+                    // The value of `gguf-py` is `q * d`, exact in `f32`, so the
+                    // integer weight can be read back from its bits.
+                    assert!(scale != 0.0);
+                    for (weight, value) in weights.iter().zip(values) {
+                        assert_eq!((value / scale).to_bits(), weight.to_bits());
+                    }
+                }
+                canonical_sum(&weights, input) * scale
+            }
+            Kind::Q4K | Kind::Q6K => {
+                let values: Vec<f32> = match &block.oracle {
+                    Some(values) => values.clone(),
+                    None => (0..QK_K)
+                        .map(|k| match kind {
+                            Kind::Q4K => oracle::q4_k_element(&block.bytes, k),
+                            _ => oracle::q6_k_element(&block.bytes, k),
+                        })
+                        .collect(),
+                };
+                canonical_sum(&values, input)
+            }
+        }
+    }
+
+    /// The canonical product of a matrix of `rows` rows of `blocks` blocks.
+    fn canonical_matvec(
+        kind: Kind,
+        matrix: &[Block],
+        rows: usize,
+        blocks: usize,
+        input: &[f32],
+    ) -> Vec<f32> {
+        (0..rows)
+            .map(|row| {
+                let mut sum = 0.0f32;
+                for block in 0..blocks {
+                    let contribution = canonical_block(
+                        kind,
+                        &matrix[row * blocks + block],
+                        &input[block * kind.elements()..],
+                    );
+                    sum += contribution;
+                }
+                sum
+            })
+            .collect()
+    }
+
+    fn paths() -> Vec<Path> {
+        let mut paths = vec![Path::Scalar, super::detected()];
+        #[cfg(target_arch = "x86_64")]
+        paths.extend([Path::Sse2, Path::Avx2]);
+        #[cfg(target_arch = "aarch64")]
+        paths.push(Path::Neon);
+        paths
+    }
+
+    fn assert_same_bits(actual: &[f32], expected: &[f32], what: &str) {
+        assert_eq!(actual.len(), expected.len());
+        for (row, (a, e)) in actual.iter().zip(expected).enumerate() {
+            assert_eq!(
+                a.to_bits(),
+                e.to_bits(),
+                "{what} row {row}: {a} against {e}"
+            );
+        }
+    }
+
+    fn check(kind: Kind, matrix: &[Block], rows: usize, blocks: usize, input: &[f32], what: &str) {
+        let columns = blocks * kind.elements();
+        let bytes: Vec<u8> = matrix.iter().flat_map(|b| b.bytes.clone()).collect();
+        assert_eq!(bytes.len(), rows * blocks * kind.bytes());
+        let expected = canonical_matvec(kind, matrix, rows, blocks, input);
+        let mut actual = vec![f32::NAN; rows];
+        kind.matvec(&bytes, rows, columns, input, &mut actual)
+            .unwrap();
+        assert_same_bits(&actual, &expected, what);
+        // The `_with` entry points take a path and every one of them runs the
+        // scalar kernel for these types, since no vector kernel exists yet, so
+        // this checks the entry points and not any vector code. The label says
+        // which path was asked for, not which one ran.
+        for path in paths() {
+            let mut with = vec![f32::NAN; rows];
+            kind.matvec_with(path, &bytes, rows, columns, input, &mut with)
+                .unwrap();
+            assert_same_bits(
+                &with,
+                &expected,
+                &format!("{what}, asked for {}", path.name()),
+            );
+        }
+    }
+
+    #[test]
+    fn the_gguf_kernels_follow_the_canonical_order_bit_for_bit() {
+        let mut stream = Stream(0x6e65_7261_6c5f_3330);
+        for kind in Kind::ALL {
+            for source in [Source::Oracle, Source::Random, Source::Mixed] {
+                for rows in [1usize, 3, 5, 37] {
+                    for blocks in [1usize, 2, 3, 6] {
+                        let matrix = blocks_of(kind, source, rows * blocks, &mut stream);
+                        let columns = blocks * kind.elements();
+                        let plain = random_input(&mut stream, columns);
+                        let what =
+                            format!("{} {source:?} rows {rows} blocks {blocks}", kind.name());
+                        check(kind, &matrix, rows, blocks, &plain, &what);
+                        let awkward = awkward_input(&mut stream, columns);
+                        check(
+                            kind,
+                            &matrix,
+                            rows,
+                            blocks,
+                            &awkward,
+                            &format!("{what} awkward"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_gguf_row_that_cancels_to_zero_keeps_the_sign_of_the_canonical_order() {
+        // Blocks of zero payload and the scales that make a zero of either sign,
+        // against inputs of signed zeros and subnormals: the bits of every zero
+        // are those of the canonical order, which starts from `+0.0`.
+        let mut stream = Stream(0x5a65_726f_5369_676e);
+        for kind in Kind::ALL {
+            for fill in [0x00u8, 0xff, 0x0f, 0xf0, 0x88] {
+                for scale in [0x0000u16, 0x8000, 0x0001, 0x8001, 0x3c00, 0xbc00] {
+                    let blocks = 2;
+                    let matrix: Vec<Block> = (0..3 * blocks)
+                        .map(|_| {
+                            let mut bytes = vec![fill; kind.bytes()];
+                            for &offset in kind.scale_offsets() {
+                                bytes[offset..offset + 2].copy_from_slice(&scale.to_le_bytes());
+                            }
+                            Block {
+                                bytes,
+                                oracle: None,
+                            }
+                        })
+                        .collect();
+                    for _ in 0..3 {
+                        let input = awkward_input(&mut stream, blocks * kind.elements());
+                        let what = format!("{} fill {fill:#04x} scale {scale:#06x}", kind.name());
+                        check(kind, &matrix, 3, blocks, &input, &what);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn known_gguf_products_are_exact() {
+        let ones = |columns: usize| vec![1.0f32; columns];
+        let mut out = [0.0f32; 1];
+
+        // `Q5_0`: a zero payload is the weight -16 everywhere, `d = 0.5`.
+        let mut block = vec![0u8; Q5_0_BLOCK_BYTES];
+        block[..2].copy_from_slice(&f32_to_half(0.5).to_le_bytes());
+        matvec_q5_0_scalar(&block, 1, BLOCK, &ones(BLOCK), &mut out).unwrap();
+        assert_eq!(out[0], -256.0);
+        // The fifth bits of weights 0, 1 and 31 are set, and the nibbles of
+        // `qs[0]` and `qs[1]` are 0, 1, 2 and 15: weight 0 is 0 + 16 - 16, weight
+        // 1 is 2 + 16 - 16 and weight 16 is 1 - 16.
+        block[2..6].copy_from_slice(&0x8000_0003u32.to_le_bytes());
+        block[6] = 0x10;
+        block[7] = 0xf2;
+        let weights: i32 = (0..BLOCK).map(|k| oracle::q5_0_weight(&block, k)).sum();
+        assert_eq!(oracle::q5_0_weight(&block, 0), 0);
+        assert_eq!(oracle::q5_0_weight(&block, 1), 18 - 16);
+        assert_eq!(oracle::q5_0_weight(&block, 16), -15);
+        matvec_q5_0_scalar(&block, 1, BLOCK, &ones(BLOCK), &mut out).unwrap();
+        assert_eq!(out[0], weights as f32 * 0.5);
+
+        // `Q6_K`: a zero payload is the value -32, `d = 1` and every scale 1.
+        let mut block = vec![0u8; Q6_K_BLOCK_BYTES];
+        block[128 + 64..128 + 64 + 16].fill(1);
+        block[208..].copy_from_slice(&f32_to_half(1.0).to_le_bytes());
+        matvec_q6_k_scalar(&block, 1, QK_K, &ones(QK_K), &mut out).unwrap();
+        assert_eq!(out[0], -32.0 * QK_K as f32);
+
+        // `Q4_K`: scales 1 for the sub blocks 0 to 3 and 2 for 4 to 7, minimums
+        // 0, every nibble 1: 128 values of 1 and 128 values of 2.
+        let mut block = vec![0u8; Q4_K_BLOCK_BYTES];
+        block[..2].copy_from_slice(&f32_to_half(1.0).to_le_bytes());
+        block[4..8].fill(0x01);
+        block[12..16].fill(0x02);
+        block[16..].fill(0x11);
+        matvec_q4_k_scalar(&block, 1, QK_K, &ones(QK_K), &mut out).unwrap();
+        assert_eq!(out[0], 128.0 + 256.0);
+        // A minimum is subtracted: dmin 0.5 and the minimum 2 of sub block 0.
+        block[2..4].copy_from_slice(&f32_to_half(0.5).to_le_bytes());
+        block[8] = 0x02;
+        matvec_q4_k_scalar(&block, 1, QK_K, &ones(QK_K), &mut out).unwrap();
+        assert_eq!(out[0], 128.0 + 256.0 - 32.0);
+    }
+
+    #[test]
+    fn a_row_is_the_sum_of_its_blocks_and_rows_do_not_mix() {
+        let mut stream = Stream(0x726f_7773);
+        for kind in Kind::ALL {
+            let blocks = 3;
+            let matrix = blocks_of(kind, Source::Mixed, 4 * blocks, &mut stream);
+            let input = random_input(&mut stream, blocks * kind.elements());
+            let bytes: Vec<u8> = matrix.iter().flat_map(|b| b.bytes.clone()).collect();
+            let mut all = [0.0f32; 4];
+            kind.matvec(&bytes, 4, blocks * kind.elements(), &input, &mut all)
+                .unwrap();
+            let row_bytes = blocks * kind.bytes();
+            for (row, expected) in all.iter().enumerate() {
+                let mut one = [0.0f32; 1];
+                kind.matvec(
+                    &bytes[row * row_bytes..(row + 1) * row_bytes],
+                    1,
+                    blocks * kind.elements(),
+                    &input,
+                    &mut one,
+                )
+                .unwrap();
+                assert_eq!(one[0].to_bits(), expected.to_bits(), "{}", kind.name());
+            }
+            // Weights past the last row and an output longer than the rows are
+            // neither read nor written.
+            let mut longer = bytes.clone();
+            longer.extend_from_slice(&[0xff; 7]);
+            let mut out = [7.0f32; 6];
+            kind.matvec(&longer, 4, blocks * kind.elements(), &input, &mut out)
+                .unwrap();
+            assert_same_bits(&out[..4], &all, kind.name());
+            assert_eq!(out[4..], [7.0, 7.0]);
+        }
+    }
+
+    #[test]
+    fn the_gguf_kernels_reject_a_bad_shape() {
+        for kind in Kind::ALL {
+            let elements = kind.elements();
+            let block = vec![0u8; 2 * kind.bytes()];
+            let input = vec![1.0f32; 2 * elements];
+            let mut out = [0.0f32; 2];
+            assert!(kind
+                .matvec(&block, 1, 2 * elements, &input, &mut out)
+                .is_ok());
+            // Columns that are not a multiple of the block, a half block or one
+            // more than a whole one, and no columns at all.
+            for columns in [elements - 1, elements + 1, elements / 2, 0] {
+                let long = vec![0u8; 4 * kind.bytes()];
+                let wide = vec![1.0f32; columns];
+                assert!(
+                    kind.matvec(&long, 1, columns, &wide, &mut out).is_err(),
+                    "{} columns {columns}",
+                    kind.name()
+                );
+            }
+            // No rows.
+            assert!(kind
+                .matvec(&block, 0, 2 * elements, &input, &mut out)
+                .is_err());
+            // A matrix one byte short, for one row and for two.
+            assert!(kind
+                .matvec(&block[1..], 1, 2 * elements, &input, &mut out)
+                .is_err());
+            assert!(kind
+                .matvec(&block, 2, 2 * elements, &input, &mut out)
+                .is_err());
+            // An input that disagrees with the columns, either way.
+            assert!(kind
+                .matvec(&block, 1, 2 * elements, &input[1..], &mut out)
+                .is_err());
+            assert!(kind
+                .matvec(&block, 1, 2 * elements, &input, &mut [])
+                .is_err());
+            // A row count whose byte size overflows is an error, not a panic.
+            assert!(kind
+                .matvec(&block, usize::MAX, 2 * elements, &input, &mut out)
+                .is_err());
+            // The path entry point validates the same way.
+            assert!(kind
+                .matvec_with(Path::Scalar, &block, 1, elements + 1, &input, &mut out)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn a_gguf_scale_that_is_not_finite_reaches_the_row_like_the_eight_bit_kernel() {
+        // Nothing refuses it in the kernel: the check is in the dequantisation.
+        // A half that is infinite or not a number turns the row into one.
+        let ones = vec![1.0f32; QK_K];
+        for half in [0x7c00u16, 0xfc00, 0x7e00] {
+            for kind in Kind::ALL {
+                let mut bytes = vec![0x11u8; kind.bytes()];
+                for &offset in kind.scale_offsets() {
+                    bytes[offset..offset + 2].copy_from_slice(&half.to_le_bytes());
+                }
+                assert!(!half_to_f32(half).is_finite());
+                let mut out = [0.0f32; 1];
+                kind.matvec(
+                    &bytes,
+                    1,
+                    kind.elements(),
+                    &ones[..kind.elements()],
+                    &mut out,
+                )
+                .unwrap();
+                assert!(!out[0].is_finite(), "{} {half:#06x}", kind.name());
+            }
+        }
     }
 }

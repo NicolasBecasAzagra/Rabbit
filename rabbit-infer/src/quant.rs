@@ -21,6 +21,34 @@
 //! half precision conversion, the block packing, the block unpacking, and the
 //! exact number of bytes a matrix occupies. It has no I/O and no architecture
 //! specific code, so it is tested on the host.
+//!
+//! # The GGUF block types `Q5_0`, `Q4_K` and `Q6_K`
+//!
+//! The layouts are those of ggml, at the commit `d9fe7bf` of
+//! <https://github.com/ggml-org/ggml>:
+//!
+//! * `block_q5_0` is `{ d: f16, qh: [u8; 4], qs: [u8; 16] }`, 22 bytes for 32
+//!   weights; `block_q4_K` is `{ d: f16, dmin: f16, scales: [u8; 12],
+//!   qs: [u8; 128] }`, 144 bytes for 256 weights; `block_q6_K` is
+//!   `{ ql: [u8; 128], qh: [u8; 64], scales: [i8; 16], d: f16 }`, 210 bytes for
+//!   256 weights. `QK_K` is 256 and `K_SCALE_SIZE` is 12.
+//!   <https://raw.githubusercontent.com/ggml-org/ggml/d9fe7bf/src/ggml-common.h>
+//! * The element order and the float operations are those of
+//!   `dequantize_row_q5_0`, `dequantize_row_q4_K` (with `get_scale_min_k4`) and
+//!   `dequantize_row_q6_K`.
+//!   <https://raw.githubusercontent.com/ggml-org/ggml/d9fe7bf/src/ggml-quants.c>
+//! * The bits that the tests compare with come from `gguf-py` (numpy, `float32`)
+//!   at the commit `79c69f4b06805fe53c91596de6c958f86dbbdf41` of llama.cpp, the
+//!   `dequantize_blocks` of `Q5_0`, `Q4_K` and `Q6_K`.
+//!   <https://raw.githubusercontent.com/ggml-org/llama.cpp/79c69f4b06805fe53c91596de6c958f86dbbdf41/gguf-py/gguf/quants.py>
+//!
+//! The C source and `gguf-py` read the same `float32` operations in the same
+//! order, so they define the same bits: `Q5_0` is `(q - 16) as f32 * d`; `Q4_K`
+//! is `(d * sc) * q - (dmin * m)` with `d * sc` and `dmin * m` rounded to `f32`
+//! first; `Q6_K` is `(d * scale) * q` with `d * scale` rounded first. A C
+//! compiler that contracts the `a * b - c` of `Q4_K` into a fused multiply add
+//! could differ from numpy in the last bit; this module never fuses, like numpy,
+//! and the vectors of `bench/gguf` come from numpy.
 
 use crate::error::{Error, Result};
 
@@ -346,13 +374,539 @@ pub fn dequantize_row_q8(blocks: &[u8], out: &mut [f32]) -> Result<()> {
     Ok(())
 }
 
+/// Weights in one `Q4_K` or `Q6_K` super block (`QK_K` of ggml).
+pub const QK_K: usize = 256;
+
+/// Bytes of the packed scales and minimums of a `Q4_K` block (`K_SCALE_SIZE`).
+const K_SCALE_SIZE: usize = 12;
+
+/// Bytes of one `Q5_0` block: the binary16 `d`, four bytes of fifth bits and
+/// sixteen bytes of nibbles.
+pub const Q5_0_BLOCK_BYTES: usize = 22;
+
+/// Bytes of one `Q4_K` block: `d`, `dmin`, the packed scales and 128 bytes of
+/// nibbles.
+pub const Q4_K_BLOCK_BYTES: usize = 144;
+
+/// Bytes of one `Q6_K` block: 128 bytes that hold the low four bits of the 256
+/// six bit weights, two per byte, 64 bytes that hold the high two bits, four per
+/// byte, 16 signed scales and the binary16 `d`.
+pub const Q6_K_BLOCK_BYTES: usize = 210;
+
+/// Bytes one row of `columns` weights occupies, for a block of `elements`
+/// weights in `block_bytes` bytes.
+fn blocked_row_bytes(
+    name: &str,
+    columns: usize,
+    elements: usize,
+    block_bytes: usize,
+) -> Result<usize> {
+    if columns == 0 || !columns.is_multiple_of(elements) {
+        return Err(Error::new(format!(
+            "quant: {columns} columns is not a multiple of the {elements} weight block of {name}"
+        )));
+    }
+    Ok(columns / elements * block_bytes)
+}
+
+/// Bytes a `rows` by `columns` matrix occupies, for a row of `row` bytes.
+fn blocked_matrix_bytes(rows: usize, row: usize) -> Result<usize> {
+    rows.checked_mul(row)
+        .ok_or_else(|| Error::new("quant: matrix byte length overflow"))
+}
+
+/// Bytes one row of `columns` weights occupies in `Q5_0`.
+pub fn q5_0_row_bytes(columns: usize) -> Result<usize> {
+    blocked_row_bytes("Q5_0", columns, BLOCK, Q5_0_BLOCK_BYTES)
+}
+
+/// Bytes a `rows` by `columns` matrix occupies in `Q5_0`.
+pub fn q5_0_matrix_bytes(rows: usize, columns: usize) -> Result<usize> {
+    blocked_matrix_bytes(rows, q5_0_row_bytes(columns)?)
+}
+
+/// Bytes one row of `columns` weights occupies in `Q4_K`.
+pub fn q4_k_row_bytes(columns: usize) -> Result<usize> {
+    blocked_row_bytes("Q4_K", columns, QK_K, Q4_K_BLOCK_BYTES)
+}
+
+/// Bytes a `rows` by `columns` matrix occupies in `Q4_K`.
+pub fn q4_k_matrix_bytes(rows: usize, columns: usize) -> Result<usize> {
+    blocked_matrix_bytes(rows, q4_k_row_bytes(columns)?)
+}
+
+/// Bytes one row of `columns` weights occupies in `Q6_K`.
+pub fn q6_k_row_bytes(columns: usize) -> Result<usize> {
+    blocked_row_bytes("Q6_K", columns, QK_K, Q6_K_BLOCK_BYTES)
+}
+
+/// Bytes a `rows` by `columns` matrix occupies in `Q6_K`.
+pub fn q6_k_matrix_bytes(rows: usize, columns: usize) -> Result<usize> {
+    blocked_matrix_bytes(rows, q6_k_row_bytes(columns)?)
+}
+
+/// The binary16 at byte `offset` of a block, as `f32`.
+#[inline]
+fn half_at(block: &[u8], offset: usize) -> f32 {
+    half_to_f32(u16::from_le_bytes([block[offset], block[offset + 1]]))
+}
+
+/// The scale `d` of a `Q5_0` block, as `f32`, without a finiteness check.
+#[inline]
+pub(crate) fn q5_0_scale(block: &[u8]) -> f32 {
+    half_at(block, 0)
+}
+
+/// The thirty-two integer weights `q - 16` of a `Q5_0` block, in `-16..=15`.
+///
+/// Weight `j < 16` is the low nibble of `qs[j]` and weight `j + 16` is its high
+/// nibble; the fifth bit of weight `k` is bit `k` of `qh`, read little endian.
+/// `block` must hold the 22 bytes of the block.
+pub(crate) fn q5_0_weights(block: &[u8]) -> [i8; BLOCK] {
+    let qh = u32::from_le_bytes([block[2], block[3], block[4], block[5]]);
+    let qs = &block[6..Q5_0_BLOCK_BYTES];
+    let mut weights = [0i8; BLOCK];
+    for j in 0..BLOCK / 2 {
+        let low = (qs[j] & 0x0f) | ((((qh >> j) & 1) as u8) << 4);
+        let high = (qs[j] >> 4) | ((((qh >> (j + BLOCK / 2)) & 1) as u8) << 4);
+        weights[j] = low as i8 - 16;
+        weights[j + BLOCK / 2] = high as i8 - 16;
+    }
+    weights
+}
+
+/// Decode one `Q5_0` block into `BLOCK` values: `(q - 16) * d`, the integer
+/// converted to `f32` before the product, as `dequantize_row_q5_0` does.
+pub fn dequantize_block_q5_0(block: &[u8], out: &mut [f32]) -> Result<()> {
+    if block.len() != Q5_0_BLOCK_BYTES || out.len() != BLOCK {
+        return Err(Error::new(format!(
+            "quant: a Q5_0 block is {Q5_0_BLOCK_BYTES} bytes into {BLOCK} values"
+        )));
+    }
+    let scale = q5_0_scale(block);
+    if !scale.is_finite() {
+        return Err(Error::new("quant: a block scale is not finite"));
+    }
+    for (slot, weight) in out.iter_mut().zip(q5_0_weights(block)) {
+        *slot = weight as f32 * scale;
+    }
+    Ok(())
+}
+
+/// Decode a whole `Q5_0` row of blocks into `out`.
+pub fn dequantize_row_q5_0(blocks: &[u8], out: &mut [f32]) -> Result<()> {
+    let columns = out.len();
+    let expected = q5_0_row_bytes(columns)?;
+    if blocks.len() != expected {
+        return Err(Error::new(format!(
+            "quant: a Q5_0 row of {columns} weights is {expected} bytes, not {}",
+            blocks.len()
+        )));
+    }
+    for (index, chunk) in out.as_chunks_mut::<BLOCK>().0.iter_mut().enumerate() {
+        let start = index * Q5_0_BLOCK_BYTES;
+        dequantize_block_q5_0(&blocks[start..start + Q5_0_BLOCK_BYTES], chunk)?;
+    }
+    Ok(())
+}
+
+/// The scale and the minimum `j` of the twelve packed bytes of a `Q4_K` block,
+/// 6 bits each (`get_scale_min_k4` of ggml).
+#[inline]
+fn scale_min_k4(j: usize, packed: &[u8]) -> (u8, u8) {
+    if j < 4 {
+        (packed[j] & 63, packed[j + 4] & 63)
+    } else {
+        (
+            (packed[j + 4] & 0x0f) | ((packed[j - 4] >> 6) << 4),
+            (packed[j + 4] >> 4) | ((packed[j] >> 6) << 4),
+        )
+    }
+}
+
+/// The two binary16 scales of a `Q4_K` block, `d` and `dmin`, as `f32`.
+#[inline]
+pub(crate) fn q4_k_scales(block: &[u8]) -> (f32, f32) {
+    (half_at(block, 0), half_at(block, 2))
+}
+
+/// Decode a `Q4_K` block into 256 values without a finiteness check.
+///
+/// The super block is four groups of 64 weights. For the group `g`, the
+/// scales `(sc, m)` of the sub blocks `2g` and `2g + 1` give
+/// `d1 = d * sc`, `m1 = dmin * m` (and `d2`, `m2`), each rounded to `f32`; the
+/// first 32 values of the group are `d1 * (qs[32g + l] & 15) - m1` and the next
+/// 32 are `d2 * (qs[32g + l] >> 4) - m2`, with a separate multiply and
+/// subtract. `block` must hold the 144 bytes of the block.
+pub(crate) fn decode_q4_k(block: &[u8], out: &mut [f32; QK_K]) {
+    let (d, dmin) = q4_k_scales(block);
+    let packed = &block[4..4 + K_SCALE_SIZE];
+    let qs = &block[4 + K_SCALE_SIZE..Q4_K_BLOCK_BYTES];
+    for group in 0..QK_K / 64 {
+        let (sc1, m1) = scale_min_k4(2 * group, packed);
+        let (sc2, m2) = scale_min_k4(2 * group + 1, packed);
+        let d1 = d * sc1 as f32;
+        let min1 = dmin * m1 as f32;
+        let d2 = d * sc2 as f32;
+        let min2 = dmin * m2 as f32;
+        for l in 0..32 {
+            let byte = qs[32 * group + l];
+            out[64 * group + l] = d1 * (byte & 0x0f) as f32 - min1;
+            out[64 * group + 32 + l] = d2 * (byte >> 4) as f32 - min2;
+        }
+    }
+}
+
+/// Decode one `Q4_K` block into `QK_K` values.
+pub fn dequantize_block_q4_k(block: &[u8], out: &mut [f32]) -> Result<()> {
+    let Ok(out) = <&mut [f32; QK_K]>::try_from(out) else {
+        return Err(Error::new(format!(
+            "quant: a Q4_K block is {Q4_K_BLOCK_BYTES} bytes into {QK_K} values"
+        )));
+    };
+    if block.len() != Q4_K_BLOCK_BYTES {
+        return Err(Error::new(format!(
+            "quant: a Q4_K block is {Q4_K_BLOCK_BYTES} bytes into {QK_K} values"
+        )));
+    }
+    let (d, dmin) = q4_k_scales(block);
+    if !d.is_finite() || !dmin.is_finite() {
+        return Err(Error::new("quant: a block scale is not finite"));
+    }
+    decode_q4_k(block, out);
+    Ok(())
+}
+
+/// Decode a whole `Q4_K` row of super blocks into `out`.
+pub fn dequantize_row_q4_k(blocks: &[u8], out: &mut [f32]) -> Result<()> {
+    let columns = out.len();
+    let expected = q4_k_row_bytes(columns)?;
+    if blocks.len() != expected {
+        return Err(Error::new(format!(
+            "quant: a Q4_K row of {columns} weights is {expected} bytes, not {}",
+            blocks.len()
+        )));
+    }
+    for (index, chunk) in out.as_chunks_mut::<QK_K>().0.iter_mut().enumerate() {
+        let start = index * Q4_K_BLOCK_BYTES;
+        dequantize_block_q4_k(&blocks[start..start + Q4_K_BLOCK_BYTES], chunk)?;
+    }
+    Ok(())
+}
+
+/// The binary16 `d` of a `Q6_K` block, as `f32`, without a finiteness check.
+#[inline]
+pub(crate) fn q6_k_scale(block: &[u8]) -> f32 {
+    half_at(block, Q6_K_BLOCK_BYTES - 2)
+}
+
+/// Decode a `Q6_K` block into 256 values without a finiteness check.
+///
+/// The super block is two halves of 128 weights, each with 64 bytes of `ql`,
+/// 32 bytes of `qh` and 8 of the signed scales. For the position `l` in `0..32`
+/// of a half, the four weights `l`, `l + 32`, `l + 64` and `l + 96` are
+/// `ql[l] & 15`, `ql[l + 32] & 15`, `ql[l] >> 4` and `ql[l + 32] >> 4`, each
+/// with two more bits of `qh[l]` (bits 0-1, 2-3, 4-5 and 6-7) above them, minus
+/// 32, and the scale of weight `l + 32 * i` is the signed byte
+/// `scales[2 * i + l / 16]` of the half. Each value is `(d * scale) * q` with
+/// `d * scale` rounded to `f32` first and `q` converted to `f32`. `block` must
+/// hold the 210 bytes of the block.
+pub(crate) fn decode_q6_k(block: &[u8], out: &mut [f32; QK_K]) {
+    let d = q6_k_scale(block);
+    let ql = &block[..QK_K / 2];
+    let qh = &block[QK_K / 2..QK_K / 2 + QK_K / 4];
+    let scales = &block[QK_K / 2 + QK_K / 4..QK_K / 2 + QK_K / 4 + QK_K / 16];
+    for half in 0..QK_K / 128 {
+        let ql = &ql[64 * half..];
+        let qh = &qh[32 * half..];
+        let scales = &scales[8 * half..];
+        for l in 0..32 {
+            let is = l / 16;
+            let q1 = ((ql[l] & 0x0f) | ((qh[l] & 3) << 4)) as i8 - 32;
+            let q2 = ((ql[l + 32] & 0x0f) | (((qh[l] >> 2) & 3) << 4)) as i8 - 32;
+            let q3 = ((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) as i8 - 32;
+            let q4 = ((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) as i8 - 32;
+            let base = 128 * half + l;
+            out[base] = d * (scales[is] as i8) as f32 * q1 as f32;
+            out[base + 32] = d * (scales[is + 2] as i8) as f32 * q2 as f32;
+            out[base + 64] = d * (scales[is + 4] as i8) as f32 * q3 as f32;
+            out[base + 96] = d * (scales[is + 6] as i8) as f32 * q4 as f32;
+        }
+    }
+}
+
+/// Decode one `Q6_K` block into `QK_K` values.
+pub fn dequantize_block_q6_k(block: &[u8], out: &mut [f32]) -> Result<()> {
+    let Ok(out) = <&mut [f32; QK_K]>::try_from(out) else {
+        return Err(Error::new(format!(
+            "quant: a Q6_K block is {Q6_K_BLOCK_BYTES} bytes into {QK_K} values"
+        )));
+    };
+    if block.len() != Q6_K_BLOCK_BYTES {
+        return Err(Error::new(format!(
+            "quant: a Q6_K block is {Q6_K_BLOCK_BYTES} bytes into {QK_K} values"
+        )));
+    }
+    if !q6_k_scale(block).is_finite() {
+        return Err(Error::new("quant: a block scale is not finite"));
+    }
+    decode_q6_k(block, out);
+    Ok(())
+}
+
+/// Decode a whole `Q6_K` row of super blocks into `out`.
+pub fn dequantize_row_q6_k(blocks: &[u8], out: &mut [f32]) -> Result<()> {
+    let columns = out.len();
+    let expected = q6_k_row_bytes(columns)?;
+    if blocks.len() != expected {
+        return Err(Error::new(format!(
+            "quant: a Q6_K row of {columns} weights is {expected} bytes, not {}",
+            blocks.len()
+        )));
+    }
+    for (index, chunk) in out.as_chunks_mut::<QK_K>().0.iter_mut().enumerate() {
+        let start = index * Q6_K_BLOCK_BYTES;
+        dequantize_block_q6_k(&blocks[start..start + Q6_K_BLOCK_BYTES], chunk)?;
+    }
+    Ok(())
+}
+
+/// What `llama.cpp` produced for the same weights, read from `bench/gguf`, and
+/// the closed form of each element of the three GGUF block types, written from
+/// the layout of `gguf-py` instead of the loops of ggml so that the decoders
+/// above are not tested against a copy of themselves.
+#[cfg(test)]
+pub(crate) mod oracle {
+    use super::{half_to_f32, BLOCK, QK_K};
+    use crate::json::Scanner;
+
+    /// One whole block: its bytes and the `float32` values `gguf-py` gave.
+    pub struct Block {
+        pub bytes: Vec<u8>,
+        pub values: Vec<f32>,
+    }
+
+    /// The blocks of one type of one `vectors.json`.
+    pub struct Vectors {
+        pub block_elements: usize,
+        pub block_bytes: usize,
+        pub blocks: Vec<Block>,
+    }
+
+    /// The two files, by the model they come from.
+    pub const SOURCES: [(&str, &str); 2] = [
+        (
+            "smollm2",
+            include_str!("../../bench/gguf/smollm2/ref/vectors.json"),
+        ),
+        (
+            "synthetic",
+            include_str!("../../bench/gguf/synthetic/ref/vectors.json"),
+        ),
+    ];
+
+    /// Walk a JSON object, calling `field` with the key and the scanner placed
+    /// on its value, which `field` must consume.
+    fn object(scanner: &mut Scanner, mut field: impl FnMut(&mut Scanner, &str)) {
+        scanner.skip_whitespace();
+        scanner.expect(b'{').unwrap();
+        loop {
+            scanner.skip_whitespace();
+            let key = scanner.parse_string().unwrap();
+            scanner.skip_whitespace();
+            scanner.expect(b':').unwrap();
+            field(scanner, &key);
+            scanner.skip_whitespace();
+            match scanner.bump().unwrap() {
+                b',' => continue,
+                b'}' => return,
+                other => panic!("json: unexpected {}", other as char),
+            }
+        }
+    }
+
+    /// Walk a JSON array, calling `item` with the scanner placed on each value.
+    fn array(scanner: &mut Scanner, mut item: impl FnMut(&mut Scanner)) {
+        scanner.skip_whitespace();
+        scanner.expect(b'[').unwrap();
+        loop {
+            item(scanner);
+            scanner.skip_whitespace();
+            match scanner.bump().unwrap() {
+                b',' => continue,
+                b']' => return,
+                other => panic!("json: unexpected {}", other as char),
+            }
+        }
+    }
+
+    fn hex_bytes(text: &str) -> Vec<u8> {
+        assert!(text.len() % 2 == 0);
+        (0..text.len() / 2)
+            .map(|index| u8::from_str_radix(&text[2 * index..2 * index + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// The blocks of `kind` (`"Q8_0"`, `"Q5_0"`, `"Q4_K"` or `"Q6_K"`) of one file.
+    pub fn load(text: &str, kind: &str) -> Vectors {
+        let mut found = None;
+        let mut scanner = Scanner::new(text.as_bytes());
+        object(&mut scanner, |scanner, key| {
+            if key != kind {
+                scanner.skip_value().unwrap();
+                return;
+            }
+            let mut vectors = Vectors {
+                block_elements: 0,
+                block_bytes: 0,
+                blocks: Vec::new(),
+            };
+            object(scanner, |scanner, key| match key {
+                "block_elements" => vectors.block_elements = scanner.parse_usize().unwrap(),
+                "block_bytes" => vectors.block_bytes = scanner.parse_usize().unwrap(),
+                "blocks" => array(scanner, |scanner| {
+                    let mut block = Block {
+                        bytes: Vec::new(),
+                        values: Vec::new(),
+                    };
+                    object(scanner, |scanner, key| match key {
+                        "bytes_hex" => {
+                            scanner.skip_whitespace();
+                            block.bytes = hex_bytes(&scanner.parse_string().unwrap());
+                        }
+                        "f32_bits" => array(scanner, |scanner| {
+                            scanner.skip_whitespace();
+                            let digits = scanner.parse_string().unwrap();
+                            assert_eq!(digits.len(), 8);
+                            block
+                                .values
+                                .push(f32::from_bits(u32::from_str_radix(&digits, 16).unwrap()));
+                        }),
+                        _ => scanner.skip_value().unwrap(),
+                    });
+                    vectors.blocks.push(block);
+                }),
+                _ => scanner.skip_value().unwrap(),
+            });
+            found = Some(vectors);
+        });
+        found.unwrap_or_else(|| panic!("no {kind} in the vectors"))
+    }
+
+    /// One entry of a `tensors-*.json`.
+    pub struct Tensor {
+        pub name: String,
+        pub kind: String,
+        pub bytes: usize,
+        pub sha256_raw: String,
+        pub sha256_f32: String,
+    }
+
+    /// The tensors of a `tensors-*.json`.
+    pub fn tensors(text: &str) -> Vec<Tensor> {
+        let mut tensors = Vec::new();
+        let mut scanner = Scanner::new(text.as_bytes());
+        array(&mut scanner, |scanner| {
+            let mut tensor = Tensor {
+                name: String::new(),
+                kind: String::new(),
+                bytes: 0,
+                sha256_raw: String::new(),
+                sha256_f32: String::new(),
+            };
+            object(scanner, |scanner, key| {
+                scanner.skip_whitespace();
+                match key {
+                    "name" => tensor.name = scanner.parse_string().unwrap(),
+                    "type" => tensor.kind = scanner.parse_string().unwrap(),
+                    "bytes" => tensor.bytes = scanner.parse_usize().unwrap(),
+                    "sha256_raw" => tensor.sha256_raw = scanner.parse_string().unwrap(),
+                    "sha256_f32" => tensor.sha256_f32 = scanner.parse_string().unwrap(),
+                    _ => scanner.skip_value().unwrap(),
+                }
+            });
+            tensors.push(tensor);
+        });
+        tensors
+    }
+
+    /// The scale `d` of a `Q5_0` block.
+    pub fn q5_0_scale(block: &[u8]) -> f32 {
+        half_to_f32(u16::from_le_bytes([block[0], block[1]]))
+    }
+
+    /// The integer weight `i` of a `Q5_0` block, in `-16..=15`.
+    pub fn q5_0_weight(block: &[u8], i: usize) -> i32 {
+        let qh = u32::from_le_bytes([block[2], block[3], block[4], block[5]]);
+        let byte = block[6 + i % 16];
+        let nibble = if i < 16 { byte & 0x0f } else { byte >> 4 };
+        nibble as i32 + 16 * ((qh >> i) & 1) as i32 - 16
+    }
+
+    /// Element `i` of a `Q5_0` block: `(nibble + 16 * fifth_bit - 16) * d`.
+    pub fn q5_0_element(block: &[u8], i: usize) -> f32 {
+        assert!(i < BLOCK);
+        q5_0_weight(block, i) as f32 * q5_0_scale(block)
+    }
+
+    /// Element `i` of a `Q4_K` block, with the scales unpacked as `gguf-py`
+    /// does: three rows of four bytes, the scales, the minimums and the
+    /// shared high bits.
+    pub fn q4_k_element(block: &[u8], i: usize) -> f32 {
+        assert!(i < QK_K);
+        let d = half_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        let dmin = half_to_f32(u16::from_le_bytes([block[2], block[3]]));
+        let (scales, qs) = (&block[4..16], &block[16..]);
+        let (group, within) = (i / 64, i % 64);
+        let sub = 2 * group + within / 32;
+        let (low_row, min_row, shared) = (&scales[0..4], &scales[4..8], &scales[8..12]);
+        let (scale, min) = if sub < 4 {
+            (low_row[sub] & 0x3f, min_row[sub] & 0x3f)
+        } else {
+            let s = sub - 4;
+            (
+                (shared[s] & 0x0f) | ((low_row[s] >> 2) & 0x30),
+                (shared[s] >> 4) | ((min_row[s] >> 2) & 0x30),
+            )
+        };
+        let byte = qs[32 * group + within % 32];
+        let nibble = if within < 32 { byte & 0x0f } else { byte >> 4 };
+        let scaled = d * scale as f32;
+        let offset = dmin * min as f32;
+        scaled * nibble as f32 - offset
+    }
+
+    /// Element `i` of a `Q6_K` block.
+    pub fn q6_k_element(block: &[u8], i: usize) -> f32 {
+        assert!(i < QK_K);
+        let (ql, rest) = block.split_at(128);
+        let (qh, rest) = rest.split_at(64);
+        let (scales, d) = rest.split_at(16);
+        let d = half_to_f32(u16::from_le_bytes([d[0], d[1]]));
+        let (half, within) = (i / 128, i % 128);
+        let (quarter, l) = (within / 32, within % 32);
+        let byte = ql[64 * half + 32 * (quarter % 2) + l];
+        let low = if quarter < 2 { byte & 0x0f } else { byte >> 4 };
+        let high = (qh[32 * half + l] >> (2 * quarter)) & 3;
+        let q = (low | (high << 4)) as i32 - 32;
+        let scale = scales[8 * half + 2 * quarter + l / 16] as i8;
+        let scaled = d * scale as f32;
+        scaled * q as f32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        blocks, dequantize_block, dequantize_block_q8, dequantize_row, dequantize_row_q8,
-        f32_to_half, half_to_f32, matrix_bytes, q8_matrix_bytes, q8_row_bytes, quantize_block,
-        quantize_block_q8, row_bytes, scale_is_finite, BLOCK, BLOCK_BYTES, Q8_BLOCK_BYTES,
+        blocks, dequantize_block, dequantize_block_q4_k, dequantize_block_q5_0,
+        dequantize_block_q6_k, dequantize_block_q8, dequantize_row, dequantize_row_q4_k,
+        dequantize_row_q5_0, dequantize_row_q6_k, dequantize_row_q8, f32_to_half, half_to_f32,
+        matrix_bytes, oracle, q4_k_matrix_bytes, q4_k_row_bytes, q5_0_matrix_bytes, q5_0_row_bytes,
+        q6_k_matrix_bytes, q6_k_row_bytes, q8_matrix_bytes, q8_row_bytes, quantize_block,
+        quantize_block_q8, row_bytes, scale_is_finite, BLOCK, BLOCK_BYTES, Q4_K_BLOCK_BYTES,
+        Q5_0_BLOCK_BYTES, Q6_K_BLOCK_BYTES, Q8_BLOCK_BYTES, QK_K,
     };
+    use crate::gguf::TensorKind;
 
     #[test]
     fn half_conversion_covers_the_known_values() {
@@ -535,5 +1089,346 @@ mod tests {
         block[..2].copy_from_slice(&0x7c00u16.to_le_bytes());
         assert!(!scale_is_finite(0x7c00));
         assert!(dequantize_block(&block, &mut [0.0f32; BLOCK]).is_err());
+    }
+
+    type Dequantizer = fn(&[u8], &mut [f32]) -> crate::error::Result<()>;
+
+    /// The four dequantisers, by the name of the type in `vectors.json`.
+    fn dequantizers() -> [(&'static str, Dequantizer); 4] {
+        [
+            ("Q8_0", dequantize_block_q8),
+            ("Q5_0", dequantize_block_q5_0),
+            ("Q4_K", dequantize_block_q4_k),
+            ("Q6_K", dequantize_block_q6_k),
+        ]
+    }
+
+    /// A deterministic stream of bytes.
+    fn bytes(seed: u64, count: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..count)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (state >> 33) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_gguf_block_sizes_are_those_of_ggml() {
+        assert_eq!(Q5_0_BLOCK_BYTES, 2 + 4 + BLOCK / 2);
+        assert_eq!(Q4_K_BLOCK_BYTES, 2 + 2 + 12 + QK_K / 2);
+        assert_eq!(Q6_K_BLOCK_BYTES, QK_K / 2 + QK_K / 4 + QK_K / 16 + 2);
+        assert_eq!(QK_K, 256);
+        for (kind, elements, size) in [
+            (TensorKind::Q5_0, BLOCK, Q5_0_BLOCK_BYTES),
+            (TensorKind::Q4K, QK_K, Q4_K_BLOCK_BYTES),
+            (TensorKind::Q6K, QK_K, Q6_K_BLOCK_BYTES),
+        ] {
+            assert_eq!(kind.block_elements(), elements as u64);
+            assert_eq!(kind.block_bytes(), size as u64);
+        }
+        assert_eq!(q5_0_row_bytes(96).unwrap(), 3 * 22);
+        assert_eq!(q4_k_row_bytes(512).unwrap(), 2 * 144);
+        assert_eq!(q6_k_row_bytes(768).unwrap(), 3 * 210);
+        assert_eq!(q5_0_matrix_bytes(5, 64).unwrap(), 5 * 2 * 22);
+        assert_eq!(q4_k_matrix_bytes(5, 256).unwrap(), 5 * 144);
+        assert_eq!(q6_k_matrix_bytes(5, 256).unwrap(), 5 * 210);
+    }
+
+    #[test]
+    fn every_block_of_the_vectors_has_the_bits_of_gguf_py() {
+        for (model, text) in oracle::SOURCES {
+            for (kind, decode) in dequantizers() {
+                let vectors = oracle::load(text, kind);
+                assert_eq!(vectors.blocks.len(), 6, "{model} {kind}");
+                for (index, block) in vectors.blocks.iter().enumerate() {
+                    assert_eq!(block.bytes.len(), vectors.block_bytes);
+                    assert_eq!(block.values.len(), vectors.block_elements);
+                    let mut out = vec![0.0f32; vectors.block_elements];
+                    decode(&block.bytes, &mut out).unwrap();
+                    for (element, (actual, expected)) in out.iter().zip(&block.values).enumerate() {
+                        assert_eq!(
+                            actual.to_bits(),
+                            expected.to_bits(),
+                            "{model} {kind} block {index} element {element}: {actual} against {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_vectors_have_the_geometry_of_the_constants() {
+        for (_, text) in oracle::SOURCES {
+            for (kind, elements, size) in [
+                ("Q8_0", BLOCK, Q8_BLOCK_BYTES),
+                ("Q5_0", BLOCK, Q5_0_BLOCK_BYTES),
+                ("Q4_K", QK_K, Q4_K_BLOCK_BYTES),
+                ("Q6_K", QK_K, Q6_K_BLOCK_BYTES),
+            ] {
+                let vectors = oracle::load(text, kind);
+                assert_eq!(vectors.block_elements, elements, "{kind}");
+                assert_eq!(vectors.block_bytes, size, "{kind}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_closed_form_of_every_element_has_the_bits_of_gguf_py() {
+        // The element by element decoders of the oracle module are what the
+        // matrix tests of the kernels use on random blocks, so they are pinned
+        // to the vectors first.
+        for (model, text) in oracle::SOURCES {
+            for (kind, element) in [
+                ("Q5_0", oracle::q5_0_element as fn(&[u8], usize) -> f32),
+                ("Q4_K", oracle::q4_k_element),
+                ("Q6_K", oracle::q6_k_element),
+            ] {
+                for block in &oracle::load(text, kind).blocks {
+                    for (index, expected) in block.values.iter().enumerate() {
+                        assert_eq!(
+                            element(&block.bytes, index).to_bits(),
+                            expected.to_bits(),
+                            "{model} {kind} element {index}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_closed_form_agrees_with_the_decoders_on_random_blocks() {
+        for seed in 0..64u64 {
+            let mut block = bytes(0x5eed_0000 + seed, Q5_0_BLOCK_BYTES);
+            block[..2].copy_from_slice(&f32_to_half(1.5 - seed as f32 * 0.07).to_le_bytes());
+            let mut out = [0.0f32; BLOCK];
+            dequantize_block_q5_0(&block, &mut out).unwrap();
+            for (index, value) in out.iter().enumerate() {
+                assert_eq!(
+                    value.to_bits(),
+                    oracle::q5_0_element(&block, index).to_bits()
+                );
+            }
+
+            let mut block = bytes(0x6eed_0000 + seed, Q4_K_BLOCK_BYTES);
+            block[..2].copy_from_slice(&f32_to_half(0.02 * (seed as f32 - 20.0)).to_le_bytes());
+            block[2..4].copy_from_slice(&f32_to_half(0.03 * (seed as f32 - 40.0)).to_le_bytes());
+            let mut out = [0.0f32; QK_K];
+            dequantize_block_q4_k(&block, &mut out).unwrap();
+            for (index, value) in out.iter().enumerate() {
+                assert_eq!(
+                    value.to_bits(),
+                    oracle::q4_k_element(&block, index).to_bits()
+                );
+            }
+
+            let mut block = bytes(0x7eed_0000 + seed, Q6_K_BLOCK_BYTES);
+            block[208..].copy_from_slice(&f32_to_half(0.001 * (seed as f32 - 30.0)).to_le_bytes());
+            dequantize_block_q6_k(&block, &mut out).unwrap();
+            for (index, value) in out.iter().enumerate() {
+                assert_eq!(
+                    value.to_bits(),
+                    oracle::q6_k_element(&block, index).to_bits()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_row_of_every_gguf_type_is_its_blocks_in_order() {
+        let mut stream = bytes(0xabcd, 3 * Q6_K_BLOCK_BYTES);
+        for chunk in stream.chunks_mut(Q6_K_BLOCK_BYTES) {
+            chunk[208..].copy_from_slice(&f32_to_half(0.5).to_le_bytes());
+        }
+        let mut row = vec![0.0f32; 3 * QK_K];
+        dequantize_row_q6_k(&stream, &mut row).unwrap();
+        for (block, chunk) in row.chunks(QK_K).enumerate() {
+            let mut one = [0.0f32; QK_K];
+            dequantize_block_q6_k(
+                &stream[block * Q6_K_BLOCK_BYTES..(block + 1) * Q6_K_BLOCK_BYTES],
+                &mut one,
+            )
+            .unwrap();
+            assert_eq!(chunk, one);
+        }
+
+        let mut stream = bytes(0xbcde, 2 * Q4_K_BLOCK_BYTES);
+        for chunk in stream.chunks_mut(Q4_K_BLOCK_BYTES) {
+            chunk[..4].copy_from_slice(&[0x00, 0x3c, 0x00, 0x38]);
+        }
+        let mut row = vec![0.0f32; 2 * QK_K];
+        dequantize_row_q4_k(&stream, &mut row).unwrap();
+        for (block, chunk) in row.chunks(QK_K).enumerate() {
+            let mut one = [0.0f32; QK_K];
+            dequantize_block_q4_k(
+                &stream[block * Q4_K_BLOCK_BYTES..(block + 1) * Q4_K_BLOCK_BYTES],
+                &mut one,
+            )
+            .unwrap();
+            assert_eq!(chunk, one);
+        }
+
+        let mut stream = bytes(0xcdef, 5 * Q5_0_BLOCK_BYTES);
+        for chunk in stream.chunks_mut(Q5_0_BLOCK_BYTES) {
+            chunk[..2].copy_from_slice(&f32_to_half(0.25).to_le_bytes());
+        }
+        let mut row = vec![0.0f32; 5 * BLOCK];
+        dequantize_row_q5_0(&stream, &mut row).unwrap();
+        for (block, chunk) in row.chunks(BLOCK).enumerate() {
+            let mut one = [0.0f32; BLOCK];
+            dequantize_block_q5_0(
+                &stream[block * Q5_0_BLOCK_BYTES..(block + 1) * Q5_0_BLOCK_BYTES],
+                &mut one,
+            )
+            .unwrap();
+            assert_eq!(chunk, one);
+        }
+    }
+
+    #[test]
+    fn every_tensor_of_the_synthetic_file_has_the_hash_of_gguf_py() {
+        // The whole `Q4_K_M` file of the synthetic model is committed, and
+        // `gguf-py` hashed the raw bytes and the dequantised `float32` bytes of
+        // each of its tensors: every block of `Q5_0`, `Q4_K` and `Q6_K` of the
+        // file is checked here, not only the six of the vectors.
+        let file = include_bytes!("../../bench/gguf/synthetic/synth-Q4_K_M.gguf");
+        let listed = oracle::tensors(include_str!(
+            "../../bench/gguf/synthetic/ref/tensors-synth-Q4_K_M.gguf.json"
+        ));
+        let gguf = crate::gguf::Gguf::parse(file).unwrap();
+        let mut checked = [0usize; 3];
+        for tensor in &listed {
+            let info = gguf.tensor(&tensor.name).unwrap();
+            let data = gguf.tensor_data(info).unwrap();
+            assert_eq!(data.len(), tensor.bytes, "{}", tensor.name);
+            let digest = crate::sha256::digest(data);
+            assert_eq!(
+                crate::sha256::hex(&digest),
+                tensor.sha256_raw,
+                "{}",
+                tensor.name
+            );
+            let elements = info.elements().unwrap() as usize;
+            let mut values = vec![0.0f32; elements];
+            let slot = match tensor.kind.as_str() {
+                "Q5_0" => {
+                    dequantize_row_q5_0(data, &mut values).unwrap();
+                    0
+                }
+                "Q4_K" => {
+                    dequantize_row_q4_k(data, &mut values).unwrap();
+                    1
+                }
+                "Q6_K" => {
+                    dequantize_row_q6_k(data, &mut values).unwrap();
+                    2
+                }
+                "Q8_0" => continue,
+                other => panic!("unexpected type {other}"),
+            };
+            checked[slot] += 1;
+            let mut raw = Vec::with_capacity(4 * elements);
+            for value in &values {
+                raw.extend_from_slice(&value.to_le_bytes());
+            }
+            let digest = crate::sha256::digest(&raw);
+            assert_eq!(
+                crate::sha256::hex(&digest),
+                tensor.sha256_f32,
+                "{} ({})",
+                tensor.name,
+                tensor.kind
+            );
+        }
+        // The file has 2 tensors of `Q5_0`, 22 of `Q4_K` and 3 of `Q6_K`.
+        assert_eq!(checked, [2, 22, 3]);
+    }
+
+    #[test]
+    fn a_gguf_block_of_the_wrong_size_is_refused() {
+        for (kind, decode) in dequantizers() {
+            let (elements, size) = match kind {
+                "Q8_0" => (BLOCK, Q8_BLOCK_BYTES),
+                "Q5_0" => (BLOCK, Q5_0_BLOCK_BYTES),
+                "Q4_K" => (QK_K, Q4_K_BLOCK_BYTES),
+                _ => (QK_K, Q6_K_BLOCK_BYTES),
+            };
+            let block = vec![0u8; size];
+            let mut out = vec![0.0f32; elements];
+            assert!(decode(&block, &mut out).is_ok(), "{kind}");
+            assert!(
+                decode(&block[..size - 1], &mut out).is_err(),
+                "{kind} short"
+            );
+            assert!(
+                decode(&vec![0u8; size + 1], &mut out).is_err(),
+                "{kind} long"
+            );
+            assert!(decode(&[], &mut out).is_err(), "{kind} empty");
+            assert!(
+                decode(&block, &mut out[..elements - 1]).is_err(),
+                "{kind} out"
+            );
+            assert!(
+                decode(&block, &mut vec![0.0f32; elements + 1]).is_err(),
+                "{kind} out"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gguf_row_must_be_whole_blocks_of_the_exact_length() {
+        let mut out = [0.0f32; 33];
+        assert!(dequantize_row_q5_0(&[0u8; 2 * Q5_0_BLOCK_BYTES], &mut out).is_err());
+        assert!(dequantize_row_q5_0(&[0u8; 2 * Q5_0_BLOCK_BYTES], &mut out[..64 - 33]).is_err());
+        let mut out = [0.0f32; 64];
+        assert!(dequantize_row_q5_0(&[0u8; 2 * Q5_0_BLOCK_BYTES], &mut out).is_ok());
+        assert!(dequantize_row_q5_0(&[0u8; 2 * Q5_0_BLOCK_BYTES + 1], &mut out).is_err());
+        assert!(dequantize_row_q5_0(&[0u8; Q5_0_BLOCK_BYTES], &mut out).is_err());
+        assert!(dequantize_row_q5_0(&[], &mut []).is_err());
+        let mut out = [0.0f32; 2 * QK_K - 32];
+        assert!(dequantize_row_q4_k(&[0u8; 2 * Q4_K_BLOCK_BYTES], &mut out).is_err());
+        assert!(dequantize_row_q6_k(&[0u8; 2 * Q6_K_BLOCK_BYTES], &mut out).is_err());
+        let mut out = [0.0f32; 2 * QK_K];
+        assert!(dequantize_row_q4_k(&[0u8; 2 * Q4_K_BLOCK_BYTES - 1], &mut out).is_err());
+        assert!(dequantize_row_q6_k(&[0u8; 2 * Q6_K_BLOCK_BYTES + 1], &mut out).is_err());
+        assert!(dequantize_row_q4_k(&[0u8; 2 * Q4_K_BLOCK_BYTES], &mut out).is_ok());
+        assert!(dequantize_row_q6_k(&[0u8; 2 * Q6_K_BLOCK_BYTES], &mut out).is_ok());
+        assert!(q5_0_row_bytes(31).is_err() && q5_0_row_bytes(0).is_err());
+        assert!(q4_k_row_bytes(128).is_err() && q6_k_row_bytes(32).is_err());
+        assert!(q4_k_matrix_bytes(usize::MAX, 256).is_err());
+    }
+
+    #[test]
+    fn a_gguf_scale_that_is_not_finite_is_refused_like_the_eight_bit_one() {
+        let mut out = [0.0f32; QK_K];
+        for half in [0x7c00u16, 0xfc00, 0x7e00, 0x7c01, 0xffff] {
+            assert!(!scale_is_finite(half));
+            let mut block = [0u8; Q5_0_BLOCK_BYTES];
+            block[..2].copy_from_slice(&half.to_le_bytes());
+            assert!(dequantize_block_q5_0(&block, &mut out[..BLOCK]).is_err());
+            let mut block = [0u8; Q4_K_BLOCK_BYTES];
+            block[..2].copy_from_slice(&half.to_le_bytes());
+            assert!(dequantize_block_q4_k(&block, &mut out).is_err(), "d");
+            let mut block = [0u8; Q4_K_BLOCK_BYTES];
+            block[2..4].copy_from_slice(&half.to_le_bytes());
+            assert!(dequantize_block_q4_k(&block, &mut out).is_err(), "dmin");
+            let mut block = [0u8; Q6_K_BLOCK_BYTES];
+            block[208..].copy_from_slice(&half.to_le_bytes());
+            assert!(dequantize_block_q6_k(&block, &mut out).is_err());
+            // The row functions report the same error.
+            let mut row = [0u8; 2 * Q6_K_BLOCK_BYTES];
+            row[Q6_K_BLOCK_BYTES + 208..].copy_from_slice(&half.to_le_bytes());
+            assert!(dequantize_row_q6_k(&row, &mut [0.0f32; 2 * QK_K]).is_err());
+        }
+        // The largest finite binary16 is not refused.
+        let mut block = [0u8; Q4_K_BLOCK_BYTES];
+        block[..4].copy_from_slice(&[0xff, 0x7b, 0xff, 0x7b]);
+        assert!(dequantize_block_q4_k(&block, &mut out).is_ok());
     }
 }
