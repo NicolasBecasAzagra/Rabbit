@@ -17,6 +17,7 @@ from pathlib import Path
 
 import paths
 
+MISMATCH = "INFER ERR runtime: generated tokens differ from the reference"
 DTYPE = {"bf16": "BF16", "q8": "Q8B32", "q4": "Q4B32"}
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "bench" / "kvm" / "paths.sh"
@@ -24,7 +25,7 @@ SCRIPT = ROOT / "bench" / "kvm" / "paths.sh"
 
 def serial(path: str, tok: float, ttft: float = 10.0, weights: str = "BF16",
            limit: str | None = None, golden: str | None = None, ok: bool = True,
-           report_path: bool = True) -> str:
+           report_path: bool = True, tokens: str = "1 2 3", errors: tuple[str, ...] = ()) -> str:
     lines = [
         "Rabbit: x86_64 kernel",
         f"INFER path_limit {limit if limit is not None else path}",
@@ -33,12 +34,13 @@ def serial(path: str, tok: float, ttft: float = 10.0, weights: str = "BF16",
     if report_path:
         lines.append(f"INFER path {path}")
     lines += [
-        "INFER tokens 1 2 3",
+        f"INFER tokens {tokens}",
         f"INFER ttft_ms {ttft}",
         f"INFER tok_per_s {tok}",
     ]
     if golden:
         lines.append(f"INFER golden expected=1 2 3 actual=1 2 3 match={golden}")
+    lines += errors
     if ok:
         lines.append("INFER OK")
     return "\r\n".join(lines) + "\r\n"
@@ -182,18 +184,77 @@ class Derive(unittest.TestCase):
         self.assertEqual((table["not reported"]["runs"], table["not reported"]["n"]), ("1", "0"))
         self.assertEqual([r["valid"] for r in self.d.read("runs.csv")], ["no", "no", "yes"])
 
-    def test_a_failed_golden_check_does_not_count_and_says_why(self) -> None:
-        self.d.add("bf16", "scalar", "rabbit", 1, serial("scalar", 5.0, golden="false"))
-        self.d.add("bf16", "scalar", "rabbit", 2, serial("scalar", 7.0, golden="true"))
+    def test_q4_does_not_match_the_reference_and_still_counts(self) -> None:
+        for path in ("scalar", "avx2"):
+            for rep in (1, 2):
+                self.d.add("q4", path, "rabbit", rep, serial(
+                    path, 10.0 + rep, weights="Q4B32", golden="false",
+                    errors=(MISMATCH,)), status="41")
+        self.d.add("bf16", "scalar", "rabbit", 1, serial("scalar", 5.0, golden="true"))
         self.d.derive()
         runs = self.d.read("runs.csv")
-        self.assertEqual([r["valid"] for r in runs], ["no", "yes"])
-        self.assertIn("golden check failed", runs[0]["problem"])
-        (row,) = self.d.read("table.csv")
-        self.assertEqual((row["runs"], row["n"], row["median_tok_s"]), ("2", "1", "7.000"))
+        self.assertEqual([r["valid"] for r in runs], ["yes"] * 5)
+        self.assertEqual([r["reference_match"] for r in runs], ["false"] * 4 + ["true"])
+        cells = {(r["format"], r["path"]): r for r in self.d.read("table.csv")}
+        self.assertEqual(cells[("q4", "scalar")]["n"], "2")
+        self.assertEqual(cells[("q4", "scalar")]["reference_match"], "false")
+        self.assertEqual(cells[("bf16", "scalar")]["reference_match"], "true")
+        self.assertEqual(self.d.result.empty_cells, [])
+        text = (self.d.root / "tables.md").read_text()
+        self.assertNotIn("Runs that do not count", text)
+        self.assertIn("expected for q4", text)
+
+    def test_a_run_with_no_golden_line_has_an_unknown_reference_match(self) -> None:
+        self.d.add("bf16", "scalar", "rabbit", 1, serial("scalar", 5.0))
+        self.d.derive()
+        self.assertEqual(self.d.read("runs.csv")[0]["reference_match"], "unknown")
+
+    def test_tokens_that_differ_from_the_scalar_path_do_not_count(self) -> None:
+        self.d.add("q8", "scalar", "rabbit", 1, serial("scalar", 5.0, weights="Q8B32"))
+        self.d.add("q8", "avx2", "rabbit", 1, serial("avx2", 9.0, weights="Q8B32", tokens="1 2 4"))
+        self.d.derive()
+        runs = self.d.read("runs.csv")
+        self.assertEqual([r["valid"] for r in runs], ["yes", "no"])
+        self.assertIn("tokens differ from the scalar path", runs[1]["problem"])
         text = (self.d.root / "tables.md").read_text()
         self.assertIn("Runs that do not count", text)
-        self.assertIn("golden check failed", text)
+        self.assertIn("tokens differ from the scalar path", text)
+        self.assertEqual(len(self.d.result.empty_cells), 1)
+
+    def test_scalar_runs_that_disagree_count_none_of_the_format(self) -> None:
+        self.d.add("q8", "scalar", "rabbit", 1, serial("scalar", 5.0, weights="Q8B32"))
+        self.d.add("q8", "scalar", "rabbit", 2, serial("scalar", 6.0, weights="Q8B32", tokens="9"))
+        self.d.add("q8", "avx2", "rabbit", 1, serial("avx2", 9.0, weights="Q8B32"))
+        self.d.add("bf16", "scalar", "rabbit", 1, serial("scalar", 5.0))
+        self.d.derive()
+        runs = self.d.read("runs.csv")
+        self.assertEqual([r["valid"] for r in runs], ["no", "no", "no", "yes"])
+        self.assertTrue(all("scalar runs disagree" in r["problem"] for r in runs[:3]))
+        notes = [r["note"] for r in self.d.read("table.csv") if r["format"] == "q8"]
+        self.assertTrue(all("scalar runs disagree" in note for note in notes))
+        self.assertEqual(self.d.read("ratios.csv"), [])
+
+    def test_no_scalar_reference_counts_the_others_and_says_so(self) -> None:
+        self.d.add("q8", "avx2", "rabbit", 1, serial("avx2", 9.0, weights="Q8B32"))
+        self.d.add("q8", "sse2", "rabbit", 1, serial("sse2", 7.0, weights="Q8B32", tokens="9"))
+        self.d.derive()
+        runs = self.d.read("runs.csv")
+        self.assertEqual([r["valid"] for r in runs], ["yes", "yes"])
+        notes = [r["note"] for r in self.d.read("table.csv")]
+        self.assertTrue(all("no scalar reference" in note for note in notes))
+
+    def test_another_error_line_still_excludes_the_run(self) -> None:
+        self.d.add("q4", "scalar", "rabbit", 1, serial("scalar", 5.0, weights="Q4B32"))
+        self.d.add("q4", "scalar", "rabbit", 2, serial(
+            "scalar", 6.0, weights="Q4B32", golden="false",
+            errors=(MISMATCH, "INFER ERR runtime: out of memory")), status="41")
+        self.d.add("q4", "scalar", "rabbit", 3, serial(
+            "scalar", 7.0, weights="Q4B32", errors=("INFER error bad thing",)), status="41")
+        self.d.derive()
+        runs = self.d.read("runs.csv")
+        self.assertEqual([r["valid"] for r in runs], ["yes", "no", "no"])
+        self.assertIn("out of memory", runs[1]["problem"])
+        self.assertIn("INFER error bad thing", runs[2]["problem"])
 
     def test_a_zero_median_ttft_gives_no_ratio_and_no_exception(self) -> None:
         self.d.add("q4", "scalar", "rabbit", 1, serial("scalar", 10.0, ttft=50.0, weights="Q4B32"))
@@ -314,7 +375,7 @@ class Exit(unittest.TestCase):
         d = Directory()
         self.addCleanup(d.close)
         d.add("bf16", "scalar", "rabbit", 1, serial("scalar", 10.0))
-        d.add("bf16", "sse2", "rabbit", 1, serial("sse2", 10.0, golden="false"))
+        d.add("bf16", "sse2", "rabbit", 1, serial("sse2", 10.0, tokens="9"))
         d.derive()
         self.assertEqual((d.result.counted, d.result.total), (1, 2))
         self.assertEqual(len(d.result.empty_cells), 1)

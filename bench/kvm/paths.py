@@ -22,8 +22,26 @@ and in the `mismatch` column, so a lowered run is never filed under the wrong
 name. A run with no `INFER path` line is labelled `not reported` and does not
 count. The `mismatch` column is also `yes` when `INFER path_limit` differs from
 the request, which is what a stale `/infer.path` looks like. A run whose weights
-are not the format that was asked for, or whose golden check failed, is not
-counted either.
+are not the format that was asked for, that was killed by the timeout, that
+printed an `INFER ERR` or `INFER error` line other than the reference mismatch, or
+that printed no `INFER ttft_ms` and `INFER tok_per_s`, is not counted either.
+
+The tokens a run generated (`INFER tokens`) have to equal those of the scalar path
+of the same format, taken from the counted scalar runs of that format: a run that
+does the same work as the others counts, and the speed of a run that decodes other
+tokens is not a speed of the same work. A run whose tokens differ is listed with
+the reason `tokens differ from the scalar path`. When the counted scalar runs of a
+format disagree with each other, no run of that format counts and the cells say
+`scalar runs disagree`; when a format has no counted scalar run, the others count
+and the cells say `no scalar reference`.
+
+The comparison with the float reference is information only. The runtime exits
+with status 1 and prints `INFER ERR runtime: generated tokens differ from the
+reference` when its tokens differ from the published reference, after it printed
+the speed lines. That is expected for q4 and is a statement about the quantization,
+not about the path, so that error line alone does not exclude a run. The
+`reference_match` column (true, false or unknown, from `INFER golden ... match=`)
+keeps it.
 
 The exit status is nonzero when no run counted or any cell has no counted run;
 the files are written all the same.
@@ -54,14 +72,18 @@ INDEX_COLUMNS = [
     "format", "requested", "kernel", "rep", "qemu_status", "outcome", "wall_s", "log",
 ]
 NOT_REPORTED = "not reported"
+REFERENCE_MISMATCH_ERROR = "INFER ERR runtime: generated tokens differ from the reference"
+DIFFERS = "tokens differ from the scalar path"
+DISAGREE = "scalar runs disagree"
+NO_SCALAR = "no scalar reference"
 RUN_COLUMNS = [
     "mode", "guest_cpu", "host", "format", "requested", "reported", "path_limit",
     "mismatch", "kernel", "rep", "weights", "ttft_ms", "tok_per_s", "golden",
-    "qemu_status", "outcome", "valid", "problem", "tokens", "log",
+    "reference_match", "qemu_status", "outcome", "valid", "problem", "tokens", "log",
 ]
 TABLE_COLUMNS = [
     "mode", "guest_cpu", "host", "format", "path", "requested", "kernel", "runs", "n",
-    "median_tok_s", "min_tok_s", "max_tok_s", "median_ttft_ms", "note",
+    "median_tok_s", "min_tok_s", "max_tok_s", "median_ttft_ms", "reference_match", "note",
 ]
 RATIO_COLUMNS = [
     "mode", "guest_cpu", "host", "kind", "format", "path", "requested", "against",
@@ -114,6 +136,8 @@ def parse_log(text: str) -> dict[str, object]:
                 found[key] = match.group(1)
         if body == "INFER OK":
             found["ok"] = True
+        elif body == REFERENCE_MISMATCH_ERROR:
+            found["reference_mismatch"] = True
         elif body.startswith("INFER error ") or body.startswith("INFER ERR "):
             found["error"] = body
     return found
@@ -173,6 +197,7 @@ def number(value: object) -> float | None:
 def run_records(directory: Path, meta: dict[str, str], index: list[dict[str, str]]) -> list[dict[str, str]]:
     """One record per run, with the reported path and why a run does not count."""
     records = []
+    problem_lists: list[list[str]] = []
     for row in index:
         log = directory / row["log"]
         try:
@@ -202,8 +227,6 @@ def run_records(directory: Path, meta: dict[str, str], index: list[dict[str, str
             problems.append(str(parsed["error"]))
         if row["outcome"] == "timeout":
             problems.append("timeout")
-        if parsed.get("golden") == "false":
-            problems.append("golden check failed")
         if limit and limit != row["requested"]:
             problems.append(
                 f"path_limit {limit} differs from the request {row['requested']}"
@@ -215,7 +238,7 @@ def run_records(directory: Path, meta: dict[str, str], index: list[dict[str, str
             and tok > 0
             and weights == DTYPE.get(row["format"], "?")
             and row["outcome"] != "timeout"
-            and parsed.get("golden") != "false"
+            and not parsed["error"]
         )
         records.append({
             "mode": mode_label(meta),
@@ -234,6 +257,7 @@ def run_records(directory: Path, meta: dict[str, str], index: list[dict[str, str
             "ttft_ms": "" if ttft is None else f"{ttft:.3f}",
             "tok_per_s": "" if tok is None else f"{tok:.3f}",
             "golden": str(parsed.get("golden", "")),
+            "reference_match": str(parsed.get("golden", "unknown")),
             "qemu_status": row["qemu_status"],
             "outcome": row["outcome"],
             "valid": "yes" if counts else "no",
@@ -241,7 +265,34 @@ def run_records(directory: Path, meta: dict[str, str], index: list[dict[str, str
             "tokens": str(parsed.get("tokens", "")),
             "log": row["log"],
         })
+        problem_lists.append(problems)
+    same_work(records, problem_lists)
+    for record, problems in zip(records, problem_lists):
+        record["problem"] = "; ".join(problems)
     return records
+
+
+def same_work(records: list[dict[str, str]], problems: list[list[str]]) -> None:
+    """Keep only the runs whose tokens equal those of the scalar path of their format."""
+    for name in dict.fromkeys(record["format"] for record in records):
+        runs = [
+            (record, found) for record, found in zip(records, problems)
+            if record["format"] == name and record["valid"] == "yes"
+        ]
+        tokens = {record["tokens"] for record, _ in runs if record["reported"] == "scalar"}
+        if len(tokens) > 1:
+            for record, found in runs:
+                record["valid"] = "no"
+                found.append(DISAGREE)
+        elif not tokens:
+            for _, found in runs:
+                found.append(NO_SCALAR)
+        else:
+            (want,) = tokens
+            for record, found in runs:
+                if record["tokens"] != want:
+                    record["valid"] = "no"
+                    found.append(DIFFERS)
 
 
 def fmt(value: float | None) -> str:
@@ -283,8 +334,12 @@ def summarise(records: list[dict[str, str]], meta: dict[str, str]) -> list[dict[
             notes.append(
                 f"STALE REQUEST: path_limit differs from {requested} in {len(stale)} of {len(runs)} runs"
             )
+        for flag in (DISAGREE, NO_SCALAR):
+            if any(flag in run["problem"] for run in runs):
+                notes.append(flag)
         if len(counted) < len(runs):
             notes.append(f"{len(runs) - len(counted)} of {len(runs)} runs do not count")
+        matches = {run["reference_match"] for run in counted}
         rows.append({
             "mode": mode_label(meta),
             "guest_cpu": meta["cpu"],
@@ -299,6 +354,9 @@ def summarise(records: list[dict[str, str]], meta: dict[str, str]) -> list[dict[
             "min_tok_s": fmt(min(tok)) if tok else "",
             "max_tok_s": fmt(max(tok)) if tok else "",
             "median_ttft_ms": fmt(statistics.median(ttft)) if ttft else "",
+            "reference_match": (
+                "" if not matches else matches.pop() if len(matches) == 1 else "mixed"
+            ),
             "note": "; ".join(notes),
         })
     return rows
@@ -452,11 +510,13 @@ def markdown(meta: dict[str, str], table: list[dict[str, str]], ratio_rows: list
     ]
     rows = [
         [r["format"], named(r), r["kernel"], r["runs"], r["n"], r["median_tok_s"],
-         f"{r['min_tok_s']}..{r['max_tok_s']}" if r["min_tok_s"] else "", r["median_ttft_ms"], r["note"]]
+         f"{r['min_tok_s']}..{r['max_tok_s']}" if r["min_tok_s"] else "", r["median_ttft_ms"],
+         r["reference_match"], r["note"]]
         for r in table
     ]
     out += md_table(
-        ["format", "path", "kernel", "runs", "n", "median tok/s", "min..max", "median ttft ms", "note"],
+        ["format", "path", "kernel", "runs", "n", "median tok/s", "min..max", "median ttft ms",
+         "reference match", "note"],
         rows,
     )
     out += ["", "## Ratios (above 1 means faster)", ""]
@@ -487,6 +547,10 @@ def markdown(meta: dict[str, str], table: list[dict[str, str]], ratio_rows: list
         "  two operating system kernels with the runtime held fixed.",
         "* A reading of tie means that the ranges of the two rows overlap. A decode",
         "  that is bound by the bandwidth of memory can tie on every path.",
+        "* A run counts when its tokens equal those of the scalar path of the same format.",
+        "  `reference match` is whether they also equal the published float reference:",
+        "  false is expected for q4 and is a statement about the quantization, not about",
+        "  the path.",
         "* Everything here is one host, one guest CPU model and one virtual processor.",
         "",
     ]

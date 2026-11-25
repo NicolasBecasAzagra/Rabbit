@@ -162,8 +162,8 @@ hour as an estimate and let the first run replace it. Nothing is powered off.
 | `commands.txt` | the exact QEMU command of every run |
 | `logs/*.serial.log`, `logs/*.qemu.log` | what the guest and the emulator said, one pair per run |
 | `index.csv` | what `paths.sh` ran: format, requested path, kernel, repetition, QEMU status, outcome, `governor_warning`. The outcome is `finished` (`INFER OK` seen; QEMU was stopped by the script, status `stopped`, or the guest left by itself and the debug-exit status stays), `failed` (`INFER ERR` or `INFER error`), `exited` (QEMU ended with no marker, a real exit whose status says why) or `timeout` |
-| `runs.csv` | per run: reported path (`not reported` when the guest printed no `INFER path`), `INFER path_limit`, weights, ttft, tok/s, tokens, golden check, `mismatch` (the reported path or `path_limit` differs from the request), why a run does not count |
-| `table.csv`, `ratios.csv`, `tables.md` | median, min..max and ttft per cell; path against scalar per format (above 1 is faster); Rabbit against mainline on avx2 |
+| `runs.csv` | per run: reported path (`not reported` when the guest printed no `INFER path`), `INFER path_limit`, weights, ttft, tok/s, tokens, golden check, `reference_match` (true, false or unknown, from `INFER golden ... match=`), `mismatch` (the reported path or `path_limit` differs from the request), why a run does not count |
+| `table.csv`, `ratios.csv`, `tables.md` | median, min..max, ttft and `reference_match` per cell; path against scalar per format (above 1 is faster); Rabbit against mainline on avx2 |
 
 Under `--accel tcg` the same files carry `-emulator-not-a-speed` in their names and
 the header of `tables-emulator-not-a-speed.md` says it. A TCG rehearsal proves
@@ -189,8 +189,23 @@ CI model: compare the greedy tokens of every path and format against
 `bench/reference/reference.json` (the `tokens` column of `runs.csv` against
 `new_tokens`), because the speed of a path that decodes other tokens is not a speed
 of the same work. For `bf16` the runtime also prints `INFER golden`, and the
-`golden` column carries it; a run whose golden check failed does not count and is
-listed under "Runs that do not count" with the reason `golden check failed`. The checkpoint has to be the one that `reference.json`
+`golden` and `reference_match` columns carry it. The comparison with the float
+reference is information, not a condition: the runtime exits with status 1 and
+prints `INFER ERR runtime: generated tokens differ from the reference` after the
+speed lines when the tokens differ from it, which is expected for q4 (see
+`REPORT.md`, "Results: quantization") and is a statement about the quantization,
+not about the path. What decides is whether a run does the same work as the others
+of its format. A run counts when (a) the guest reported its path, (b) it printed
+`INFER ttft_ms` and `INFER tok_per_s`, (c) the timeout did not kill it, (d) its
+`INFER tokens` equal those of the scalar path of the same format (taken from the
+counted scalar runs of that format) and (e) it printed no `INFER ERR` or
+`INFER error` line other than that reference mismatch; a nonzero exit status alone
+does not exclude it. A run whose tokens differ from the scalar path is listed under
+"Runs that do not count" with the reason `tokens differ from the scalar path`. If
+the scalar runs of a format disagree with each other, the cells say
+`scalar runs disagree` and none of that format counts; if a format has no counted
+scalar run, the others count and the cells say `no scalar reference`. The
+checkpoint has to be the one that `reference.json`
 names (`bench/fetch-model.sh` fetches the Instruct variant by default, so check the
 revision), and a quantized format that differs from the reference has to be
 explained by the quantization, not hidden.
