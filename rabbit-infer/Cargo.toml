@@ -58,6 +58,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "rabbit-infer-golden"
+path = "src/bin/golden.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "rabbit-infer-matvec-check"
 path = "src/bin/matvec_check.rs"
 required-features = ["matvec-check"]

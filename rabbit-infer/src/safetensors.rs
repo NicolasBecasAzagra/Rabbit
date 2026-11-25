@@ -42,6 +42,14 @@ pub enum DType {
     Q4B32,
     /// Eight bit weights in blocks of the same size.
     Q8B32,
+    /// `Q5_0` of ggml: five bit weights in blocks of 32 with a binary16 scale.
+    ///
+    /// Only the GGUF reader produces the next three types.
+    Q5_0,
+    /// `Q4_K` of ggml: four bit weights in super blocks of 256.
+    Q4K,
+    /// `Q6_K` of ggml: six bit weights in super blocks of 256.
+    Q6K,
     /// A type the reader keeps in the directory but the runtime must not use.
     Other,
 }
@@ -54,8 +62,17 @@ impl DType {
             Self::Bf16 => Some(2),
             Self::F32 => Some(4),
             Self::F16 => Some(2),
-            Self::Q4B32 | Self::Q8B32 | Self::Other => None,
+            Self::Q4B32 | Self::Q8B32 | Self::Q5_0 | Self::Q4K | Self::Q6K | Self::Other => None,
         }
+    }
+
+    /// `true` for a type whose size is per block and whose scales are inside
+    /// the block.
+    pub fn is_quantized(self) -> bool {
+        matches!(
+            self,
+            Self::Q4B32 | Self::Q8B32 | Self::Q5_0 | Self::Q4K | Self::Q6K
+        )
     }
 
     /// Parse the `dtype` field.
@@ -77,6 +94,9 @@ impl DType {
             Self::F16 => "F16",
             Self::Q4B32 => "Q4B32",
             Self::Q8B32 => "Q8B32",
+            Self::Q5_0 => "Q5_0",
+            Self::Q4K => "Q4_K",
+            Self::Q6K => "Q6_K",
             Self::Other => "unsupported",
         }
     }
@@ -211,7 +231,7 @@ impl Header {
     pub fn has_quantized_tensors(&self) -> bool {
         self.tensors
             .iter()
-            .any(|tensor| matches!(tensor.dtype, DType::Q4B32 | DType::Q8B32))
+            .any(|tensor| tensor.dtype.is_quantized())
     }
 }
 

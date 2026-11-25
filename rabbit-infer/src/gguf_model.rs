@@ -67,13 +67,23 @@
 //! ## What this commit reads
 //!
 //! Only the architecture `llama`, with `F32` and `F16` tensors and, for the
-//! matrices, `Q8_0`. A key or a tensor the converter writes for a feature this
-//! runtime lacks is a named error and never silently ignored: a `rope_freqs`
-//! tensor, a RoPE scaling, a bias, a fused `attn_qkv`, the experts of a mixture,
-//! a quantized tensor of another type (`Q4_0`, `Q5_0`, `Q4_K`, `Q6_K`... are
-//! refused by name even where [`crate::gguf`] knows their sizes) and a quantized
-//! norm. The dimensions of every tensor must agree with the config
-//! ([`GgufModelError::ShapeMismatch`]).
+//! matrices, `Q8_0`, `Q5_0`, `Q4_K` and `Q6_K`: the types a `Q8_0` or a
+//! `Q4_K_M` file of `llama-quantize` is made of. A key or a tensor the converter
+//! writes for a feature this runtime lacks is a named error and never silently
+//! ignored: a `rope_freqs` tensor, a RoPE scaling, a bias, a fused `attn_qkv`,
+//! the experts of a mixture, a quantized tensor of another type (`Q4_0`, `Q4_1`,
+//! `Q5_1`, `Q2_K`, `Q3_K`, `Q5_K`... are refused by name even where
+//! [`crate::gguf`] knows their sizes), a quantized norm, and a quantized tensor
+//! of a rank other than 2. The dimensions of every tensor must agree with the
+//! config ([`GgufModelError::ShapeMismatch`]).
+//!
+//! A row of a matrix is whole blocks along `ne[0]`: a multiple of 32 weights for
+//! `Q8_0` and `Q5_0`, of 256 for `Q4_K` and `Q6_K`. The parser checks it when it
+//! sizes the tensor, and a file that breaks it (a hidden size of 576, which is
+//! not a multiple of 256, in a `Q4_K` matrix) is refused with
+//! [`GgufError::BadTensorShape`] naming the tensor, never rounded. That is why
+//! `llama-quantize` writes `Q5_0` and `Q8_0` for the rows of 576 weights of
+//! SmolLM2 and keeps the K types for its feed forward width of 1536.
 //!
 //! ## `Q8_0` is the `Q8B32` block
 //!
@@ -240,13 +250,17 @@ pub enum GgufModelError {
     /// scaling such as `llama3`.
     UnsupportedRopeFreqs,
     /// A tensor of a type this decoder does not read: other than `F32` and `F16`
-    /// and, for a matrix, `Q8_0`.
+    /// and, for a matrix, `Q8_0`, `Q5_0`, `Q4_K` and `Q6_K`.
     UnsupportedTensorType { name: String, ggml_type: u32 },
-    /// A one dimensional tensor stored as `Q8_0`, a quantized norm or vector:
-    /// a norm stays floating point.
-    QuantizedNorm { name: String },
-    /// A `Q8_0` tensor of more than two dimensions, which has no layout here.
-    UnsupportedRank { name: String, rank: usize },
+    /// A one dimensional tensor stored in a quantized type, a quantized norm or
+    /// vector: a norm stays floating point.
+    QuantizedNorm { name: String, ggml_type: u32 },
+    /// A quantized tensor of more than two dimensions, which has no layout here.
+    UnsupportedRank {
+        name: String,
+        ggml_type: u32,
+        rank: usize,
+    },
     /// A tensor the decoder does not use: a bias, a fused projection, an
     /// expert, an extra block.
     UnexpectedTensor(String),
@@ -299,24 +313,30 @@ impl fmt::Display for GgufModelError {
                     Some(type_name) => write!(
                         formatter,
                         "gguf: tensor `{name}` has ggml type {type_name} ({ggml_type}), only F32, \
-                         F16 and (for a matrix) Q8_0 are read"
+                         F16 and (for a matrix) Q8_0, Q5_0, Q4_K and Q6_K are read"
                     ),
                     None => write!(
                         formatter,
                         "gguf: tensor `{name}` has unknown ggml type {ggml_type}, only F32, F16 \
-                         and (for a matrix) Q8_0 are read"
+                         and (for a matrix) Q8_0, Q5_0, Q4_K and Q6_K are read"
                     ),
                 }
             }
-            Self::QuantizedNorm { name } => write!(
+            Self::QuantizedNorm { name, ggml_type } => write!(
                 formatter,
-                "gguf: tensor `{name}` is a one dimensional Q8_0 tensor, a quantized norm or \
-                 vector: a norm is read as F32 or F16"
+                "gguf: tensor `{name}` is a one dimensional {} tensor, a quantized norm or \
+                 vector: a norm is read as F32 or F16",
+                type_label(*ggml_type)
             ),
-            Self::UnsupportedRank { name, rank } => write!(
+            Self::UnsupportedRank {
+                name,
+                ggml_type,
+                rank,
+            } => write!(
                 formatter,
-                "gguf: tensor `{name}` has ggml type Q8_0 and {rank} dimensions, only a matrix of \
-                 2 is read"
+                "gguf: tensor `{name}` has ggml type {} and {rank} dimensions, only a matrix of \
+                 2 is read",
+                type_label(*ggml_type)
             ),
             Self::UnexpectedTensor(name) => {
                 write!(
@@ -342,6 +362,11 @@ impl fmt::Display for GgufModelError {
 
 impl std::error::Error for GgufModelError {}
 
+/// The name of a ggml type for a message, or its number when `ggml.h` has none.
+fn type_label(ggml_type: u32) -> String {
+    crate::gguf::ggml_type_name(ggml_type).map_or_else(|| ggml_type.to_string(), str::to_string)
+}
+
 /// One tensor the decoder binds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GgufTensor {
@@ -349,7 +374,7 @@ pub struct GgufTensor {
     pub name: String,
     /// The name in the file.
     pub gguf_name: String,
-    /// `F32` or `F16`, or `Q8_0` for a matrix.
+    /// `F32` or `F16`, or `Q8_0`, `Q5_0`, `Q4_K` or `Q6_K` for a matrix.
     pub kind: TensorKind,
     /// The shape in the `safetensors` layout: `[out, in]` for a matrix, which
     /// is the dimensions of the file in the opposite order.
@@ -587,24 +612,33 @@ pub fn load(gguf: &Gguf<'_>) -> Result<GgufModel, GgufModelError> {
         let kind = match info.kind() {
             Some(kind @ (TensorKind::F32 | TensorKind::F16)) => kind,
             // A matrix is a sequence of rows of whole blocks, which the parser
-            // checks (`ne[0]` a multiple of 32) when it sizes the tensor below.
-            Some(TensorKind::Q8_0) if info.dims.len() == 2 && entry.dims.len() == 2 => {
-                TensorKind::Q8_0
-            }
-            // A `Q8_0` tensor of another rank is not a matrix: a vector is
+            // checks (`ne[0]` a multiple of 32, or of 256 for the K types) when
+            // it sizes the tensor below.
+            Some(
+                kind @ (TensorKind::Q8_0 | TensorKind::Q5_0 | TensorKind::Q4K | TensorKind::Q6K),
+            ) if info.dims.len() == 2 && entry.dims.len() == 2 => kind,
+            // A quantized tensor of another rank is not a matrix: a vector is
             // a quantized norm, and a tensor above rank 2 has no layout here.
-            Some(TensorKind::Q8_0) if info.dims.len() == 1 => {
+            Some(TensorKind::Q8_0 | TensorKind::Q5_0 | TensorKind::Q4K | TensorKind::Q6K)
+                if info.dims.len() == 1 =>
+            {
                 return Err(GgufModelError::QuantizedNorm {
                     name: entry.gguf.clone(),
+                    ggml_type: info.ggml_type,
                 })
             }
-            Some(TensorKind::Q8_0) if info.dims.len() > 2 => {
+            Some(TensorKind::Q8_0 | TensorKind::Q5_0 | TensorKind::Q4K | TensorKind::Q6K)
+                if info.dims.len() > 2 =>
+            {
                 return Err(GgufModelError::UnsupportedRank {
                     name: entry.gguf.clone(),
+                    ggml_type: info.ggml_type,
                     rank: info.dims.len(),
                 })
             }
-            Some(TensorKind::Q8_0) => return Err(mismatch(&entry.gguf)),
+            Some(TensorKind::Q8_0 | TensorKind::Q5_0 | TensorKind::Q4K | TensorKind::Q6K) => {
+                return Err(mismatch(&entry.gguf))
+            }
             _ => {
                 return Err(GgufModelError::UnsupportedTensorType {
                     name: entry.gguf.clone(),
@@ -1137,7 +1171,13 @@ mod tests {
             tensor.ggml_type = 8;
             tensor.data = zeros(2 * 34);
             let error = load_builder(&file).unwrap_err();
-            assert_eq!(error, GgufModelError::QuantizedNorm { name: norm.into() });
+            assert_eq!(
+                error,
+                GgufModelError::QuantizedNorm {
+                    name: norm.into(),
+                    ggml_type: 8
+                }
+            );
             let shown = error.to_string();
             assert!(shown.contains(norm) && shown.contains("Q8_0"), "{shown}");
         }
@@ -1155,6 +1195,7 @@ mod tests {
             error,
             GgufModelError::UnsupportedRank {
                 name: "blk.0.attn_q.weight".into(),
+                ggml_type: 8,
                 rank: 3
             }
         );
@@ -1175,7 +1216,8 @@ mod tests {
         assert_eq!(
             load_builder(&file).unwrap_err(),
             GgufModelError::QuantizedNorm {
-                name: "blk.0.attn_q.weight".into()
+                name: "blk.0.attn_q.weight".into(),
+                ggml_type: 8
             }
         );
         let mut file = q8_builder();
@@ -1191,11 +1233,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_other_quantized_types_are_refused_by_name() {
-        // `Q4_0` and `Q5_0` have blocks of 32 weights, `Q4_K` and `Q6_K` of 256
-        // (see `TensorKind::block_bytes`), so the width is a multiple of both.
-        let spec = Spec {
+    /// Widths that are multiples of the 256 weights of a `Q4_K` or `Q6_K` block.
+    fn super_blocks() -> Spec {
+        Spec {
             hidden: 256,
             layers: 1,
             heads: 4,
@@ -1204,12 +1244,227 @@ mod tests {
             vocab: 16,
             eps: 1e-5,
             theta: 10_000.0,
+        }
+    }
+
+    /// The types this decoder reads for a matrix, with the weights per block and
+    /// the bytes per block.
+    const READ_TYPES: [(u32, &str, usize, usize); 4] = [
+        (8, "Q8_0", 32, 34),
+        (6, "Q5_0", 32, 22),
+        (12, "Q4_K", 256, 144),
+        (14, "Q6_K", 256, 210),
+    ];
+
+    /// Make the tensor `name` of `file` a quantized one of `ggml_type`, with
+    /// blocks of zeros, keeping its dimensions.
+    fn quantize_tensor(
+        file: &mut GgufBuilder,
+        name: &str,
+        ggml_type: u32,
+        block_elements: usize,
+        block_bytes: usize,
+    ) {
+        let tensor = file.tensor(name).unwrap();
+        let elements = tensor.dims.iter().product::<u64>() as usize;
+        tensor.ggml_type = ggml_type;
+        tensor.data = zeros(elements / block_elements * block_bytes);
+    }
+
+    #[test]
+    fn q5_0_q4_k_and_q6_k_matrices_are_bound_and_the_norms_stay_f32() {
+        let spec = super_blocks();
+        let matrices = [
+            "token_embd.weight",
+            "blk.0.attn_q.weight",
+            "blk.0.attn_k.weight",
+            "blk.0.attn_v.weight",
+            "blk.0.attn_output.weight",
+            "blk.0.ffn_gate.weight",
+            "blk.0.ffn_up.weight",
+            "blk.0.ffn_down.weight",
+        ];
+        for (ggml_type, name, block_elements, block_bytes) in READ_TYPES {
+            let mut file =
+                gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+            for matrix in matrices {
+                quantize_tensor(&mut file, matrix, ggml_type, block_elements, block_bytes);
+            }
+            let model = load_builder(&file).unwrap();
+            let kind = TensorKind::from_ggml_type(ggml_type).unwrap();
+            let mut found = 0;
+            for tensor in &model.tensors {
+                if tensor.shape.len() == 2 {
+                    found += 1;
+                    assert_eq!(tensor.kind, kind, "{name} {}", tensor.name);
+                    let elements = tensor.shape[0] * tensor.shape[1];
+                    assert_eq!(
+                        tensor.byte_len,
+                        elements / block_elements * block_bytes,
+                        "{name} {}",
+                        tensor.name
+                    );
+                    assert_eq!(tensor.start % 32, 0, "{name} {}", tensor.name);
+                } else {
+                    assert_eq!(tensor.kind, TensorKind::F32, "{name} {}", tensor.name);
+                }
+            }
+            assert_eq!(found, matrices.len(), "{name}");
+            // An output matrix of its own, of the same type, unties the embedding.
+            let embedding = file.tensor("token_embd.weight").unwrap().clone();
+            file.tensors.push(GgufTensorOut {
+                name: "output.weight".into(),
+                ..embedding
+            });
+            let model = load_builder(&file).unwrap();
+            let head = model
+                .tensors
+                .iter()
+                .find(|t| t.name == "lm_head.weight")
+                .unwrap();
+            assert_eq!((head.kind, head.shape.clone()), (kind, vec![16, 256]));
+        }
+    }
+
+    #[test]
+    fn a_quantized_norm_of_a_type_that_is_read_is_refused_by_name() {
+        let spec = super_blocks();
+        for (ggml_type, name, block_elements, block_bytes) in READ_TYPES {
+            for norm in ["blk.0.attn_norm.weight", "output_norm.weight"] {
+                let mut file =
+                    gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+                quantize_tensor(&mut file, norm, ggml_type, block_elements, block_bytes);
+                let error = load_builder(&file).unwrap_err();
+                assert_eq!(
+                    error,
+                    GgufModelError::QuantizedNorm {
+                        name: norm.into(),
+                        ggml_type
+                    },
+                    "{name} {norm}"
+                );
+                let shown = error.to_string();
+                assert!(shown.contains(norm) && shown.contains(name), "{shown}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_quantized_tensor_of_a_type_that_is_read_above_rank_2_is_an_unsupported_rank() {
+        let spec = super_blocks();
+        for (ggml_type, name, block_elements, block_bytes) in READ_TYPES {
+            let mut file =
+                gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+            let tensor = file.tensor("blk.0.attn_q.weight").unwrap();
+            tensor.ggml_type = ggml_type;
+            tensor.dims = vec![256, 2, 128];
+            tensor.data = zeros(256 * 2 * 128 / block_elements * block_bytes);
+            let error = load_builder(&file).unwrap_err();
+            assert_eq!(
+                error,
+                GgufModelError::UnsupportedRank {
+                    name: "blk.0.attn_q.weight".into(),
+                    ggml_type,
+                    rank: 3
+                },
+                "{name}"
+            );
+            let shown = error.to_string();
+            assert!(
+                shown.contains("blk.0.attn_q.weight")
+                    && shown.contains(name)
+                    && shown.contains("3 dimensions"),
+                "{shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quantized_matrix_of_the_wrong_shape_is_a_shape_mismatch() {
+        let spec = super_blocks();
+        for (ggml_type, name, block_elements, block_bytes) in READ_TYPES {
+            let mut file =
+                gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+            quantize_tensor(
+                &mut file,
+                "blk.0.attn_k.weight",
+                ggml_type,
+                block_elements,
+                block_bytes,
+            );
+            // The key matrix is 256 by 128 here: 256 by 256 is another shape.
+            let tensor = file.tensor("blk.0.attn_k.weight").unwrap();
+            tensor.dims = vec![256, 256];
+            tensor.data = zeros(256 * 256 / block_elements * block_bytes);
+            assert_eq!(
+                load_builder(&file).unwrap_err(),
+                GgufModelError::ShapeMismatch {
+                    name: "blk.0.attn_k.weight".into()
+                },
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_k_type_matrix_whose_rows_are_not_whole_super_blocks_is_refused_by_the_parser() {
+        // A hidden size of 576, as SmolLM2 has, is a multiple of 32 and not of
+        // 256: the rows of a `Q4_K` or `Q6_K` matrix would end inside a super
+        // block, and the parser names the tensor instead of rounding.
+        let spec = Spec {
+            hidden: 576,
+            layers: 1,
+            heads: 9,
+            kv_heads: 3,
+            ffn: 256,
+            vocab: 16,
+            eps: 1e-5,
+            theta: 10_000.0,
         };
+        for (ggml_type, name, block_elements, block_bytes) in READ_TYPES {
+            let mut file =
+                gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+            for tensor_name in ["blk.0.attn_q.weight", "token_embd.weight"] {
+                let tensor = file.tensor(tensor_name).unwrap();
+                let elements = tensor.dims.iter().product::<u64>() as usize;
+                tensor.ggml_type = ggml_type;
+                // The size the parser would expect if it rounded up.
+                tensor.data = zeros(elements.div_ceil(block_elements) * block_bytes);
+                let result = load_builder(&file);
+                if block_elements == 256 {
+                    let error = result.unwrap_err();
+                    assert!(
+                        matches!(
+                            &error,
+                            GgufModelError::Container(GgufError::BadTensorShape { name })
+                                if name == tensor_name
+                        ),
+                        "{name} {tensor_name}: {error:?}"
+                    );
+                    assert!(error.to_string().contains(tensor_name), "{error}");
+                    // Back to a width that is whole blocks, for the next tensor.
+                    let tensor = file.tensor(tensor_name).unwrap();
+                    tensor.ggml_type = 0;
+                    tensor.data = zeros(elements * 4);
+                } else {
+                    result.unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_other_quantized_types_are_refused_by_name() {
+        // `Q4_0`, `Q4_1` and `Q5_1` have blocks of 32 weights, the K types of
+        // 256 (see `TensorKind::block_bytes`), so the width is a multiple of both.
+        let spec = super_blocks();
         for (ggml_type, name, block_elements, block_bytes) in [
             (2u32, "Q4_0", 32usize, 18usize),
-            (6, "Q5_0", 32, 22),
-            (12, "Q4_K", 256, 144),
-            (14, "Q6_K", 256, 210),
+            (3, "Q4_1", 32, 20),
+            (7, "Q5_1", 32, 24),
+            (10, "Q2_K", 256, 84),
+            (11, "Q3_K", 256, 110),
+            (13, "Q5_K", 256, 176),
         ] {
             for tensor_name in [
                 "blk.0.attn_q.weight",
@@ -1218,10 +1473,13 @@ mod tests {
             ] {
                 let mut file =
                     gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
-                let tensor = file.tensor(tensor_name).unwrap();
-                let elements = tensor.dims.iter().product::<u64>() as usize;
-                tensor.ggml_type = ggml_type;
-                tensor.data = zeros(elements / block_elements * block_bytes);
+                quantize_tensor(
+                    &mut file,
+                    tensor_name,
+                    ggml_type,
+                    block_elements,
+                    block_bytes,
+                );
                 let error = load_builder(&file).unwrap_err();
                 assert_eq!(
                     error,

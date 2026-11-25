@@ -196,6 +196,18 @@ mod tests {
     }
 
     #[test]
+    fn the_nist_message_of_two_blocks_matches() {
+        // The 112 byte message of FIPS 180-2 appendix B, whose padding needs a
+        // block of its own.
+        let message = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+        assert_eq!(message.len(), 112);
+        assert_eq!(
+            hex(&digest(message)),
+            "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1"
+        );
+    }
+
+    #[test]
     fn a_message_longer_than_one_block_is_chained() {
         // The 112 byte message above spans two blocks: the length field sits in
         // a block of its own.

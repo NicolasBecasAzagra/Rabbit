@@ -48,6 +48,15 @@
 //! and [`quant::dequantize_row_q8`] decodes a row of the embedding. The file
 //! carries no `__metadata__` declaration, because the type code of the tensor
 //! says the block, the scale and the layout.
+//!
+//! A `Q5_0`, `Q4_K` or `Q6_K` matrix is bound in place too, as [`DType::Q5_0`],
+//! [`DType::Q4K`] and [`DType::Q6K`]: [`matvec::matvec_q5_0_with`],
+//! [`matvec::matvec_q4_k_with`] and [`matvec::matvec_q6_k_with`] multiply it, and
+//! [`quant::dequantize_row_q5_0`], [`quant::dequantize_row_q4_k`] and
+//! [`quant::dequantize_row_q6_k`] decode a row of the embedding. The scales of
+//! every block are checked to be finite when the tensor is bound, as for
+//! `Q8_0`, and the rows that reach into the final partial page are copied out
+//! and go through the same kernel as the rows of the mapping.
 
 use std::time::Instant;
 
@@ -55,6 +64,7 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::gguf::{Gguf, GgufError};
 use crate::gguf_model::{self, GgufModel, GgufModelError};
+use crate::llama_emulation::{self, Activation};
 use crate::mapping::Mapping;
 use crate::math::{argmax, rms_norm, rope, silu, softmax};
 use crate::matvec;
@@ -172,12 +182,9 @@ impl ModelFile {
                 crate::gguf::TensorKind::F32 => DType::F32,
                 crate::gguf::TensorKind::F16 => DType::F16,
                 crate::gguf::TensorKind::Q8_0 => DType::Q8B32,
-                _ => {
-                    return Err(Error::new(format!(
-                        "model: tensor {} is not F32, F16 or Q8_0",
-                        tensor.gguf_name
-                    )))
-                }
+                crate::gguf::TensorKind::Q5_0 => DType::Q5_0,
+                crate::gguf::TensorKind::Q4K => DType::Q4K,
+                crate::gguf::TensorKind::Q6K => DType::Q6K,
             };
             let end = tensor
                 .start
@@ -286,15 +293,19 @@ impl ModelFile {
     /// field that is missing or wrong, so the serial log says why the file was
     /// refused.
     pub fn validate_quantization(&self) -> Result<()> {
-        // A GGUF tensor of type `Q8_0` is the block of 32 weights with a binary16
-        // scale by its type code, and `gguf_model` checked the sizes: there is no
-        // header to declare it in. So that a type added to the table later does not
-        // pass unchecked, only the types this reader maps are accepted.
+        // A GGUF tensor of type `Q8_0`, `Q5_0`, `Q4_K` or `Q6_K` is the block of its
+        // type code, and `gguf_model` checked the sizes: there is no header to
+        // declare it in. So that a type added to the table later does not pass
+        // unchecked, only the types this reader maps are accepted.
         if self.gguf_config.is_some() {
             for tensor in self.header.tensors() {
-                if !matches!(tensor.dtype, DType::F32 | DType::F16 | DType::Q8B32) {
+                if !matches!(
+                    tensor.dtype,
+                    DType::F32 | DType::F16 | DType::Q8B32 | DType::Q5_0 | DType::Q4K | DType::Q6K
+                ) {
                     return Err(Error::new(format!(
-                        "model: GGUF tensor {} has dtype {}, only F32, F16 and Q8_0 are read",
+                        "model: GGUF tensor {} has dtype {}, only F32, F16, Q8_0, Q5_0, Q4_K and \
+                         Q6_K are read",
                         self.header.name(tensor),
                         tensor.dtype.name()
                     )));
@@ -381,7 +392,7 @@ impl<'a> Tensor<'a> {
     ) -> Result<Self> {
         let shape = info.shape();
         let bytes = match info.dtype {
-            DType::Q4B32 | DType::Q8B32 => {
+            dtype if dtype.is_quantized() => {
                 // The format owns the byte count: one block of a scale and a
                 // packed payload per thirty-two weights, not a fixed element
                 // size.
@@ -390,7 +401,7 @@ impl<'a> Tensor<'a> {
                         "model: quantized tensor {name} is not a matrix"
                     )));
                 }
-                quantized_bytes(info.dtype, shape[0], shape[1])?
+                quantized_bytes(dtype, shape[0], shape[1])?
             }
             dtype => {
                 let element_size = dtype.element_size().ok_or_else(|| {
@@ -424,7 +435,7 @@ impl<'a> Tensor<'a> {
             element_size,
             float_kernel: from_gguf && matches!(info.dtype, DType::F32 | DType::F16),
         };
-        if matches!(info.dtype, DType::Q4B32 | DType::Q8B32) {
+        if info.dtype.is_quantized() {
             tensor.check_scales()?;
         }
         Ok(tensor)
@@ -434,22 +445,26 @@ impl<'a> Tensor<'a> {
     ///
     /// The decoder multiplies a whole block by its scale, so a scale that is an
     /// infinity or a NaN would poison thirty-two weights and the serial log
-    /// would only show a wrong token. The check reads one `u16` per 18 bytes,
-    /// which is cheaper than the first token and names the block that is wrong.
+    /// would only show a wrong token. The check reads one `u16` per scale of a
+    /// block (two for `Q4_K`, which has `d` and `dmin`), which is cheaper than
+    /// the first token and names the block that is wrong.
     fn check_scales(&self) -> Result<()> {
         let columns = self.shape()[1];
         let (row_bytes, block_bytes) = quantized_layout(self.dtype(), columns)?;
-        let blocks = quant::blocks(columns);
+        let blocks = columns / quantized_block_elements(self.dtype());
+        let offsets = scale_offsets(self.dtype());
         let mut half = [0u8; 2];
         for row in 0..self.shape()[0] {
             for block in 0..blocks {
-                let offset = self.file_offset + row * row_bytes + block * block_bytes;
-                self.mapping.copy_bytes(offset, &mut half)?;
-                if !quant::scale_is_finite(u16::from_le_bytes(half)) {
-                    return Err(Error::new(format!(
-                        "model: tensor {} has a non-finite scale in row {row} block {block}",
-                        self.name
-                    )));
+                for scale in offsets {
+                    let offset = self.file_offset + row * row_bytes + block * block_bytes + scale;
+                    self.mapping.copy_bytes(offset, &mut half)?;
+                    if !quant::scale_is_finite(u16::from_le_bytes(half)) {
+                        return Err(Error::new(format!(
+                            "model: tensor {} has a non-finite scale in row {row} block {block}",
+                            self.name
+                        )));
+                    }
                 }
             }
         }
@@ -474,7 +489,9 @@ impl<'a> Tensor<'a> {
             DType::Bf16 => f32::from_bits((self.mapping.u16_at(offset) as u32) << 16),
             DType::F32 => f32::from_bits(self.mapping.u32_at(offset)),
             DType::F16 => quant::half_to_f32(self.mapping.u16_at(offset)),
-            DType::Q4B32 | DType::Q8B32 | DType::Other => 0.0,
+            DType::Q4B32 | DType::Q8B32 | DType::Q5_0 | DType::Q4K | DType::Q6K | DType::Other => {
+                0.0
+            }
         }
     }
 
@@ -501,7 +518,7 @@ impl<'a> Tensor<'a> {
     /// A row is one block per thirty-two weights, so the same slicing as the
     /// `bfloat16` path works; only the row length changes with the width.
     fn contiguous_quantized(&self) -> Option<(&[u8], usize)> {
-        if !matches!(self.dtype(), DType::Q4B32 | DType::Q8B32) || self.shape().len() != 2 {
+        if !self.dtype().is_quantized() || self.shape().len() != 2 {
             return None;
         }
         let rows = self.shape()[0];
@@ -566,7 +583,13 @@ impl<'a> Tensor<'a> {
                     sum += f32::from_bits(bits) * input;
                 }
             }
-            DType::F16 | DType::Q4B32 | DType::Q8B32 | DType::Other => {
+            DType::F16
+            | DType::Q4B32
+            | DType::Q8B32
+            | DType::Q5_0
+            | DType::Q4K
+            | DType::Q6K
+            | DType::Other => {
                 return Err(Error::new(format!(
                     "model: tensor {} has no scalar element accessor",
                     self.name
@@ -588,13 +611,16 @@ impl<'a> Tensor<'a> {
                 self.name
             )));
         }
-        if matches!(self.dtype(), DType::Q4B32 | DType::Q8B32) {
+        if self.dtype().is_quantized() {
             let row_bytes = quantized_layout(self.dtype(), columns)?.0;
             let mut blocks = vec![0u8; row_bytes];
             self.mapping
                 .copy_bytes(self.file_offset + row * row_bytes, &mut blocks)?;
             return match self.dtype() {
                 DType::Q8B32 => quant::dequantize_row_q8(&blocks, out),
+                DType::Q5_0 => quant::dequantize_row_q5_0(&blocks, out),
+                DType::Q4K => quant::dequantize_row_q4_k(&blocks, out),
+                DType::Q6K => quant::dequantize_row_q6_k(&blocks, out),
                 _ => quant::dequantize_row(&blocks, out),
             };
         }
@@ -613,7 +639,7 @@ impl<'a> Tensor<'a> {
                 self.name
             )));
         }
-        if matches!(self.dtype(), DType::Q4B32 | DType::Q8B32) {
+        if self.dtype().is_quantized() {
             return Err(Error::new(format!(
                 "model: normalisation weight {} is quantized, expected a floating point vector",
                 self.name
@@ -647,6 +673,7 @@ pub struct Model<'a> {
     final_norm: Tensor<'a>,
     output: Tensor<'a>,
     tensor_count: usize,
+    emulate_llama: bool,
 }
 
 impl<'a> Model<'a> {
@@ -750,7 +777,25 @@ impl<'a> Model<'a> {
             final_norm,
             output,
             tensor_count: file.tensor_count(),
+            emulate_llama: false,
         })
+    }
+
+    /// Round what the CPU backend of `llama.cpp` rounds: the activation of
+    /// every product with a quantized weight is packed into the type of its dot
+    /// kernel and unpacked ([`crate::llama_emulation`]), and a key or a value is
+    /// rounded to binary16 when it is stored. The integer dot product and the
+    /// AVX2 quantiser of the oracle's x86 build are not emulated: the reference
+    /// quantisers are used, and they can differ from the AVX2 one by a step on a
+    /// half-way tie. Off by default; a diagnostic of the oracle's arithmetic that
+    /// changes no kernel, and it applies to the sessions started after the call.
+    pub fn set_emulate_llama(&mut self, on: bool) {
+        self.emulate_llama = on;
+    }
+
+    /// `true` when [`Self::set_emulate_llama`] is on.
+    pub fn emulate_llama(&self) -> bool {
+        self.emulate_llama
     }
 
     /// The dimensions read from the model.
@@ -766,6 +811,28 @@ impl<'a> Model<'a> {
     /// Name of the tensor element type the model was written with.
     pub fn weight_dtype(&self) -> &'static str {
         self.embed.dtype().name()
+    }
+
+    /// `true` when any matrix of the model (the embedding, the output matrix and
+    /// the seven matrices of every layer) is quantized. The norms are vectors
+    /// and do not count; neither does the type of the embedding alone, which
+    /// [`Self::weight_dtype`] reports.
+    pub fn has_quantized_matrix(&self) -> bool {
+        let layer_matrices = self.layers.iter().flat_map(|layer| {
+            [
+                &layer.q_proj,
+                &layer.k_proj,
+                &layer.v_proj,
+                &layer.o_proj,
+                &layer.gate_proj,
+                &layer.up_proj,
+                &layer.down_proj,
+            ]
+        });
+        [&self.embed, &self.output]
+            .into_iter()
+            .chain(layer_matrices)
+            .any(|tensor| tensor.dtype().is_quantized())
     }
 
     /// Start a generation session with room for `capacity` positions.
@@ -806,6 +873,15 @@ impl<'a> Model<'a> {
             up: vec![0.0f32; dims.ffn],
             scores: vec![0.0f32; capacity],
             logits: vec![0.0f32; dims.vocab],
+            emulated: vec![
+                0.0f32;
+                if self.emulate_llama {
+                    dims.hidden.max(dims.ffn)
+                } else {
+                    0
+                }
+            ],
+            emulate_llama: self.emulate_llama,
             matmul_macs: 0,
             matmul_nanos: 0,
         })
@@ -835,6 +911,9 @@ pub struct Session<'a> {
     up: Vec<f32>,
     scores: Vec<f32>,
     logits: Vec<f32>,
+    /// The activation as `llama.cpp` packs it, when that is emulated.
+    emulated: Vec<f32>,
+    emulate_llama: bool,
     matmul_macs: u64,
     matmul_nanos: u128,
 }
@@ -898,13 +977,38 @@ impl Session<'_> {
 
         self.model.embed.read_row(token as usize, &mut self.x)?;
         let mut clock = MatmulClock::new();
+        let emulate = self.emulate_llama;
 
         for (index, layer) in self.model.layers.iter().enumerate() {
             layer.input_norm.read_vector(&mut self.norm_weight)?;
             rms_norm(&self.x, &self.norm_weight, dims.eps, &mut self.norm)?;
-            clock.run(|| project(&layer.q_proj, &self.norm, &mut self.q))?;
-            clock.run(|| project(&layer.k_proj, &self.norm, &mut self.k))?;
-            clock.run(|| project(&layer.v_proj, &self.norm, &mut self.v))?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.q_proj,
+                    &self.norm,
+                    &mut self.emulated,
+                    &mut self.q,
+                )
+            })?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.k_proj,
+                    &self.norm,
+                    &mut self.emulated,
+                    &mut self.k,
+                )
+            })?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.v_proj,
+                    &self.norm,
+                    &mut self.emulated,
+                    &mut self.v,
+                )
+            })?;
 
             for head in 0..dims.q_heads {
                 let start = head * dims.head_dim;
@@ -929,6 +1033,14 @@ impl Session<'_> {
             let position_base = layer_base + self.position * kv_dim;
             self.keys[position_base..position_base + kv_dim].copy_from_slice(&self.k);
             self.values[position_base..position_base + kv_dim].copy_from_slice(&self.v);
+            if emulate {
+                llama_emulation::round_to_half(
+                    &mut self.keys[position_base..position_base + kv_dim],
+                );
+                llama_emulation::round_to_half(
+                    &mut self.values[position_base..position_base + kv_dim],
+                );
+            }
 
             self.attn.fill(0.0);
             let scale = 1.0 / (dims.head_dim as f32).sqrt();
@@ -957,19 +1069,51 @@ impl Session<'_> {
                 }
             }
 
-            clock.run(|| project(&layer.o_proj, &self.attn, &mut self.projected))?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.o_proj,
+                    &self.attn,
+                    &mut self.emulated,
+                    &mut self.projected,
+                )
+            })?;
             for (slot, value) in self.x.iter_mut().zip(&self.projected) {
                 *slot += value;
             }
 
             layer.post_norm.read_vector(&mut self.norm_weight)?;
             rms_norm(&self.x, &self.norm_weight, dims.eps, &mut self.norm)?;
-            clock.run(|| project(&layer.gate_proj, &self.norm, &mut self.gate))?;
-            clock.run(|| project(&layer.up_proj, &self.norm, &mut self.up))?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.gate_proj,
+                    &self.norm,
+                    &mut self.emulated,
+                    &mut self.gate,
+                )
+            })?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.up_proj,
+                    &self.norm,
+                    &mut self.emulated,
+                    &mut self.up,
+                )
+            })?;
             for (gate, up) in self.gate.iter_mut().zip(&self.up) {
                 *gate = silu(*gate) * up;
             }
-            clock.run(|| project(&layer.down_proj, &self.gate, &mut self.projected))?;
+            clock.run(|| {
+                project_for(
+                    emulate,
+                    &layer.down_proj,
+                    &self.gate,
+                    &mut self.emulated,
+                    &mut self.projected,
+                )
+            })?;
             for (slot, value) in self.x.iter_mut().zip(&self.projected) {
                 *slot += value;
             }
@@ -977,7 +1121,15 @@ impl Session<'_> {
 
         self.model.final_norm.read_vector(&mut self.norm_weight)?;
         rms_norm(&self.x, &self.norm_weight, dims.eps, &mut self.norm)?;
-        clock.run(|| project(&self.model.output, &self.norm, &mut self.logits))?;
+        clock.run(|| {
+            project_for(
+                emulate,
+                &self.model.output,
+                &self.norm,
+                &mut self.emulated,
+                &mut self.logits,
+            )
+        })?;
         self.matmul_macs = self.matmul_macs.saturating_add(clock.macs);
         self.matmul_nanos = self.matmul_nanos.saturating_add(clock.nanos);
         self.position = positions;
@@ -1000,6 +1152,31 @@ impl Session<'_> {
     }
 }
 
+/// [`project`], with the activation of `llama.cpp` when `emulate` is on.
+///
+/// `llama.cpp` packs the activation once per `mul_mat` and the packing is a
+/// pure function of the input, so the products that share an input (the query,
+/// the key and the value; the gate and the up projection) get the same packed
+/// values here too, though each one packs its own copy.
+fn project_for(
+    emulate: bool,
+    matrix: &Tensor<'_>,
+    input: &[f32],
+    scratch: &mut [f32],
+    out: &mut [f32],
+) -> Result<u64> {
+    if emulate {
+        if let Some(activation) = Activation::for_weight(matrix.dtype()) {
+            let packed = scratch
+                .get_mut(..input.len())
+                .ok_or_else(|| Error::new("model: the emulation buffer is too short"))?;
+            activation.apply(input, packed)?;
+            return project(matrix, packed, out);
+        }
+    }
+    project(matrix, input, out)
+}
+
 /// Multiply one matrix by a vector and return the multiply accumulates.
 ///
 /// A `bfloat16` matrix goes to the blocked kernel in one contiguous range per
@@ -1019,12 +1196,14 @@ fn project(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
     }
     let mut mapped_rows = 0;
     if let Some((weights, rows_in_mapping)) = matrix.contiguous_quantized() {
-        let rows_slice = &mut out[..rows_in_mapping];
-        if matrix.dtype() == DType::Q8B32 {
-            matvec::matvec_q8(weights, rows_in_mapping, columns, input, rows_slice)?;
-        } else {
-            matvec::matvec_q4(weights, rows_in_mapping, columns, input, rows_slice)?;
-        }
+        quantized_product(
+            matrix.dtype(),
+            weights,
+            rows_in_mapping,
+            columns,
+            input,
+            &mut out[..rows_in_mapping],
+        )?;
         mapped_rows = rows_in_mapping;
     } else if let Some((weights, rows_in_mapping)) = matrix.contiguous_bf16() {
         let length = rows_in_mapping
@@ -1043,7 +1222,7 @@ fn project(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
         )?;
         mapped_rows = rows_in_mapping;
     }
-    if matches!(matrix.dtype(), DType::Q4B32 | DType::Q8B32) {
+    if matrix.dtype().is_quantized() {
         project_quantized_tail(matrix, input, out, mapped_rows)?;
     } else {
         for (row, slot) in out.iter_mut().enumerate().take(rows).skip(mapped_rows) {
@@ -1070,14 +1249,43 @@ fn project_quantized_tail(
         matrix
             .mapping
             .copy_bytes(matrix.file_offset + row * row_bytes, &mut row_data)?;
-        let slot = &mut out[row..=row];
-        if matrix.dtype() == DType::Q8B32 {
-            matvec::matvec_q8(&row_data, 1, columns, input, slot)?;
-        } else {
-            matvec::matvec_q4(&row_data, 1, columns, input, slot)?;
-        }
+        quantized_product(
+            matrix.dtype(),
+            &row_data,
+            1,
+            columns,
+            input,
+            &mut out[row..=row],
+        )?;
     }
     Ok(())
+}
+
+/// The product of `rows` rows of a quantized matrix with `input`, by the kernel
+/// of its type. The kernels of the GGUF types `Q5_0`, `Q4_K` and `Q6_K` are
+/// scalar on every path, so the path only names the one that runs.
+fn quantized_product(
+    dtype: DType,
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    match dtype {
+        DType::Q4B32 => matvec::matvec_q4(weights, rows, columns, input, out),
+        DType::Q8B32 => matvec::matvec_q8(weights, rows, columns, input, out),
+        DType::Q5_0 => {
+            matvec::matvec_q5_0_with(matvec::active(), weights, rows, columns, input, out)
+        }
+        DType::Q4K => {
+            matvec::matvec_q4_k_with(matvec::active(), weights, rows, columns, input, out)
+        }
+        DType::Q6K => {
+            matvec::matvec_q6_k_with(matvec::active(), weights, rows, columns, input, out)
+        }
+        _ => Err(Error::new("model: not a quantized matrix")),
+    }
 }
 
 /// Multiply an `F32` or `F16` matrix of a GGUF file by a vector.
@@ -1116,6 +1324,9 @@ fn project_float(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<
 fn quantized_bytes(dtype: DType, rows: usize, columns: usize) -> Result<usize> {
     match dtype {
         DType::Q8B32 => quant::q8_matrix_bytes(rows, columns),
+        DType::Q5_0 => quant::q5_0_matrix_bytes(rows, columns),
+        DType::Q4K => quant::q4_k_matrix_bytes(rows, columns),
+        DType::Q6K => quant::q6_k_matrix_bytes(rows, columns),
         _ => quant::matrix_bytes(rows, columns),
     }
 }
@@ -1124,7 +1335,29 @@ fn quantized_bytes(dtype: DType, rows: usize, columns: usize) -> Result<usize> {
 fn quantized_layout(dtype: DType, columns: usize) -> Result<(usize, usize)> {
     match dtype {
         DType::Q8B32 => Ok((quant::q8_row_bytes(columns)?, quant::Q8_BLOCK_BYTES)),
+        DType::Q5_0 => Ok((quant::q5_0_row_bytes(columns)?, quant::Q5_0_BLOCK_BYTES)),
+        DType::Q4K => Ok((quant::q4_k_row_bytes(columns)?, quant::Q4_K_BLOCK_BYTES)),
+        DType::Q6K => Ok((quant::q6_k_row_bytes(columns)?, quant::Q6_K_BLOCK_BYTES)),
         _ => Ok((quant::row_bytes(columns)?, quant::BLOCK_BYTES)),
+    }
+}
+
+/// Weights in one block of a quantized type.
+fn quantized_block_elements(dtype: DType) -> usize {
+    match dtype {
+        DType::Q4K | DType::Q6K => quant::QK_K,
+        _ => quant::BLOCK,
+    }
+}
+
+/// Where the binary16 scales sit in a block of a quantized type: `d` first for
+/// `Q4B32`, `Q8B32` and `Q5_0`, `d` and `dmin` for `Q4_K`, and `d` last for
+/// `Q6_K`.
+fn scale_offsets(dtype: DType) -> &'static [usize] {
+    match dtype {
+        DType::Q4K => &[0, 2],
+        DType::Q6K => &[quant::Q6_K_BLOCK_BYTES - 2],
+        _ => &[0],
     }
 }
 
@@ -1169,7 +1402,7 @@ fn require_vector(tensor: &Tensor<'_>, length: usize, name: &str) -> Result<()> 
             tensor.shape()
         )));
     }
-    if matches!(tensor.dtype(), DType::Q4B32 | DType::Q8B32) {
+    if tensor.dtype().is_quantized() {
         return Err(Error::new(format!(
             "model: {name} is quantized, a norm weight stays floating point"
         )));
@@ -1556,5 +1789,336 @@ mod tests {
         let config = model_file.gguf_config().unwrap();
         let error = Model::new(&model_file, config).err().unwrap();
         assert!(error.to_string().contains("non-finite scale"), "{error}");
+    }
+
+    /// The types of the GGUF files that `llama-quantize` writes besides `Q8_0`:
+    /// the `ggml_type` code, the dtype of the model, the weights and the bytes of
+    /// a block and where the binary16 scales are in it.
+    const BLOCK_TYPES: [(u32, DType, usize, usize, &[usize]); 3] = [
+        (6, DType::Q5_0, 32, 22, &[0]),
+        (12, DType::Q4K, 256, 144, &[0, 2]),
+        (14, DType::Q6K, 256, 210, &[208]),
+    ];
+
+    /// A model whose widths are multiples of the 256 weights of a `Q4_K` block.
+    fn super_spec() -> Spec {
+        Spec {
+            hidden: 256,
+            layers: 1,
+            heads: 4,
+            kv_heads: 2,
+            ffn: 256,
+            vocab: 32,
+            eps: 1e-5,
+            theta: 10_000.0,
+        }
+    }
+
+    /// `count` blocks of arbitrary bytes with a finite binary16 at each scale.
+    fn random_blocks(count: usize, block_bytes: usize, scales: &[usize], seed: u64) -> Vec<u8> {
+        let mut rng = Rng::new(seed);
+        let mut bytes = Vec::with_capacity(count * block_bytes);
+        for _ in 0..count {
+            let start = bytes.len();
+            bytes.extend((0..block_bytes).map(|_| (rng.next_f32() * 128.0 + 128.0) as u8));
+            for &scale in scales {
+                let half = f32_to_half(rng.next_f32() * 0.5).to_le_bytes();
+                bytes[start + scale..start + scale + 2].copy_from_slice(&half);
+            }
+        }
+        bytes
+    }
+
+    /// The file of `super_spec` with every matrix in the given type, with
+    /// arbitrary blocks, and the last tensor `blk.0.ffn_down.weight`.
+    fn typed_builder(ggml_type: u32, block: (usize, usize, &[usize])) -> GgufBuilder {
+        let spec = super_spec();
+        let mut file = gguf_builder(&spec, &weights(&spec), Permutation::Converter, Storage::F32);
+        for (index, tensor) in file.tensors.iter_mut().enumerate() {
+            if tensor.dims.len() == 2 {
+                let elements = tensor.dims.iter().product::<u64>() as usize;
+                tensor.ggml_type = ggml_type;
+                tensor.data =
+                    random_blocks(elements / block.0, block.1, block.2, 0x5eed + index as u64);
+            }
+        }
+        let last = file
+            .tensors
+            .iter()
+            .position(|tensor| tensor.name == "blk.0.ffn_down.weight")
+            .unwrap();
+        let last = file.tensors.remove(last);
+        file.tensors.push(last);
+        file
+    }
+
+    fn source(file: &GgufBuilder, name: &str) -> Vec<u8> {
+        file.tensors
+            .iter()
+            .find(|tensor| tensor.name == name)
+            .unwrap()
+            .data
+            .clone()
+    }
+
+    /// The product of the scalar kernel of a type, the definition of the order.
+    fn scalar_product(
+        dtype: DType,
+        weights: &[u8],
+        rows: usize,
+        columns: usize,
+        input: &[f32],
+        out: &mut [f32],
+    ) {
+        match dtype {
+            DType::Q5_0 => matvec::matvec_q5_0_scalar(weights, rows, columns, input, out),
+            DType::Q4K => matvec::matvec_q4_k_scalar(weights, rows, columns, input, out),
+            DType::Q6K => matvec::matvec_q6_k_scalar(weights, rows, columns, input, out),
+            other => panic!("no scalar kernel for {}", other.name()),
+        }
+        .unwrap();
+    }
+
+    #[test]
+    fn the_rows_of_a_q5_0_q4_k_or_q6_k_embedding_decode_like_gguf_py() {
+        use crate::quant::oracle;
+        let spec = super_spec();
+        for (ggml_type, dtype, elements, block_bytes, scales) in BLOCK_TYPES {
+            let file = typed_builder(ggml_type, (elements, block_bytes, scales));
+            let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&file)).unwrap();
+            let embedding = model_file.tensor("model.embed_tokens.weight").unwrap();
+            assert_eq!(embedding.dtype(), dtype);
+            assert_eq!(embedding.shape(), [spec.vocab, spec.hidden]);
+            let blocks = source(&file, "token_embd.weight");
+            let row_bytes = spec.hidden / elements * block_bytes;
+            for row in 0..spec.vocab {
+                let mut decoded = vec![0.0f32; spec.hidden];
+                embedding.read_row(row, &mut decoded).unwrap();
+                let source = &blocks[row * row_bytes..(row + 1) * row_bytes];
+                let expected: Vec<f32> = (0..spec.hidden)
+                    .map(|index| {
+                        let block = &source[index / elements * block_bytes..][..block_bytes];
+                        match dtype {
+                            DType::Q5_0 => oracle::q5_0_element(block, index % elements),
+                            DType::Q4K => oracle::q4_k_element(block, index % elements),
+                            _ => oracle::q6_k_element(block, index % elements),
+                        }
+                    })
+                    .collect();
+                assert_eq!(
+                    bits(&decoded),
+                    bits(&expected),
+                    "{} row {row}",
+                    dtype.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_matrices_of_a_q5_0_q4_k_or_q6_k_file_go_through_their_scalar_kernels() {
+        let spec = super_spec();
+        for (ggml_type, dtype, elements, block_bytes, scales) in BLOCK_TYPES {
+            let file = typed_builder(ggml_type, (elements, block_bytes, scales));
+            let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&file)).unwrap();
+            assert!(model_file.mapped_len() >= model_file.file_len() - 4096);
+            let mut rng = Rng::new(21);
+            for (name, hf, rows, columns) in [
+                (
+                    "blk.0.attn_q.weight",
+                    "model.layers.0.self_attn.q_proj.weight",
+                    spec.hidden,
+                    spec.hidden,
+                ),
+                (
+                    "blk.0.attn_k.weight",
+                    "model.layers.0.self_attn.k_proj.weight",
+                    spec.kv_dim(),
+                    spec.hidden,
+                ),
+                (
+                    "blk.0.ffn_down.weight",
+                    "model.layers.0.mlp.down_proj.weight",
+                    spec.hidden,
+                    spec.ffn,
+                ),
+                (
+                    "token_embd.weight",
+                    "model.embed_tokens.weight",
+                    spec.vocab,
+                    spec.hidden,
+                ),
+            ] {
+                let tensor = model_file.tensor(hf).unwrap();
+                assert_eq!(tensor.dtype(), dtype, "{name}");
+                assert!(!tensor.float_kernel, "{name}");
+                assert_eq!(tensor.contiguous_quantized().unwrap().1, rows, "{name}");
+                let input: Vec<f32> = (0..columns).map(|_| rng.next_f32()).collect();
+                let mut projected = vec![0.0f32; rows];
+                assert_eq!(
+                    project(&tensor, &input, &mut projected).unwrap(),
+                    matvec::macs(rows, columns)
+                );
+                let mut scalar = vec![0.0f32; rows];
+                scalar_product(
+                    dtype,
+                    &source(&file, name),
+                    rows,
+                    columns,
+                    &input,
+                    &mut scalar,
+                );
+                assert_eq!(bits(&projected), bits(&scalar), "{} {name}", dtype.name());
+                assert!(projected.iter().all(|value| value.is_finite()));
+            }
+        }
+    }
+
+    /// A file of the given type whose last tensor, `blk.0.ffn_down.weight`, has its
+    /// last row across the end of the mapping, with no padding after it.
+    fn file_with_a_straddling_last_row_of(
+        ggml_type: u32,
+        block: (usize, usize, &[usize]),
+    ) -> Vec<u8> {
+        let spec = super_spec();
+        let mut file = typed_builder(ggml_type, block);
+        let row_bytes = spec.ffn / block.0 * block.1;
+        for extra in (0..8192).step_by(32) {
+            *file.meta("general.name").unwrap() = Meta::Str("x".repeat(extra));
+            let bytes = file.to_bytes();
+            let model_file = ModelFile::gguf_from_bytes(bytes.clone()).unwrap();
+            let tensor = model_file
+                .tensor("model.layers.0.mlp.down_proj.weight")
+                .unwrap();
+            let start = tensor.file_offset + (spec.hidden - 1) * row_bytes;
+            let end = start + row_bytes;
+            if start < model_file.mapped_len() && model_file.mapped_len() < end {
+                assert!(end <= model_file.file_len());
+                assert!(model_file.file_len() - end < 32, "no padding past the row");
+                return bytes;
+            }
+        }
+        panic!("no header length puts the last row across the end of the mapping");
+    }
+
+    #[test]
+    fn the_last_row_of_a_q5_0_q4_k_or_q6_k_file_has_the_same_bits_in_the_tail_and_the_prefix() {
+        let spec = super_spec();
+        let name = "model.layers.0.mlp.down_proj.weight";
+        for (ggml_type, dtype, elements, block_bytes, scales) in BLOCK_TYPES {
+            let block = (elements, block_bytes, scales);
+            let bytes = file_with_a_straddling_last_row_of(ggml_type, block);
+            let mut padded = bytes.clone();
+            padded.resize(padded.len().next_multiple_of(4096) + 4096, 0);
+            let in_tail = ModelFile::gguf_from_bytes(bytes).unwrap();
+            let in_prefix = ModelFile::gguf_from_bytes(padded).unwrap();
+            let (tail, prefix) = (
+                in_tail.tensor(name).unwrap(),
+                in_prefix.tensor(name).unwrap(),
+            );
+            assert_eq!(tail.dtype(), dtype);
+            assert_eq!(tail.contiguous_quantized().unwrap().1, spec.hidden - 1);
+            assert_eq!(prefix.contiguous_quantized().unwrap().1, spec.hidden);
+            let mut rng = Rng::new(22);
+            let input: Vec<f32> = (0..spec.ffn).map(|_| rng.next_f32()).collect();
+            let mut from_tail = vec![0.0f32; spec.hidden];
+            let mut from_prefix = vec![0.0f32; spec.hidden];
+            project(&tail, &input, &mut from_tail).unwrap();
+            project(&prefix, &input, &mut from_prefix).unwrap();
+            assert_eq!(bits(&from_tail), bits(&from_prefix), "{}", dtype.name());
+            let file = typed_builder(ggml_type, block);
+            let mut scalar = vec![0.0f32; spec.hidden];
+            scalar_product(
+                dtype,
+                &source(&file, "blk.0.ffn_down.weight"),
+                spec.hidden,
+                spec.ffn,
+                &input,
+                &mut scalar,
+            );
+            assert_eq!(bits(&from_tail), bits(&scalar), "{}", dtype.name());
+        }
+    }
+
+    #[test]
+    fn a_q5_0_q4_k_or_q6_k_block_with_a_scale_that_is_not_finite_is_refused() {
+        for (ggml_type, dtype, elements, block_bytes, scales) in BLOCK_TYPES {
+            for &scale in scales {
+                for (name, hf, block_index) in [
+                    (
+                        "blk.0.ffn_up.weight",
+                        "model.layers.0.mlp.up_proj.weight",
+                        3usize,
+                    ),
+                    ("token_embd.weight", "model.embed_tokens.weight", 0),
+                ] {
+                    let mut file = typed_builder(ggml_type, (elements, block_bytes, scales));
+                    let tensor = file.tensor(name).unwrap();
+                    let at = block_index * block_bytes + scale;
+                    tensor.data[at..at + 2].copy_from_slice(&0x7c00u16.to_le_bytes());
+                    let model_file = ModelFile::gguf_from_bytes(file.to_bytes()).unwrap();
+                    let config = model_file.gguf_config().unwrap();
+                    let error = Model::new(&model_file, config).err().unwrap();
+                    let shown = error.to_string();
+                    assert!(
+                        shown.contains("non-finite scale") && shown.contains(hf),
+                        "{} {name} scale at {scale}: {shown}",
+                        dtype.name()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_q5_0_q4_k_or_q6_k_model_binds_and_runs_tied_and_untied() {
+        let spec = super_spec();
+        for (ggml_type, dtype, elements, block_bytes, scales) in BLOCK_TYPES {
+            let file = typed_builder(ggml_type, (elements, block_bytes, scales));
+            let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&file)).unwrap();
+            let config = model_file.gguf_config().unwrap();
+            assert!(config.tie_word_embeddings);
+            let model = Model::new(&model_file, config).unwrap();
+            assert_eq!(model.weight_dtype(), dtype.name());
+            let mut session = model.session(8).unwrap();
+            for token in [1u32, 2, 3] {
+                session.forward(token).unwrap();
+            }
+            assert_eq!(session.logits().len(), spec.vocab);
+            assert!(session.logits().iter().all(|value| value.is_finite()));
+            let tied = session.logits().to_vec();
+
+            // An output matrix of its own with the rows of the embedding.
+            let mut untied = file.clone();
+            let embedding = untied.tensor("token_embd.weight").unwrap().clone();
+            untied.tensors.push(GgufTensorOut {
+                name: "output.weight".into(),
+                ..embedding
+            });
+            let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&untied)).unwrap();
+            let config = model_file.gguf_config().unwrap();
+            assert!(!config.tie_word_embeddings);
+            let model = Model::new(&model_file, config).unwrap();
+            let mut session = model.session(8).unwrap();
+            for token in [1u32, 2, 3] {
+                session.forward(token).unwrap();
+            }
+            assert_eq!(bits(session.logits()), bits(&tied), "{}", dtype.name());
+        }
+    }
+
+    #[test]
+    fn a_quantized_norm_is_refused_when_the_model_binds_it() {
+        // `gguf_model` refuses it first; the model refuses it too if a table
+        // reaches it, as a `safetensors` header can name one.
+        let file = typed_builder(12, (256, 144, &[0, 2]));
+        let mut model_file = ModelFile::gguf_from_bytes(file.to_bytes()).unwrap();
+        model_file
+            .header
+            .push("norm.weight", DType::Q4K, &[1, 256], 0, 144)
+            .unwrap();
+        model_file.validate_quantization().unwrap();
+        let norm = model_file.tensor("norm.weight").unwrap();
+        assert!(require_vector(&norm, 256, "norm.weight").is_err());
     }
 }

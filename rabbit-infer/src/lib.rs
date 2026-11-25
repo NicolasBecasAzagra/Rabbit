@@ -64,6 +64,24 @@
 //! * [`gguf_twin`] is the proof that the permutation and the RoPE convention of
 //!   the GGUF reader are right: the two twins decode the same tokens, and two
 //!   wrong readings of the GGUF file do not.
+//! * [`golden_compare`] reads the document that `bench/gguf/llama_golden.cpp`
+//!   prints, writes the same document for a run of Rabbit and compares the two
+//!   with a stated rule: the tokens must be equal, except at a swap of the two
+//!   best candidates at a near tie, which the activation quantization of
+//!   `llama.cpp` may flip (the emulation experiment did not confirm it: the
+//!   emulated noise was 0.82 and 1.12 against the plain 0.61 and 1.54 on the real
+//!   `Q8_0` and `Q4_K_M` files, and a one `ulp` change of the quantizer input
+//!   moves the logits by about 0.13). It is pure and host tested, and the
+//!   `rabbit-infer-golden` tool is built on it.
+//! * [`llama_emulation`] is a diagnostic, off by default: the activations that
+//!   the CPU backend of `llama.cpp` multiplies with a quantized weight (packed
+//!   to `Q8_0` or `Q8_K` and unpacked) and its `f16` key value cache. It was an
+//!   attempt to measure how much of the difference with the oracle is the
+//!   oracle's own arithmetic; the conclusion is that the logits of a quantized
+//!   model depend on rounding decisions that cannot be reproduced bit for bit.
+//! * [`tensor_verify`] hashes the raw bytes of every quantized tensor of a GGUF
+//!   file and its dequantised `f32` values, and compares them with the hashes
+//!   that `gguf-py` wrote.
 //! * `mapping` and `model` are built on every host: the system calls of the
 //!   mapping exist on Linux only, and elsewhere the same mapping is made over
 //!   bytes in memory, so the decoder and its proofs run on a developer host.
@@ -80,8 +98,10 @@ pub mod error;
 pub mod gguf;
 pub mod gguf_model;
 pub mod gguf_twin;
+pub mod golden_compare;
 pub mod grammar;
 pub mod json;
+pub mod llama_emulation;
 pub mod mapping;
 pub mod math;
 pub mod matvec;
@@ -95,6 +115,7 @@ pub mod reference;
 pub mod safetensors;
 pub mod sha256;
 pub mod synthetic;
+pub mod tensor_verify;
 pub mod vocab;
 
 #[cfg(target_os = "linux")]
