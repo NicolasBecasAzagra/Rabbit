@@ -134,7 +134,7 @@ QEMU_FLAGS := -M q35 -m 512M \
 	-serial stdio \
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs matvec-check-initramfs matvec-check matvec-check-run agent agent-initramfs agent-net-initramfs run-infer quantize
+.PHONY: all build uefi run run-uefi run-smp test fmt fmt-check clippy clippy-host check clean userland bench netclient netstream print-kernel-path infer infer-model infer-initramfs matvec-check-initramfs matvec-check matvec-check-run matvec-check-gguf-gate agent agent-initramfs agent-net-initramfs run-infer quantize
 
 # The path of the built kernel, so the CI does not have to repeat it.
 print-kernel-path:
@@ -262,7 +262,12 @@ run-infer: infer-initramfs build
 # checks the eight and four bit products bit for bit, and then decodes whole
 # prompts with the synthetic model, in bfloat16 and in the Q8 and Q4 copies
 # the repository's own quantizer writes from it, and compares the greedy tokens
-# and the logits of every path with the scalar one. The model is the synthetic
+# and the logits of every path with the scalar one. It also proves the GGUF
+# reader: the synthetic weights are written as a GGUF `llama` file with the rows
+# of the query and key projections permuted as the llama.cpp converter does (and
+# once more without the permutation), the checkpoint runs with the split half
+# RoPE and the GGUF file with adjacent pairs, and the two must decode the same
+# tokens while the two wrong readings of the GGUF file must not. The model is the synthetic
 # development model, written under MATVEC_DIR and not taken from INFER_MODEL_DIR,
 # which can hold a real checkpoint far too large for the emulated guest. The
 # outputs live outside the repository. MATVEC_CPU picks the processor model, for
@@ -287,11 +292,12 @@ matvec-check-initramfs: musl-std
 	rm -rf "$(MATVEC_MODEL)" "$(MATVEC_DIR)/q8" "$(MATVEC_DIR)/q4" "$(MATVEC_STAGE)"
 	$(CARGO) run --release --manifest-path $(INFER_DIR)/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host \
-		--bin rabbit-infer-gen -- --out $(MATVEC_MODEL)
+		--bin rabbit-infer-gen -- --out $(MATVEC_MODEL) --gguf --gguf-unpermuted
 	$(MAKE) quantize QUANT_BITS=8 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q8
 	$(MAKE) quantize QUANT_BITS=4 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q4
 	mkdir -p $(MATVEC_STAGE)
 	cp $(MATVEC_MODEL)/config.json $(MATVEC_MODEL)/model.safetensors $(MATVEC_STAGE)/
+	cp $(MATVEC_MODEL)/model.gguf $(MATVEC_MODEL)/model-nopermute.gguf $(MATVEC_STAGE)/
 	cp $(MATVEC_DIR)/q8/model.safetensors $(MATVEC_STAGE)/model-q8.safetensors
 	cp $(MATVEC_DIR)/q4/model.safetensors $(MATVEC_STAGE)/model-q4.safetensors
 	EXTRA_DIR=$(MATVEC_STAGE) bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
@@ -341,7 +347,52 @@ matvec-check-run:
 			done; \
 		done; \
 	done; \
+	$(MAKE) --no-print-directory matvec-check-gguf-gate || exit 1; \
 	echo "matvec-check OK (cpu $(MATVEC_CPU), QEMU exit status 33)"
+
+# The gates on the GGUF lines of the serial log, on the host and apart from the
+# Rust check that prints them, so the log is judged twice. `grep -E` and awk are
+# the portable subset (no GNU `\|`), and the numbers are compared as numbers.
+# Run it alone on a log with `make matvec-check-gguf-gate MATVEC_LOG=<file>`.
+# Every twin line must hold its tokens, have no undecided step and stay below
+# 1e-5 in the logits, and the smallest margin between the two best logits must
+# be positive.
+GGUF_NUMBER := ^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$$
+GGUF_TWIN_AWK := '/^GGUF twin /{ n++; te=""; un=""; df=""; \
+	for (i = 1; i <= NF; i++) { split($$i, kv, "="); \
+		if (kv[1] == "tokens_equal") te = kv[2]; \
+		if (kv[1] == "undecided") un = kv[2]; \
+		if (kv[1] == "max_abs_logit_diff") df = kv[2] } \
+	if (te != "true" || un != "0" || df !~ /$(GGUF_NUMBER)/ || df + 0 >= 1e-5) { bad = 1; print "bad twin line: " $$0 } } \
+	END { exit (n > 0 && !bad) ? 0 : 1 }'
+GGUF_MARGIN_AWK := '/^GGUF margin /{ n++; mg=""; \
+	for (i = 1; i <= NF; i++) { split($$i, kv, "="); if (kv[1] == "min_top2") mg = kv[2] } \
+	if (mg !~ /$(GGUF_NUMBER)/ || mg + 0 <= 0) { bad = 1; print "bad margin line: " $$0 } } \
+	END { exit (n > 0 && !bad) ? 0 : 1 }'
+
+matvec-check-gguf-gate:
+	@for steps in 8 64; do \
+		if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF twin format=f32 prompts=[0-9]+ steps=$$steps tokens_equal=true max_abs_logit_diff=[0-9.e+-]+ undecided=0 bit_exact=(true|false)$$"; then \
+			echo "matvec-check: the GGUF file did not decode the same $$steps tokens as its safetensors twin"; exit 1; \
+		fi; \
+	done; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_TWIN_AWK); then \
+		echo "matvec-check: a GGUF twin line has other tokens, an undecided step or a logit difference of 1e-5 or more"; exit 1; \
+	fi; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_MARGIN_AWK); then \
+		echo "matvec-check: the smallest margin of the GGUF check is missing or not positive"; exit 1; \
+	fi; \
+	for control in split_half_rope no_permutation; do \
+		if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF negative_control $$control detected=true "; then \
+			echo "matvec-check: the wrong reading $$control of the GGUF file was not detected"; exit 1; \
+		fi; \
+	done; \
+	if tr -d '\r' < $(MATVEC_LOG) | grep -Eq '^GGUF (FAIL|ERR)|detected=false'; then \
+		echo "matvec-check: the GGUF proof failed"; exit 1; \
+	fi; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq '^GGUF OK$$'; then \
+		echo "matvec-check: no GGUF OK line"; exit 1; \
+	fi
 
 build: userland infer
 	$(CARGO) build --release $(KERNEL_FLAGS)

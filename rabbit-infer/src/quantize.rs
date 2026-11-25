@@ -291,7 +291,7 @@ fn decode_elements(body: &[u8], dtype: DType, name: &str) -> Result<Vec<f32>> {
         DType::Q4B32 | DType::Q8B32 => Err(Error::new(format!(
             "{name}: the checkpoint is already quantized"
         ))),
-        DType::Other => Err(Error::new(format!("{name}: unsupported source dtype"))),
+        DType::F16 | DType::Other => Err(Error::new(format!("{name}: unsupported source dtype"))),
     }
 }
 

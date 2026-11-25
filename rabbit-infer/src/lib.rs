@@ -54,8 +54,21 @@
 //! * [`gguf`] is the pure reader of the GGUF container: the metadata, the
 //!   tensor directory and the exact bytes of a tensor, borrowed from the
 //!   input. It is host tested and checks every size.
-//! * `mapping`, `model`, `runtime` and `compare` need Linux `mmap` and are only
-//!   built for the Linux target. Everything above is host tested.
+//! * [`gguf_model`] reads the `llama` model a GGUF file describes: the config
+//!   from the metadata and the tensors under the names of the `safetensors`
+//!   layout, with named errors for everything it does not read. It is pure and
+//!   host tested.
+//! * [`synthetic`] writes the synthetic development model: the checkpoint in
+//!   `safetensors` and its twin in GGUF, with the rows of the query and key
+//!   projections permuted as the `llama.cpp` converter does.
+//! * [`gguf_twin`] is the proof that the permutation and the RoPE convention of
+//!   the GGUF reader are right: the two twins decode the same tokens, and two
+//!   wrong readings of the GGUF file do not.
+//! * `mapping` and `model` are built on every host: the system calls of the
+//!   mapping exist on Linux only, and elsewhere the same mapping is made over
+//!   bytes in memory, so the decoder and its proofs run on a developer host.
+//!   `runtime` and `compare` need the Linux system calls and are only built
+//!   for the Linux target. Everything above is host tested.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -65,10 +78,14 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod gguf;
+pub mod gguf_model;
+pub mod gguf_twin;
 pub mod grammar;
 pub mod json;
+pub mod mapping;
 pub mod math;
 pub mod matvec;
+pub mod model;
 pub mod paths;
 pub mod power_off;
 pub mod prompt;
@@ -77,14 +94,11 @@ pub mod quantize;
 pub mod reference;
 pub mod safetensors;
 pub mod sha256;
+pub mod synthetic;
 pub mod vocab;
 
 #[cfg(target_os = "linux")]
 pub mod compare;
-#[cfg(target_os = "linux")]
-pub mod mapping;
-#[cfg(target_os = "linux")]
-pub mod model;
 #[cfg(target_os = "linux")]
 pub mod runtime;
 

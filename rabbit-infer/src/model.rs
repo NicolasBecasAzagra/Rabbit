@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-//! The Llama-style decoder over a mapped `safetensors` file.
+//! The Llama-style decoder over a mapped `safetensors` or GGUF file.
 //!
 //! The model keeps the tensor directory and a borrowed view of every matrix it
 //! needs. A matrix is `[out_features, in_features]`, so one output element is a
@@ -26,11 +26,25 @@
 //! `f32` happens in registers, which halves the weight traffic against a cached
 //! `f32` copy (269 MB against 538 MB for the reference model) at the cost of
 //! one shift and widening per weight, per token.
+//!
+//! A GGUF file of the `llama` architecture binds the same way. [`ModelFile`]
+//! reads its directory with [`crate::gguf_model`], which names every tensor as
+//! the `safetensors` layout does and gives it that layout's shape, and keeps the
+//! [`Config`] the metadata describes ([`ModelFile::gguf_config`]). The rows of
+//! the query and key projections are stored in the order `llama.cpp` rotates
+//! them, so that config has `rope_interleaved` set and nothing un-permutes the
+//! weights. The matrices of such a file are `F32` or `F16` and go through the
+//! scalar kernels [`matvec::matvec_f32`] and [`matvec::matvec_f16`], whose order
+//! of operations is canonical and whose speed is that of a plain loop: they are
+//! a reference, not an optimisation. A matrix of a `safetensors` file takes the
+//! paths it always took.
 
 use std::time::Instant;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::gguf::{Gguf, GgufError};
+use crate::gguf_model::{self, GgufModel, GgufModelError};
 use crate::mapping::Mapping;
 use crate::math::{argmax, rms_norm, rope, silu, softmax};
 use crate::matvec;
@@ -73,17 +87,102 @@ impl Dims {
     }
 }
 
+/// The most bytes of a GGUF file copied to read a header that ends in the
+/// final partial page of the file.
+const MAX_GGUF_HEADER_COPY: usize = 256 << 20;
+
 /// A mapped model file and its tensor directory.
 pub struct ModelFile {
     mapping: Mapping,
     header: safetensors::Header,
     data_start: usize,
+    /// The configuration of a GGUF file, which carries it in its metadata.
+    gguf_config: Option<Config>,
 }
 
 impl ModelFile {
     /// Open the file, read the header and map the data.
     pub fn open(path: &str) -> Result<Self> {
-        let mapping = Mapping::open(path)?;
+        Self::from_mapping(Mapping::open(path)?)
+    }
+
+    /// Read a `safetensors` file held in memory.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Self::from_mapping(Mapping::from_bytes(bytes))
+    }
+
+    /// Open a GGUF file of the `llama` architecture and map its data.
+    ///
+    /// The tensors are read in place, through the same mapping as a
+    /// `safetensors` file. Only the directory and the metadata are copied.
+    pub fn open_gguf(path: &str) -> Result<Self> {
+        Self::gguf_from_mapping(Mapping::open(path)?)
+    }
+
+    /// Read a GGUF file held in memory.
+    pub fn gguf_from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Self::gguf_from_mapping(Mapping::from_bytes(bytes))
+    }
+
+    /// The configuration the metadata of a GGUF file describes, or `None` for a
+    /// `safetensors` file, whose configuration is `config.json`.
+    pub fn gguf_config(&self) -> Option<&Config> {
+        self.gguf_config.as_ref()
+    }
+
+    fn gguf_from_mapping(mapping: Mapping) -> Result<Self> {
+        let file_len = mapping.file_len();
+        let read = |head: &[u8]| -> core::result::Result<GgufModel, GgufModelError> {
+            let gguf = Gguf::parse_head(head, file_len)?;
+            gguf_model::load(&gguf)
+        };
+        // The mapping holds whole pages, and the header is nearly always inside
+        // them. When it ends in the final partial page the file is the header
+        // and less than a page of data, so reading it whole costs the header.
+        let model = match read(mapping.prefix()) {
+            Err(GgufModelError::Container(GgufError::Truncated))
+                if mapping.mapped_len() < file_len && file_len <= MAX_GGUF_HEADER_COPY =>
+            {
+                read(&mapping.read_bytes(0, file_len)?)
+            }
+            Err(GgufModelError::Container(GgufError::Truncated))
+                if mapping.mapped_len() < file_len =>
+            {
+                return Err(Error::new(format!(
+                    "gguf: the header ends in the final partial page of a file of {file_len} \
+                     bytes, over the {MAX_GGUF_HEADER_COPY} bytes this reader copies to read it"
+                )));
+            }
+            other => other,
+        }
+        .map_err(Error::new)?;
+        let mut header = safetensors::Header::empty();
+        for tensor in &model.tensors {
+            let dtype = match tensor.kind {
+                crate::gguf::TensorKind::F32 => DType::F32,
+                crate::gguf::TensorKind::F16 => DType::F16,
+                _ => {
+                    return Err(Error::new(format!(
+                        "model: tensor {} is not F32 or F16",
+                        tensor.gguf_name
+                    )))
+                }
+            };
+            let end = tensor
+                .start
+                .checked_add(tensor.byte_len)
+                .ok_or_else(|| Error::new("model: tensor offset overflow"))?;
+            header.push(&tensor.name, dtype, &tensor.shape, tensor.start, end)?;
+        }
+        Ok(Self {
+            mapping,
+            header,
+            data_start: model.data_offset,
+            gguf_config: Some(model.config),
+        })
+    }
+
+    fn from_mapping(mapping: Mapping) -> Result<Self> {
         let file_len = mapping.file_len();
         if file_len < 8 {
             return Err(Error::new("model: file is shorter than the header length"));
@@ -113,6 +212,7 @@ impl ModelFile {
             mapping,
             header,
             data_start,
+            gguf_config: None,
         })
     }
 
@@ -153,7 +253,13 @@ impl ModelFile {
             .find(name)
             .ok_or_else(|| Error::new(format!("model: missing tensor {name}")))?;
         let tensor_name = self.header.name(info);
-        Tensor::new(info, tensor_name, &self.mapping, self.data_start)
+        Tensor::new(
+            info,
+            tensor_name,
+            &self.mapping,
+            self.data_start,
+            self.gguf_config.is_some(),
+        )
     }
 
     /// `true` when at least one tensor uses the quantized format.
@@ -233,6 +339,9 @@ struct Tensor<'a> {
     mapping: &'a Mapping,
     file_offset: usize,
     element_size: usize,
+    /// `true` for an `F32` or `F16` matrix of a GGUF file, which the scalar
+    /// float kernels of [`crate::matvec`] multiply.
+    float_kernel: bool,
 }
 
 impl<'a> Tensor<'a> {
@@ -241,6 +350,7 @@ impl<'a> Tensor<'a> {
         name: &'a str,
         mapping: &'a Mapping,
         data_start: usize,
+        from_gguf: bool,
     ) -> Result<Self> {
         let shape = info.shape();
         let bytes = match info.dtype {
@@ -285,6 +395,7 @@ impl<'a> Tensor<'a> {
             mapping,
             file_offset,
             element_size,
+            float_kernel: from_gguf && matches!(info.dtype, DType::F32 | DType::F16),
         };
         if matches!(info.dtype, DType::Q4B32 | DType::Q8B32) {
             tensor.check_scales()?;
@@ -335,6 +446,7 @@ impl<'a> Tensor<'a> {
         match self.dtype() {
             DType::Bf16 => f32::from_bits((self.mapping.u16_at(offset) as u32) << 16),
             DType::F32 => f32::from_bits(self.mapping.u32_at(offset)),
+            DType::F16 => quant::half_to_f32(self.mapping.u16_at(offset)),
             DType::Q4B32 | DType::Q8B32 | DType::Other => 0.0,
         }
     }
@@ -434,7 +546,7 @@ impl<'a> Tensor<'a> {
                     sum += f32::from_bits(bits) * input;
                 }
             }
-            DType::Q4B32 | DType::Q8B32 | DType::Other => {
+            DType::F16 | DType::Q4B32 | DType::Q8B32 | DType::Other => {
                 return Err(Error::new(format!(
                     "model: tensor {} has no scalar element accessor",
                     self.name
@@ -882,6 +994,9 @@ fn project(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
             matrix.name
         )));
     }
+    if matrix.float_kernel {
+        return project_float(matrix, input, out);
+    }
     let mut mapped_rows = 0;
     if let Some((weights, rows_in_mapping)) = matrix.contiguous_quantized() {
         let rows_slice = &mut out[..rows_in_mapping];
@@ -910,6 +1025,38 @@ fn project(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
     }
     for (row, slot) in out.iter_mut().enumerate().take(rows).skip(mapped_rows) {
         *slot = matrix.dot(row, input)?;
+    }
+    Ok(matvec::macs(rows, columns))
+}
+
+/// Multiply an `F32` or `F16` matrix of a GGUF file by a vector.
+///
+/// Every row goes through the same scalar kernel and so has the same order of
+/// operations: the rows inside the mapping in one call, and the rows that reach
+/// into the final partial page one at a time, copied out of the file first.
+fn project_float(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
+    let rows = matrix.shape().first().copied().unwrap_or(0);
+    let columns = matrix.shape().last().copied().unwrap_or(0);
+    let row_bytes = columns
+        .checked_mul(matrix.element_size)
+        .ok_or_else(|| Error::new("model: row byte length overflow"))?;
+    let product = |bytes: &[u8], count: usize, out: &mut [f32]| match matrix.dtype() {
+        DType::F16 => matvec::matvec_f16(bytes, count, columns, input, out),
+        _ => matvec::matvec_f32(bytes, count, columns, input, out),
+    };
+    let mut mapped_rows = 0;
+    if let Some((weights, rows_in_mapping)) = matrix.contiguous_rows(row_bytes, rows) {
+        product(weights, rows_in_mapping, &mut out[..rows_in_mapping])?;
+        mapped_rows = rows_in_mapping;
+    }
+    if mapped_rows < rows {
+        let mut row_data = vec![0u8; row_bytes];
+        for row in mapped_rows..rows {
+            matrix
+                .mapping
+                .copy_bytes(matrix.file_offset + row * row_bytes, &mut row_data)?;
+            product(&row_data, 1, &mut out[row..=row])?;
+        }
     }
     Ok(matvec::macs(rows, columns))
 }

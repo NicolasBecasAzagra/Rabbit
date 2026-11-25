@@ -346,8 +346,14 @@ impl Config {
         self.sources[field as usize] = Source::Config;
     }
 
+    /// Record that the model file itself carried a value, for a config that
+    /// does not come from `config.json`.
+    pub(crate) fn mark_present(&mut self, field: Field) {
+        self.set(field);
+    }
+
     /// Reject values that cannot describe a model.
-    fn validate(self) -> Result<Self> {
+    pub(crate) fn validate(self) -> Result<Self> {
         if self.hidden_size == 0
             || self.num_hidden_layers == 0
             || self.num_attention_heads == 0

@@ -19,9 +19,18 @@
 //! weights become resident and pinned instead of merely mapped, and the cost
 //! of the guarantee lands in the first token. The final partial page is not
 //! part of the mapping and is not pinned.
+//!
+//! The system calls exist on Linux only. Every other host builds the same
+//! [`Mapping`] over bytes it holds in memory ([`Mapping::from_bytes`]), with the
+//! same split into whole pages and a final partial page, so the model code and
+//! its tests run unchanged there. On such a host [`Mapping::open`] reads the
+//! file into memory instead of mapping it.
 
+#[cfg(target_os = "linux")]
 use std::fs::File;
+#[cfg(target_os = "linux")]
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(target_os = "linux")]
 use std::os::fd::{AsRawFd, FromRawFd};
 
 use crate::error::{Error, Result};
@@ -29,15 +38,25 @@ use crate::error::{Error, Result};
 /// Page size of the target.
 const PAGE_SIZE: usize = 4096;
 
+#[cfg(target_os = "linux")]
 const SYS_OPENAT: u64 = 257;
+#[cfg(target_os = "linux")]
 const SYS_MMAP: u64 = 9;
+#[cfg(target_os = "linux")]
 const SYS_MUNMAP: u64 = 11;
+#[cfg(target_os = "linux")]
 const SYS_MADVISE: u64 = 28;
+#[cfg(target_os = "linux")]
 const SYS_MLOCK: u64 = 149;
+#[cfg(target_os = "linux")]
 const AT_FDCWD: u64 = -100i64 as u64;
+#[cfg(target_os = "linux")]
 const O_RDONLY: u64 = 0;
+#[cfg(target_os = "linux")]
 const PROT_READ: u64 = 1;
+#[cfg(target_os = "linux")]
 const MAP_PRIVATE: u64 = 2;
+#[cfg(target_os = "linux")]
 const MADV_HUGEPAGE: u64 = 14;
 
 /// Open a path from the initramfs read only.
@@ -46,6 +65,7 @@ const MADV_HUGEPAGE: u64 = 14;
 /// Rabbit implements the Linux `openat` entry point instead. The descriptor is
 /// wrapped in a [`File`], so reads, seeks and the final close use the same
 /// standard library code as everywhere else.
+#[cfg(target_os = "linux")]
 pub fn open_readonly(path: &str) -> Result<File> {
     match open_descriptor(path) {
         Ok(descriptor) => {
@@ -64,6 +84,7 @@ pub fn open_readonly(path: &str) -> Result<File> {
 ///
 /// The config file is optional: the runtime falls back to its documented
 /// defaults when it is absent. Every other error is still a failure.
+#[cfg(target_os = "linux")]
 pub fn open_readonly_optional(path: &str) -> Result<Option<File>> {
     match open_descriptor(path) {
         Ok(descriptor) => {
@@ -83,6 +104,7 @@ pub fn open_readonly_optional(path: &str) -> Result<Option<File>> {
 /// `openat(AT_FDCWD, path, O_RDONLY)`.
 ///
 /// Returns the raw descriptor, or the negative Linux error number.
+#[cfg(target_os = "linux")]
 fn open_descriptor(path: &str) -> core::result::Result<i32, i64> {
     let mut terminated = Vec::with_capacity(path.len() + 1);
     terminated.extend_from_slice(path.as_bytes());
@@ -117,10 +139,49 @@ pub struct Mapping {
     file_len: usize,
     huge: bool,
     tail: Vec<u8>,
+    /// The bytes `base` points into when the mapping is not a kernel mapping.
+    memory: Option<Vec<u8>>,
 }
 
 impl Mapping {
+    /// A mapping over bytes held in memory, laid out as a file mapping is.
+    ///
+    /// The whole pages are the mapped prefix and the final partial page is the
+    /// tail, exactly as [`Mapping::open`] splits a file, so a model read from
+    /// memory takes the same paths as one read from the initramfs. Nothing is
+    /// copied but the tail.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let file_len = bytes.len();
+        let mapped_len = file_len / PAGE_SIZE * PAGE_SIZE;
+        let tail = bytes[mapped_len..].to_vec();
+        let mut mapping = Self {
+            base: core::ptr::null_mut(),
+            mapped_len,
+            file_len,
+            huge: false,
+            tail,
+            memory: Some(bytes),
+        };
+        if mapped_len != 0 {
+            // The pointer comes from the storage as it is kept, after the move.
+            if let Some(memory) = mapping.memory.as_mut() {
+                mapping.base = memory.as_mut_ptr();
+            }
+        }
+        mapping
+    }
+
+    /// Read `path` into memory. Hosts without the Linux system calls map no
+    /// file.
+    #[cfg(not(target_os = "linux"))]
+    pub fn open(path: &str) -> Result<Self> {
+        let bytes = std::fs::read(path)
+            .map_err(|error| Error::new(format!("open {path} failed: {error}")))?;
+        Ok(Self::from_bytes(bytes))
+    }
+
     /// Open `path` and map its whole pages read only.
+    #[cfg(target_os = "linux")]
     pub fn open(path: &str) -> Result<Self> {
         let mut file = open_readonly(path)?;
         let file_len = usize::try_from(file.metadata()?.len())
@@ -153,6 +214,7 @@ impl Mapping {
             file_len,
             huge,
             tail,
+            memory: None,
         })
     }
 
@@ -177,7 +239,8 @@ impl Mapping {
             return &[];
         }
         // SAFETY: `base` points at `mapped_len` bytes the kernel mapped read
-        // only, the mapping lives as long as `self`, and the slice is shared.
+        // only, or at the first `mapped_len` bytes of `memory`, which is never
+        // written; the mapping lives as long as `self`, and the slice is shared.
         unsafe { core::slice::from_raw_parts(self.base, self.mapped_len) }
     }
 
@@ -203,27 +266,34 @@ impl Mapping {
     /// the length are page aligned by construction, which is what the call
     /// requires. Returns the positive error number on failure.
     pub fn pin(&self) -> core::result::Result<(), i64> {
-        if self.mapped_len == 0 {
+        if self.mapped_len == 0 || self.memory.is_some() {
             return Ok(());
         }
-        let result: i64;
-        // SAFETY: the range is the successful `mmap` result, it is page
-        // aligned and non-empty, and `mlock` only marks pages the process
-        // already mapped.
-        unsafe {
-            core::arch::asm!(
-                "syscall",
-                inlateout("rax") SYS_MLOCK as i64 => result,
-                in("rdi") self.base as u64,
-                in("rsi") self.mapped_len as u64,
-                lateout("rcx") _,
-                lateout("r11") _,
-                options(nostack),
-            );
+        #[cfg(target_os = "linux")]
+        {
+            let result: i64;
+            // SAFETY: the range is the successful `mmap` result, it is page
+            // aligned and non-empty, and `mlock` only marks pages the process
+            // already mapped.
+            unsafe {
+                core::arch::asm!(
+                    "syscall",
+                    inlateout("rax") SYS_MLOCK as i64 => result,
+                    in("rdi") self.base as u64,
+                    in("rsi") self.mapped_len as u64,
+                    lateout("rcx") _,
+                    lateout("r11") _,
+                    options(nostack),
+                );
+            }
+            if (-4095..0).contains(&result) {
+                Err(-result)
+            } else {
+                Ok(())
+            }
         }
-        if (-4095..0).contains(&result) {
-            Err(-result)
-        } else {
+        #[cfg(not(target_os = "linux"))]
+        {
             Ok(())
         }
     }
@@ -318,8 +388,12 @@ impl Mapping {
 }
 
 impl Drop for Mapping {
+    #[cfg(not(target_os = "linux"))]
+    fn drop(&mut self) {}
+
+    #[cfg(target_os = "linux")]
     fn drop(&mut self) {
-        if self.mapped_len == 0 {
+        if self.mapped_len == 0 || self.memory.is_some() {
             return;
         }
         // SAFETY: `base` and `mapped_len` are the exact values a successful
@@ -336,6 +410,7 @@ impl Drop for Mapping {
 ///
 /// The caller must keep `descriptor` open for the duration of the mapping and
 /// must not touch the returned range except through the mapping.
+#[cfg(target_os = "linux")]
 unsafe fn map_read(descriptor: i32, length: usize) -> Result<*mut u8> {
     let address: i64;
     // SAFETY: the caller upholds the descriptor contract; the instruction only
@@ -369,6 +444,7 @@ unsafe fn map_read(descriptor: i32, length: usize) -> Result<*mut u8> {
 ///
 /// Returns `true` when the kernel accepted the advice. The mapping is already
 /// valid without it, so a refusal only means the range stays on 4 KiB pages.
+#[cfg(target_os = "linux")]
 fn request_huge_pages(base: *mut u8, length: usize) -> bool {
     let result: i64;
     // SAFETY: `base` and `length` are the values a successful `mmap` returned,
@@ -393,6 +469,7 @@ fn request_huge_pages(base: *mut u8, length: usize) -> bool {
 /// # Safety
 ///
 /// `address` and `length` must be the values a successful `mmap` returned.
+#[cfg(target_os = "linux")]
 unsafe fn unmap(address: *mut u8, length: usize) {
     let result: i64;
     // SAFETY: the caller upholds the mapping contract above.

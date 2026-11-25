@@ -33,6 +33,11 @@ pub enum DType {
     Bf16,
     /// Single precision floating point.
     F32,
+    /// Half precision floating point (IEEE binary16).
+    ///
+    /// Only the GGUF reader produces this type. The `safetensors` parser keeps
+    /// reading an `F16` header entry as [`DType::Other`], as it always did.
+    F16,
     /// Four bit weights in blocks of [`crate::quant::BLOCK`].
     Q4B32,
     /// Eight bit weights in blocks of the same size.
@@ -48,6 +53,7 @@ impl DType {
         match self {
             Self::Bf16 => Some(2),
             Self::F32 => Some(4),
+            Self::F16 => Some(2),
             Self::Q4B32 | Self::Q8B32 | Self::Other => None,
         }
     }
@@ -68,6 +74,7 @@ impl DType {
         match self {
             Self::Bf16 => "BF16",
             Self::F32 => "F32",
+            Self::F16 => "F16",
             Self::Q4B32 => "Q4B32",
             Self::Q8B32 => "Q8B32",
             Self::Other => "unsupported",
@@ -132,6 +139,54 @@ pub struct Header {
 }
 
 impl Header {
+    /// A directory without tensors, to be filled with [`Self::push`].
+    ///
+    /// The GGUF reader builds the directory of a file that is not a
+    /// `safetensors` file with it, so the model binds both the same way.
+    pub fn empty() -> Self {
+        Self {
+            names: String::new(),
+            tensors: Vec::new(),
+            metadata: None,
+        }
+    }
+
+    /// Append one tensor. `start` and `end` are relative to the data section.
+    pub fn push(
+        &mut self,
+        name: &str,
+        dtype: DType,
+        shape: &[usize],
+        start: usize,
+        end: usize,
+    ) -> Result<()> {
+        if shape.is_empty() || shape.len() > MAX_DIMS {
+            return Err(Error::new(format!(
+                "safetensors: tensor {name} has rank {}, the decoder uses 1 or 2",
+                shape.len()
+            )));
+        }
+        if end < start {
+            return Err(Error::new(format!(
+                "safetensors: tensor {name} ends before it starts"
+            )));
+        }
+        let name_start = self.names.len();
+        self.names.push_str(name);
+        let mut dims = [0usize; MAX_DIMS];
+        dims[..shape.len()].copy_from_slice(shape);
+        self.tensors.push(TensorInfo {
+            name_start,
+            name_end: self.names.len(),
+            dtype,
+            shape: dims,
+            rank: shape.len(),
+            start,
+            end,
+        });
+        Ok(())
+    }
+
     /// Name of one tensor.
     pub fn name(&self, tensor: &TensorInfo) -> &str {
         &self.names[tensor.name_start..tensor.name_end]

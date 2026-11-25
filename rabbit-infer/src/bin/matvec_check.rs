@@ -31,8 +31,26 @@
 //! same input, that is up to and including the first step whose token differs.
 //! A token that differs is printed on a `MATVEC model MISMATCH` line.
 //!
+//! The third part is the proof of the GGUF reader (`rabbit_infer::gguf_twin`).
+//! `/model.safetensors` and `/model.gguf` hold the same synthetic weights, the
+//! second as the `llama.cpp` converter writes them, with the rows of the query
+//! and key projections permuted, and `/model-nopermute.gguf` is the same file
+//! without the permutation. The checkpoint runs with the split half RoPE and the
+//! GGUF file with adjacent pairs and no un-permutation; the two must decode the
+//! same tokens. Two wrong readings must not, or the model is too insensitive to
+//! prove anything:
+//!
+//! ```text
+//! GGUF twin format=f32 prompts=<n> steps=<n> tokens_equal=<true|false> max_abs_logit_diff=<f> undecided=<n> bit_exact=<true|false>
+//! GGUF margin min_top2=<f> prompts=<n> steps=<n>
+//! GGUF negative_control <split_half_rope|no_permutation> detected=<true|false> prompts_differing=<n> max_abs_logit_diff=<f>
+//! ```
+//!
+//! `GGUF OK` follows only when the twin lines hold and both controls were
+//! detected.
+//!
 //! The last lines are `MATVEC model OK`, only when every token is equal, and
-//! `MATVEC OK checked=<paths> skipped=<paths>`, only when both parts passed. The
+//! `MATVEC OK checked=<paths> skipped=<paths>`, only when every part passed. The
 //! exit status is nonzero otherwise. The binary is packed into an initramfs by
 //! `make matvec-check`, so the x86 kernels run on the processor of the guest.
 
@@ -553,6 +571,60 @@ mod model_check {
     }
 }
 
+/// The proof of the GGUF reader, on the files of the initramfs.
+#[cfg(target_os = "linux")]
+mod gguf_check {
+    use std::io::Read;
+
+    use rabbit_infer::config::Config;
+    use rabbit_infer::error::Result;
+    use rabbit_infer::gguf_twin;
+    use rabbit_infer::mapping::open_readonly;
+    use rabbit_infer::model::ModelFile;
+    use rabbit_infer::paths;
+
+    /// The GGUF file written without the permutation of the converter.
+    const UNPERMUTED_PATH: &str = "/model-nopermute.gguf";
+
+    /// Run the proof and print its lines. `true` when it holds.
+    pub fn run() -> bool {
+        let outcome = (|| -> Result<gguf_twin::Report> {
+            let mut bytes = Vec::new();
+            open_readonly(paths::CONFIG_PATH)?.read_to_end(&mut bytes)?;
+            let config = Config::parse(&bytes)?;
+            let twin = ModelFile::open(paths::MODEL_PATH)?;
+            let gguf = ModelFile::open_gguf(paths::GGUF_PATH)?;
+            let unpermuted = ModelFile::open_gguf(UNPERMUTED_PATH)?;
+            println!(
+                "GGUF files twin={} gguf={} unpermuted={}",
+                paths::MODEL_PATH,
+                paths::GGUF_PATH,
+                UNPERMUTED_PATH
+            );
+            let prompts = gguf_twin::prompts(&config);
+            gguf_twin::prove(&twin, &config, &gguf, &unpermuted, &prompts, "f32")
+        })();
+        match outcome {
+            Ok(report) => {
+                for line in report.lines() {
+                    println!("{line}");
+                }
+                if report.ok() {
+                    println!("GGUF OK");
+                    true
+                } else {
+                    println!("GGUF FAIL");
+                    false
+                }
+            }
+            Err(error) => {
+                println!("GGUF ERR {error}");
+                false
+            }
+        }
+    }
+}
+
 fn main() {
     let mut all = true;
     let mut checked = Vec::new();
@@ -583,6 +655,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         all &= model_check::run();
+        all &= gguf_check::run();
     }
     if all {
         // The line names what was and was not checked, so an OK that skipped a

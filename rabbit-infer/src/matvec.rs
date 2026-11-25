@@ -513,6 +513,108 @@ pub fn matvec_q8_scalar(
     Ok(())
 }
 
+/// Multiply an `F32` matrix by `input`: the reference kernel, not optimised.
+///
+/// The rows are little endian `f32`, row after row, and `weights` may hold more
+/// rows than `rows`. This is the speed of a plain loop, one multiply and one
+/// add per weight, and no vector path exists yet; it reads the matrices of a
+/// GGUF file of type `F32`. The order of the floating point operations is
+/// canonical, so that a later vector kernel can reproduce it bit for bit: the
+/// weight of column `k` goes into the accumulator `k % 8`, in column order, each
+/// with a separate multiply and add (no fused multiply add), the accumulators
+/// start at `0.0`, and [`reduce8`] sums them once, at the end of the row. The
+/// lanes run across the whole row: unlike [`matvec_q8_scalar`], which resets its
+/// eight lanes at every block of 32 columns, reduces them per block and then
+/// adds `block_sum * scale` to the row, there is no block, no scale and no
+/// intermediate reduction here. A column count that is not a multiple of eight
+/// needs no special case.
+pub fn matvec_f32(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_float(weights, rows, columns, input, out, 4)?;
+    for (row, slot) in out.iter_mut().enumerate().take(rows) {
+        let base = row * columns * 4;
+        let mut lane = [0.0f32; 8];
+        for (column, &value) in input.iter().enumerate() {
+            let offset = base + column * 4;
+            let weight = f32::from_bits(u32::from_le_bytes([
+                weights[offset],
+                weights[offset + 1],
+                weights[offset + 2],
+                weights[offset + 3],
+            ]));
+            let product = weight * value;
+            lane[column % 8] += product;
+        }
+        *slot = reduce8(lane);
+    }
+    Ok(())
+}
+
+/// Multiply an `F16` matrix by `input`: the reference kernel, not optimised.
+///
+/// The same loop and the same canonical order as [`matvec_f32`], with each
+/// weight a binary16 widened to `f32`, which is exact. An `F16` matrix gives
+/// the bits of the `F32` matrix that holds the same values.
+pub fn matvec_f16(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &mut [f32],
+) -> Result<()> {
+    validate_float(weights, rows, columns, input, out, 2)?;
+    for (row, slot) in out.iter_mut().enumerate().take(rows) {
+        let base = row * columns * 2;
+        let mut lane = [0.0f32; 8];
+        for (column, &value) in input.iter().enumerate() {
+            let offset = base + column * 2;
+            let weight = crate::quant::half_to_f32(u16::from_le_bytes([
+                weights[offset],
+                weights[offset + 1],
+            ]));
+            let product = weight * value;
+            lane[column % 8] += product;
+        }
+        *slot = reduce8(lane);
+    }
+    Ok(())
+}
+
+/// Check every length the `F32` and `F16` kernels index.
+fn validate_float(
+    weights: &[u8],
+    rows: usize,
+    columns: usize,
+    input: &[f32],
+    out: &[f32],
+    element_bytes: usize,
+) -> Result<()> {
+    if rows == 0 || columns == 0 {
+        return Err(Error::new("matvec: an empty matrix has no product"));
+    }
+    if input.len() != columns {
+        return Err(Error::new(
+            "matvec: input length disagrees with the columns",
+        ));
+    }
+    if out.len() < rows {
+        return Err(Error::new("matvec: output is shorter than the rows"));
+    }
+    let needed = rows
+        .checked_mul(columns)
+        .and_then(|elements| elements.checked_mul(element_bytes))
+        .ok_or_else(|| Error::new("matvec: matrix byte length overflow"))?;
+    if weights.len() < needed {
+        return Err(Error::new("matvec: weights are shorter than the matrix"));
+    }
+    Ok(())
+}
+
 /// Check every length the `bfloat16` kernel indexes.
 fn validate(weights: &[u8], rows: usize, columns: usize, input: &[f32], out: &[f32]) -> Result<()> {
     if rows == 0 || columns == 0 {
@@ -2305,5 +2407,92 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod float_tests {
+    use super::{matvec_f16, matvec_f32, reduce8};
+    use crate::quant::{f32_to_half, half_to_f32};
+
+    fn values(count: usize) -> Vec<f32> {
+        let mut state = 0x1234_5678_9abc_def0u64;
+        (0..count)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                ((state >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+            })
+            .collect()
+    }
+
+    fn f32_bytes(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn f16_bytes(values: &[f32]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|&v| f32_to_half(v).to_le_bytes())
+            .collect()
+    }
+
+    /// The canonical order written out with no shared code.
+    fn canonical(row: &[f32], input: &[f32]) -> f32 {
+        let mut lane = [0.0f32; 8];
+        for (index, (&weight, &value)) in row.iter().zip(input).enumerate() {
+            let product = weight * value;
+            lane[index % 8] += product;
+        }
+        reduce8(lane)
+    }
+
+    #[test]
+    fn f32_follows_the_canonical_order_for_every_column_count() {
+        for columns in [1usize, 2, 7, 8, 9, 16, 31, 64, 100] {
+            let rows = 5;
+            let weights = values(rows * columns);
+            let input = values(columns);
+            let mut out = vec![0.0f32; rows];
+            matvec_f32(&f32_bytes(&weights), rows, columns, &input, &mut out).unwrap();
+            for (row, &actual) in out.iter().enumerate() {
+                let expected = canonical(&weights[row * columns..(row + 1) * columns], &input);
+                assert_eq!(actual.to_bits(), expected.to_bits(), "{columns} columns");
+            }
+        }
+    }
+
+    #[test]
+    fn f16_is_bit_exact_with_the_f32_matrix_of_the_same_values() {
+        let rows = 7;
+        let columns = 45;
+        let rounded: Vec<f32> = values(rows * columns)
+            .iter()
+            .map(|&v| half_to_f32(f32_to_half(v * 3.0)))
+            .collect();
+        let input = values(columns);
+        let mut wide = vec![0.0f32; rows];
+        let mut half = vec![0.0f32; rows];
+        matvec_f32(&f32_bytes(&rounded), rows, columns, &input, &mut wide).unwrap();
+        matvec_f16(&f16_bytes(&rounded), rows, columns, &input, &mut half).unwrap();
+        for (left, right) in wide.iter().zip(&half) {
+            assert_eq!(left.to_bits(), right.to_bits());
+        }
+    }
+
+    #[test]
+    fn the_float_kernels_refuse_inconsistent_lengths() {
+        let weights = f32_bytes(&values(8));
+        let input = values(4);
+        let mut out = vec![0.0f32; 2];
+        assert!(matvec_f32(&weights, 2, 4, &input, &mut out).is_ok());
+        assert!(matvec_f32(&weights, 3, 4, &input, &mut out).is_err());
+        assert!(matvec_f32(&weights, 2, 4, &input[..3], &mut out).is_err());
+        assert!(matvec_f32(&weights, 0, 4, &input, &mut out).is_err());
+        let mut short = vec![0.0f32; 1];
+        assert!(matvec_f32(&weights, 2, 4, &input, &mut short).is_err());
+        assert!(matvec_f16(&weights, 2, 4, &input, &mut out).is_ok());
+        assert!(matvec_f16(&weights[..15], 2, 4, &input, &mut out).is_err());
     }
 }

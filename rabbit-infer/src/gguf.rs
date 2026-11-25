@@ -471,6 +471,21 @@ pub struct Gguf<'a> {
 impl<'a> Gguf<'a> {
     /// Parse a whole file. Nothing is copied but the directory.
     pub fn parse(bytes: &'a [u8]) -> Result<Gguf<'a>, GgufError> {
+        Self::parse_head(bytes, bytes.len())
+    }
+
+    /// Parse a file of `file_len` bytes of which only the first bytes, `bytes`,
+    /// are at hand.
+    ///
+    /// A memory mapping that cannot cover the last partial page has the whole
+    /// header and almost all of the data in one contiguous range and the end of
+    /// the file somewhere else. The header must lie inside `bytes`, or the
+    /// result is [`GgufError::Truncated`]. The tensors are checked against
+    /// `file_len`, so a tensor that reaches into the missing bytes is accepted
+    /// here; [`Self::tensor_data`] still refuses to return what is not at hand.
+    /// `parse(bytes)` is `parse_head(bytes, bytes.len())`.
+    pub fn parse_head(bytes: &'a [u8], file_len: usize) -> Result<Gguf<'a>, GgufError> {
+        let file_len = file_len.max(bytes.len());
         let mut reader = Reader::new(bytes);
         if reader.take(MAGIC.len())? != MAGIC {
             return Err(GgufError::BadMagic);
@@ -555,6 +570,7 @@ impl<'a> Gguf<'a> {
             }
         }
         let data = &bytes[data_offset..];
+        let data_len = file_len - data_offset;
 
         for tensor in &tensors {
             let out_of_bounds = || GgufError::TensorOutOfBounds {
@@ -570,7 +586,7 @@ impl<'a> Gguf<'a> {
                     name: tensor.name.to_string(),
                 });
             }
-            if tensor.offset > data.len() as u64 {
+            if tensor.offset > data_len as u64 {
                 return Err(out_of_bounds());
             }
             if tensor.kind().is_some() {
@@ -578,7 +594,7 @@ impl<'a> Gguf<'a> {
                     .offset
                     .checked_add(tensor.byte_size()?)
                     .ok_or_else(out_of_bounds)?;
-                if end > data.len() as u64 {
+                if end > data_len as u64 {
                     return Err(out_of_bounds());
                 }
             }
@@ -1781,5 +1797,39 @@ mod tests {
         assert!(gguf.tensors().is_empty());
         assert_eq!(gguf.get_u32("a").unwrap(), 1);
         assert_eq!(gguf.data_offset(), unpadded);
+    }
+
+    #[test]
+    fn a_head_of_the_file_is_enough_when_it_holds_the_header() {
+        let data = pattern(100);
+        let bytes = file(
+            3,
+            &[kv_u32("a", 1)],
+            &[tensor_info("t", &[25], 0, 0)],
+            32,
+            &data,
+        );
+        let whole = Gguf::parse(&bytes).unwrap();
+        let header_end = whole.data_offset();
+        // The data is cut off, but the file is said to be whole: the tensor
+        // is accepted and its bytes are not at hand.
+        let head = Gguf::parse_head(&bytes[..header_end + 10], bytes.len()).unwrap();
+        assert_eq!(head.data_offset(), header_end);
+        assert_eq!(head.get_u32("a").unwrap(), 1);
+        let tensor = head.tensor("t").unwrap();
+        assert!(matches!(
+            head.tensor_data(tensor),
+            Err(GgufError::TensorOutOfBounds { .. })
+        ));
+        // A file that really is short is still refused.
+        assert!(matches!(
+            Gguf::parse_head(&bytes[..header_end + 10], header_end + 10),
+            Err(GgufError::TensorOutOfBounds { .. })
+        ));
+        // A head that stops inside the header is truncated whatever the file.
+        assert_eq!(
+            Gguf::parse_head(&bytes[..header_end - 40], bytes.len()).unwrap_err(),
+            GgufError::Truncated
+        );
     }
 }

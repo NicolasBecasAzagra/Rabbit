@@ -11,6 +11,10 @@
 //!
 //! This module has no I/O and no architecture specific code, so the path rules
 //! are tested on the host.
+//!
+//! [`choose_model`] and [`Paths::gguf`] are not wired into `runtime.rs` yet: the
+//! runtime still opens only the `safetensors` model. That is intended for this
+//! step, which only reads GGUF files.
 
 use std::ffi::OsString;
 
@@ -19,6 +23,9 @@ use crate::matvec::Path;
 
 /// Model path in the initramfs root.
 pub const MODEL_PATH: &str = "/model.safetensors";
+
+/// GGUF model path in the initramfs root, the alternative to [`MODEL_PATH`].
+pub const GGUF_PATH: &str = "/model.gguf";
 
 /// Vocabulary path in the initramfs root.
 pub const VOCAB_PATH: &str = "/vocab.json";
@@ -42,6 +49,8 @@ pub struct Paths {
     pub root: String,
     /// `model.safetensors` under the root.
     pub model: String,
+    /// `model.gguf` under the root.
+    pub gguf: String,
     /// `vocab.json` under the root.
     pub vocab: String,
     /// `config.json` under the root.
@@ -58,6 +67,7 @@ impl Paths {
         Self {
             root: "/".to_string(),
             model: MODEL_PATH.to_string(),
+            gguf: GGUF_PATH.to_string(),
             vocab: VOCAB_PATH.to_string(),
             config: CONFIG_PATH.to_string(),
             merges: MERGES_PATH.to_string(),
@@ -70,12 +80,53 @@ impl Paths {
         let separator = if root.ends_with('/') { "" } else { "/" };
         Self {
             model: format!("{root}{separator}model.safetensors"),
+            gguf: format!("{root}{separator}model.gguf"),
             vocab: format!("{root}{separator}vocab.json"),
             config: format!("{root}{separator}config.json"),
             merges: format!("{root}{separator}merges.txt"),
             infer_path: format!("{root}{separator}infer.path"),
             root,
         }
+    }
+}
+
+/// Which file holds the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelChoice {
+    /// `/model.safetensors`, with the config of `/config.json`.
+    Safetensors,
+    /// `/model.gguf`, which carries its own config.
+    Gguf,
+}
+
+/// Neither `/model.safetensors` nor `/model.gguf` exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoModel;
+
+impl core::fmt::Display for NoModel {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            formatter,
+            "no model: neither {MODEL_PATH} nor {GGUF_PATH} exists"
+        )
+    }
+}
+
+impl std::error::Error for NoModel {}
+
+/// Pick the model file from what exists.
+///
+/// The `safetensors` file wins when both are present: every archive that has
+/// ever been built has it, so an archive that gains a GGUF file keeps running
+/// what it ran. Neither is [`NoModel`], never a default.
+pub fn choose_model(
+    safetensors_exists: bool,
+    gguf_exists: bool,
+) -> core::result::Result<ModelChoice, NoModel> {
+    match (safetensors_exists, gguf_exists) {
+        (true, _) => Ok(ModelChoice::Safetensors),
+        (false, true) => Ok(ModelChoice::Gguf),
+        (false, false) => Err(NoModel),
     }
 }
 
@@ -131,8 +182,8 @@ fn resolve_from(value: Option<OsString>) -> Result<(Paths, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_path_request, resolve_from, Paths, CONFIG_PATH, INFER_PATH_PATH, MERGES_PATH,
-        MODEL_PATH, VOCAB_PATH,
+        choose_model, parse_path_request, resolve_from, ModelChoice, NoModel, Paths, CONFIG_PATH,
+        GGUF_PATH, INFER_PATH_PATH, MERGES_PATH, MODEL_PATH, VOCAB_PATH,
     };
     use crate::matvec::Path;
     use std::ffi::OsString;
@@ -202,5 +253,25 @@ mod tests {
         let (empty, source) = resolve_from(Some(OsString::from(""))).expect("an empty root");
         assert_eq!(source, "environment");
         assert_eq!(empty.model, "./model.safetensors");
+    }
+
+    #[test]
+    fn the_gguf_sits_at_the_root_like_the_others() {
+        assert_eq!(GGUF_PATH, "/model.gguf");
+        assert_eq!(Paths::guest().gguf, GGUF_PATH);
+        assert_eq!(Paths::under("/m/".to_string()).gguf, "/m/model.gguf");
+    }
+
+    #[test]
+    fn the_safetensors_file_wins_when_both_exist_and_neither_is_an_error() {
+        assert_eq!(choose_model(true, true), Ok(ModelChoice::Safetensors));
+        assert_eq!(choose_model(true, false), Ok(ModelChoice::Safetensors));
+        assert_eq!(choose_model(false, true), Ok(ModelChoice::Gguf));
+        assert_eq!(choose_model(false, false), Err(NoModel));
+        let shown = NoModel.to_string();
+        assert!(
+            shown.contains(MODEL_PATH) && shown.contains(GGUF_PATH),
+            "{shown}"
+        );
     }
 }
