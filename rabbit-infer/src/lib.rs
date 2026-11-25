@@ -51,6 +51,9 @@
 //!   leaves, so mainline Linux does not panic when PID 1 exits.
 //! * [`reference`] is the published SmolLM2-135M run the runtime checks
 //!   itself against when it serves that checkpoint.
+//! * [`gguf`] is the pure reader of the GGUF container: the metadata, the
+//!   tensor directory and the exact bytes of a tensor, borrowed from the
+//!   input. It is host tested and checks every size.
 //! * `mapping`, `model`, `runtime` and `compare` need Linux `mmap` and are only
 //!   built for the Linux target. Everything above is host tested.
 
@@ -61,6 +64,7 @@ pub mod chat;
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod gguf;
 pub mod grammar;
 pub mod json;
 pub mod math;
