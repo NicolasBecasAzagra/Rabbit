@@ -41,13 +41,22 @@
 //! prove anything:
 //!
 //! ```text
-//! GGUF twin format=f32 prompts=<n> steps=<n> tokens_equal=<true|false> max_abs_logit_diff=<f> undecided=<n> bit_exact=<true|false>
-//! GGUF margin min_top2=<f> prompts=<n> steps=<n>
-//! GGUF negative_control <split_half_rope|no_permutation> detected=<true|false> prompts_differing=<n> max_abs_logit_diff=<f>
+//! GGUF files format=<f32|q8> twin=<path> gguf=<path> unpermuted=<path>
+//! GGUF twin format=<f32|q8> prompts=<n> steps=<n> tokens_equal=<true|false> max_abs_logit_diff=<f> undecided=<n> bit_exact=<true|false>
+//! GGUF margin format=<f32|q8> min_top2=<f> prompts=<n> steps=<n>
+//! GGUF negative_control format=<f32|q8> <split_half_rope|no_permutation> detected=<true|false> prompts_differing=<n> max_abs_logit_diff=<f>
 //! ```
 //!
+//! The proof runs twice. `format=f32` is the one above. `format=q8` is the same
+//! proof for a GGUF file whose matrices are `Q8_0` (`/model-q8.gguf` and
+//! `/model-q8-nopermute.gguf`), against `/model-q8-twin.safetensors`, the
+//! `Q8B32` checkpoint made of the very same quantized bytes with the rows of the
+//! query and key projections in the order of the checkpoint. Both go through
+//! the same `matvec_q8` kernel, so only the order of the sum of an attention
+//! score differs.
+//!
 //! `GGUF OK` follows only when the twin lines hold and both controls were
-//! detected.
+//! detected, for both formats.
 //!
 //! The last lines are `MATVEC model OK`, only when every token is equal, and
 //! `MATVEC OK checked=<paths> skipped=<paths>`, only when every part passed. The
@@ -585,42 +594,56 @@ mod gguf_check {
 
     /// The GGUF file written without the permutation of the converter.
     const UNPERMUTED_PATH: &str = "/model-nopermute.gguf";
+    /// The same files with the matrices in `Q8_0`, and the `Q8B32` checkpoint of
+    /// the same quantized bytes.
+    const Q8_GGUF_PATH: &str = "/model-q8.gguf";
+    const Q8_UNPERMUTED_PATH: &str = "/model-q8-nopermute.gguf";
+    const Q8_TWIN_PATH: &str = "/model-q8-twin.safetensors";
 
-    /// Run the proof and print its lines. `true` when it holds.
-    pub fn run() -> bool {
+    /// Run one proof and print its lines. `true` when it holds.
+    fn prove(
+        format: &'static str,
+        twin_path: &str,
+        gguf_path: &str,
+        unpermuted_path: &str,
+    ) -> bool {
         let outcome = (|| -> Result<gguf_twin::Report> {
             let mut bytes = Vec::new();
             open_readonly(paths::CONFIG_PATH)?.read_to_end(&mut bytes)?;
             let config = Config::parse(&bytes)?;
-            let twin = ModelFile::open(paths::MODEL_PATH)?;
-            let gguf = ModelFile::open_gguf(paths::GGUF_PATH)?;
-            let unpermuted = ModelFile::open_gguf(UNPERMUTED_PATH)?;
+            let twin = ModelFile::open(twin_path)?;
+            let gguf = ModelFile::open_gguf(gguf_path)?;
+            let unpermuted = ModelFile::open_gguf(unpermuted_path)?;
             println!(
-                "GGUF files twin={} gguf={} unpermuted={}",
-                paths::MODEL_PATH,
-                paths::GGUF_PATH,
-                UNPERMUTED_PATH
+                "GGUF files format={format} twin={twin_path} gguf={gguf_path} unpermuted={unpermuted_path}"
             );
             let prompts = gguf_twin::prompts(&config);
-            gguf_twin::prove(&twin, &config, &gguf, &unpermuted, &prompts, "f32")
+            gguf_twin::prove(&twin, &config, &gguf, &unpermuted, &prompts, format)
         })();
         match outcome {
             Ok(report) => {
                 for line in report.lines() {
                     println!("{line}");
                 }
-                if report.ok() {
-                    println!("GGUF OK");
-                    true
-                } else {
-                    println!("GGUF FAIL");
-                    false
-                }
+                report.ok()
             }
             Err(error) => {
-                println!("GGUF ERR {error}");
+                println!("GGUF ERR format={format} {error}");
                 false
             }
+        }
+    }
+
+    /// Run both proofs and print `GGUF OK` when both hold. `true` when they do.
+    pub fn run() -> bool {
+        let f32_holds = prove("f32", paths::MODEL_PATH, paths::GGUF_PATH, UNPERMUTED_PATH);
+        let q8_holds = prove("q8", Q8_TWIN_PATH, Q8_GGUF_PATH, Q8_UNPERMUTED_PATH);
+        if f32_holds && q8_holds {
+            println!("GGUF OK");
+            true
+        } else {
+            println!("GGUF FAIL");
+            false
         }
     }
 }

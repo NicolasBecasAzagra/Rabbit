@@ -21,11 +21,14 @@
 //! The matrix vector products go through [`crate::matvec`]. A tensor that lies
 //! inside the mapped prefix is handed to the blocked kernel as one contiguous
 //! `bfloat16` range; the last at most 4095 bytes of the file live in a small
-//! buffer instead of the mapping, so the few rows that reach into that tail
-//! still use the element accessor. No weight is copied. The conversion to
-//! `f32` happens in registers, which halves the weight traffic against a cached
-//! `f32` copy (269 MB against 538 MB for the reference model) at the cost of
-//! one shift and widening per weight, per token.
+//! buffer instead of the mapping, so the few `bfloat16` rows that reach into
+//! that tail still use the element accessor. The rows of a quantized matrix
+//! that reach into it are copied out of the file one at a time and go through
+//! the same kernel as the other rows, so a row gives the same bits wherever the
+//! tensor sits in the file. No weight of the mapped rows is copied. The
+//! conversion to `f32` happens in registers, which halves the weight traffic
+//! against a cached `f32` copy (269 MB against 538 MB for the reference model)
+//! at the cost of one shift and widening per weight, per token.
 //!
 //! A GGUF file of the `llama` architecture binds the same way. [`ModelFile`]
 //! reads its directory with [`crate::gguf_model`], which names every tensor as
@@ -38,6 +41,13 @@
 //! of operations is canonical and whose speed is that of a plain loop: they are
 //! a reference, not an optimisation. A matrix of a `safetensors` file takes the
 //! paths it always took.
+//!
+//! A `Q8_0` matrix of a GGUF file (the embedding and the output matrix included)
+//! is bound in place as a `Q8B32` matrix: the block is the same 34 bytes (see
+//! [`crate::gguf_model`]), so [`matvec::matvec_q8`] multiplies it on every path
+//! and [`quant::dequantize_row_q8`] decodes a row of the embedding. The file
+//! carries no `__metadata__` declaration, because the type code of the tensor
+//! says the block, the scale and the layout.
 
 use std::time::Instant;
 
@@ -161,9 +171,10 @@ impl ModelFile {
             let dtype = match tensor.kind {
                 crate::gguf::TensorKind::F32 => DType::F32,
                 crate::gguf::TensorKind::F16 => DType::F16,
+                crate::gguf::TensorKind::Q8_0 => DType::Q8B32,
                 _ => {
                     return Err(Error::new(format!(
-                        "model: tensor {} is not F32 or F16",
+                        "model: tensor {} is not F32, F16 or Q8_0",
                         tensor.gguf_name
                     )))
                 }
@@ -275,6 +286,22 @@ impl ModelFile {
     /// field that is missing or wrong, so the serial log says why the file was
     /// refused.
     pub fn validate_quantization(&self) -> Result<()> {
+        // A GGUF tensor of type `Q8_0` is the block of 32 weights with a binary16
+        // scale by its type code, and `gguf_model` checked the sizes: there is no
+        // header to declare it in. So that a type added to the table later does not
+        // pass unchecked, only the types this reader maps are accepted.
+        if self.gguf_config.is_some() {
+            for tensor in self.header.tensors() {
+                if !matches!(tensor.dtype, DType::F32 | DType::F16 | DType::Q8B32) {
+                    return Err(Error::new(format!(
+                        "model: GGUF tensor {} has dtype {}, only F32, F16 and Q8_0 are read",
+                        self.header.name(tensor),
+                        tensor.dtype.name()
+                    )));
+                }
+            }
+            return Ok(());
+        }
         if !self.header.has_quantized_tensors() {
             return Ok(());
         }
@@ -498,8 +525,10 @@ impl<'a> Tensor<'a> {
 
     /// Dot one row of a matrix with `vector`.
     ///
-    /// This is the path for the rows that reach into the final partial page;
-    /// the mapped rows go through the blocked kernels of [`crate::matvec`].
+    /// This is the path for the `bfloat16` rows that reach into the final
+    /// partial page; the mapped rows go through the blocked kernels of
+    /// [`crate::matvec`], and the quantized rows of that page through
+    /// [`project_quantized_tail`].
     fn dot(&self, row: usize, vector: &[f32]) -> Result<f32> {
         let columns = self.shape().last().copied().unwrap_or(0);
         if vector.len() != columns || row >= self.shape()[0] {
@@ -507,15 +536,6 @@ impl<'a> Tensor<'a> {
                 "model: cannot dot row {row} of tensor {}",
                 self.name
             )));
-        }
-        if matches!(self.dtype(), DType::Q4B32 | DType::Q8B32) {
-            let mut decoded = vec![0.0f32; columns];
-            self.read_row(row, &mut decoded)?;
-            return Ok(decoded
-                .iter()
-                .zip(vector)
-                .map(|(weight, input)| weight * input)
-                .sum());
         }
         let base = row * columns;
         let start = self.file_offset + base * self.element_size;
@@ -1023,10 +1043,41 @@ fn project(matrix: &Tensor<'_>, input: &[f32], out: &mut [f32]) -> Result<u64> {
         )?;
         mapped_rows = rows_in_mapping;
     }
-    for (row, slot) in out.iter_mut().enumerate().take(rows).skip(mapped_rows) {
-        *slot = matrix.dot(row, input)?;
+    if matches!(matrix.dtype(), DType::Q4B32 | DType::Q8B32) {
+        project_quantized_tail(matrix, input, out, mapped_rows)?;
+    } else {
+        for (row, slot) in out.iter_mut().enumerate().take(rows).skip(mapped_rows) {
+            *slot = matrix.dot(row, input)?;
+        }
     }
     Ok(matvec::macs(rows, columns))
+}
+
+/// The rows of a quantized matrix from `first_row` on, which are not whole in
+/// the mapping: each is copied out of the file and goes through the same kernel
+/// as the mapped rows, so its bits do not depend on where the tensor sits.
+fn project_quantized_tail(
+    matrix: &Tensor<'_>,
+    input: &[f32],
+    out: &mut [f32],
+    first_row: usize,
+) -> Result<()> {
+    let rows = matrix.shape().first().copied().unwrap_or(0);
+    let columns = matrix.shape().last().copied().unwrap_or(0);
+    let row_bytes = quantized_layout(matrix.dtype(), columns)?.0;
+    let mut row_data = vec![0u8; row_bytes];
+    for row in first_row..rows {
+        matrix
+            .mapping
+            .copy_bytes(matrix.file_offset + row * row_bytes, &mut row_data)?;
+        let slot = &mut out[row..=row];
+        if matrix.dtype() == DType::Q8B32 {
+            matvec::matvec_q8(&row_data, 1, columns, input, slot)?;
+        } else {
+            matvec::matvec_q4(&row_data, 1, columns, input, slot)?;
+        }
+    }
+    Ok(())
 }
 
 /// Multiply an `F32` or `F16` matrix of a GGUF file by a vector.
@@ -1124,4 +1175,386 @@ fn require_vector(tensor: &Tensor<'_>, length: usize, name: &str) -> Result<()> 
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quant::{
+        dequantize_block_q8, f32_to_half, half_to_f32, BLOCK, Q8_BLOCK_BYTES, SCALE_BYTES,
+    };
+    use crate::synthetic::{
+        gguf_builder, weights, GgufBuilder, GgufTensorOut, Meta, Permutation, Rng, Spec, Storage,
+    };
+
+    /// A model whose widths are multiples of the 32 weights of a block.
+    fn spec() -> Spec {
+        Spec {
+            hidden: 64,
+            layers: 2,
+            heads: 4,
+            kv_heads: 2,
+            ffn: 96,
+            vocab: 256,
+            eps: 1e-5,
+            theta: 10_000.0,
+        }
+    }
+
+    fn builder() -> GgufBuilder {
+        let spec = spec();
+        gguf_builder(
+            &spec,
+            &weights(&spec),
+            Permutation::Converter,
+            Storage::Q8_0,
+        )
+    }
+
+    /// The file padded past its last page, so that every matrix lies inside the
+    /// mapping and none is read through the row copy of the final partial page.
+    fn mapped_bytes(file: &GgufBuilder) -> Vec<u8> {
+        let mut bytes = file.to_bytes();
+        bytes.resize(bytes.len().next_multiple_of(4096) + 4096, 0);
+        bytes
+    }
+
+    /// `count` blocks with every signed byte, the two extremes included, and a
+    /// finite scale of either sign that the quantizer would not have chosen.
+    fn arbitrary_blocks(count: usize) -> Vec<u8> {
+        let mut rng = Rng::new(0x0851_0ead);
+        let mut bytes = Vec::with_capacity(count * Q8_BLOCK_BYTES);
+        for block in 0..count {
+            let scale = f32_to_half(rng.next_f32() * 3.0);
+            bytes.extend_from_slice(&scale.to_le_bytes());
+            for index in 0..BLOCK {
+                bytes.push(match (block, index) {
+                    (_, 0) => 0x80,
+                    (_, 1) => 0x7f,
+                    _ => ((rng.next_f32() * 128.0) as i32).clamp(-128, 127) as i8 as u8,
+                });
+            }
+        }
+        bytes
+    }
+
+    /// `dequantize_row_q8_0` of `ggml-quants.c` (ggml `d9fe7bf`) for one block:
+    /// `y[j] = qs[j] * d`, with `d` the binary16 scale as an `f32`.
+    fn ggml_dequantize_q8_0(block: &[u8]) -> Vec<f32> {
+        let d = half_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        block[SCALE_BYTES..]
+            .iter()
+            .map(|&quant| f32::from(quant as i8) * d)
+            .collect()
+    }
+
+    #[test]
+    fn a_q8_0_block_of_the_file_decodes_like_a_q8b32_block() {
+        let spec = spec();
+        let mut file = builder();
+        let blocks = arbitrary_blocks(spec.vocab * spec.hidden / BLOCK);
+        file.tensor("token_embd.weight").unwrap().data = blocks.clone();
+        let model_file = ModelFile::gguf_from_bytes(file.to_bytes()).unwrap();
+        let embedding = model_file.tensor("model.embed_tokens.weight").unwrap();
+        assert_eq!(embedding.dtype(), DType::Q8B32);
+        assert_eq!(embedding.shape(), [spec.vocab, spec.hidden]);
+        let row_bytes = spec.hidden / BLOCK * Q8_BLOCK_BYTES;
+        for row in 0..spec.vocab {
+            let mut decoded = vec![0.0f32; spec.hidden];
+            embedding.read_row(row, &mut decoded).unwrap();
+            let mut expected = vec![0.0f32; spec.hidden];
+            let mut ggml = Vec::new();
+            let source = &blocks[row * row_bytes..(row + 1) * row_bytes];
+            for (index, block) in source.as_chunks::<Q8_BLOCK_BYTES>().0.iter().enumerate() {
+                dequantize_block_q8(block, &mut expected[index * BLOCK..(index + 1) * BLOCK])
+                    .unwrap();
+                ggml.extend(ggml_dequantize_q8_0(block));
+            }
+            let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&decoded), bits(&expected), "row {row}");
+            assert_eq!(bits(&decoded), bits(&ggml), "row {row}");
+        }
+    }
+
+    #[test]
+    fn the_matrices_of_a_q8_0_file_go_through_the_q8_kernels() {
+        let spec = spec();
+        let file = builder();
+        let source = |name: &str| {
+            file.tensors
+                .iter()
+                .find(|tensor| tensor.name == name)
+                .unwrap()
+                .data
+                .clone()
+        };
+        let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&file)).unwrap();
+        assert!(model_file.mapped_len() >= model_file.file_len() - 4096);
+        let mut rng = Rng::new(3);
+        for (name, hf, rows, columns) in [
+            (
+                "blk.0.attn_q.weight",
+                "model.layers.0.self_attn.q_proj.weight",
+                spec.hidden,
+                spec.hidden,
+            ),
+            (
+                "blk.1.attn_k.weight",
+                "model.layers.1.self_attn.k_proj.weight",
+                spec.kv_dim(),
+                spec.hidden,
+            ),
+            (
+                "blk.1.ffn_down.weight",
+                "model.layers.1.mlp.down_proj.weight",
+                spec.hidden,
+                spec.ffn,
+            ),
+            (
+                "token_embd.weight",
+                "model.embed_tokens.weight",
+                spec.vocab,
+                spec.hidden,
+            ),
+        ] {
+            let tensor = model_file.tensor(hf).unwrap();
+            assert_eq!(tensor.dtype(), DType::Q8B32, "{name}");
+            assert!(!tensor.float_kernel, "{name}");
+            let input: Vec<f32> = (0..columns).map(|_| rng.next_f32()).collect();
+            let mut projected = vec![0.0f32; rows];
+            assert_eq!(
+                project(&tensor, &input, &mut projected).unwrap(),
+                matvec::macs(rows, columns)
+            );
+            let mut scalar = vec![0.0f32; rows];
+            matvec::matvec_q8_scalar(&source(name), rows, columns, &input, &mut scalar).unwrap();
+            let mut best = vec![0.0f32; rows];
+            matvec::matvec_q8(&source(name), rows, columns, &input, &mut best).unwrap();
+            let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(&projected), bits(&scalar), "{name}");
+            assert_eq!(bits(&projected), bits(&best), "{name}");
+        }
+    }
+
+    /// The paths the host offers, from the scalar one up. A path above what the
+    /// processor has runs on the best one it has, so the list can name them all.
+    fn paths() -> Vec<matvec::Path> {
+        let mut paths = vec![matvec::Path::Scalar];
+        #[cfg(target_arch = "x86_64")]
+        paths.extend([matvec::Path::Sse2, matvec::Path::Avx2]);
+        #[cfg(target_arch = "aarch64")]
+        paths.push(matvec::Path::Neon);
+        paths
+    }
+
+    fn bits(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|value| value.to_bits()).collect()
+    }
+
+    /// A `Q8_0` file whose last tensor is `blk.1.ffn_down.weight`, with arbitrary
+    /// blocks, and whose last row straddles the page the file does not fill: the
+    /// final partial page holds the end of that row and no padding follows it.
+    /// The header grows by whole alignments until the row starts in the mapping
+    /// and ends in the tail.
+    fn file_with_a_straddling_last_row() -> (Vec<u8>, Vec<u8>) {
+        let spec = spec();
+        let mut file = builder();
+        let mut last = file.tensors.remove(
+            file.tensors
+                .iter()
+                .position(|tensor| tensor.name == "blk.1.ffn_down.weight")
+                .unwrap(),
+        );
+        last.data = arbitrary_blocks(last.data.len() / Q8_BLOCK_BYTES);
+        let source = last.data.clone();
+        file.tensors.push(last);
+        let row_bytes = spec.ffn / BLOCK * Q8_BLOCK_BYTES;
+        for extra in (0..8192).step_by(32) {
+            *file.meta("general.name").unwrap() = Meta::Str("x".repeat(extra));
+            let bytes = file.to_bytes();
+            let model_file = ModelFile::gguf_from_bytes(bytes.clone()).unwrap();
+            let tensor = model_file
+                .tensor("model.layers.1.mlp.down_proj.weight")
+                .unwrap();
+            let start = tensor.file_offset + (spec.hidden - 1) * row_bytes;
+            let end = start + row_bytes;
+            if start < model_file.mapped_len() && model_file.mapped_len() < end {
+                assert!(end <= model_file.file_len());
+                assert!(model_file.file_len() - end < 32, "no padding past the row");
+                return (bytes, source);
+            }
+        }
+        panic!("no header length puts the last row across the end of the mapping");
+    }
+
+    #[test]
+    fn the_last_row_of_a_q8_0_file_that_straddles_its_end_has_the_bits_of_every_path() {
+        let spec = spec();
+        let (bytes, source) = file_with_a_straddling_last_row();
+        let model_file = ModelFile::gguf_from_bytes(bytes).unwrap();
+        let tensor = model_file
+            .tensor("model.layers.1.mlp.down_proj.weight")
+            .unwrap();
+        let (rows, columns) = (spec.hidden, spec.ffn);
+        let mapped = tensor.contiguous_quantized().unwrap().1;
+        assert_eq!(
+            mapped,
+            rows - 1,
+            "only the last row is not whole in the mapping"
+        );
+        let mut rng = Rng::new(11);
+        let input: Vec<f32> = (0..columns).map(|_| rng.next_f32()).collect();
+        let mut projected = vec![0.0f32; rows];
+        project(&tensor, &input, &mut projected).unwrap();
+        let mut scalar = vec![0.0f32; rows];
+        matvec::matvec_q8_scalar(&source, rows, columns, &input, &mut scalar).unwrap();
+        assert_eq!(bits(&projected), bits(&scalar));
+        let mut best = vec![0.0f32; rows];
+        matvec::matvec_q8(&source, rows, columns, &input, &mut best).unwrap();
+        assert_eq!(bits(&projected), bits(&best));
+        for path in paths() {
+            let mut out = vec![0.0f32; rows];
+            matvec::matvec_q8_with(path, &source, rows, columns, &input, &mut out).unwrap();
+            assert_eq!(bits(&projected), bits(&out), "{}", path.name());
+        }
+    }
+
+    #[test]
+    fn a_q8_0_row_has_the_same_bits_in_the_prefix_and_in_the_tail() {
+        let spec = spec();
+        let (bytes, _) = file_with_a_straddling_last_row();
+        let mut padded = bytes.clone();
+        padded.resize(padded.len().next_multiple_of(4096) + 4096, 0);
+        let name = "model.layers.1.mlp.down_proj.weight";
+        let in_tail = ModelFile::gguf_from_bytes(bytes).unwrap();
+        let in_prefix = ModelFile::gguf_from_bytes(padded).unwrap();
+        let (tail, prefix) = (
+            in_tail.tensor(name).unwrap(),
+            in_prefix.tensor(name).unwrap(),
+        );
+        assert!(tail.contiguous_quantized().unwrap().1 < spec.hidden);
+        assert_eq!(prefix.contiguous_quantized().unwrap().1, spec.hidden);
+        let mut rng = Rng::new(12);
+        let input: Vec<f32> = (0..spec.ffn).map(|_| rng.next_f32()).collect();
+        let mut from_tail = vec![0.0f32; spec.hidden];
+        let mut from_prefix = vec![0.0f32; spec.hidden];
+        project(&tail, &input, &mut from_tail).unwrap();
+        project(&prefix, &input, &mut from_prefix).unwrap();
+        assert_eq!(bits(&from_tail), bits(&from_prefix));
+    }
+
+    #[test]
+    fn a_q4b32_row_has_the_bits_of_the_kernel_in_the_prefix_and_in_the_tail() {
+        let (rows, columns) = (200usize, 64usize);
+        let row_bytes = quant::row_bytes(columns).unwrap();
+        let mut rng = Rng::new(0x04b3_2000);
+        let mut payload = Vec::new();
+        for _ in 0..rows * quant::blocks(columns) {
+            payload.extend_from_slice(&f32_to_half(rng.next_f32() * 3.0).to_le_bytes());
+            payload.extend((0..quant::PACKED_BYTES).map(|_| (rng.next_f32() * 256.0) as u8));
+        }
+        let file = |padding: usize| {
+            let mut header = format!(
+                "{{\"__metadata__\":{{\"format\":\"{}\",\"block\":\"32\",\"scale\":\"{}\"}},\
+                 \"w\":{{\"dtype\":\"Q4B32\",\"shape\":[{rows},{columns}],\
+                 \"data_offsets\":[0,{}]}}}}",
+                quant::FORMAT_NAME,
+                quant::SCALE_NAME,
+                payload.len()
+            );
+            header.push_str(&" ".repeat(padding));
+            let mut bytes = (header.len() as u64).to_le_bytes().to_vec();
+            bytes.extend_from_slice(header.as_bytes());
+            bytes.extend_from_slice(&payload);
+            bytes
+        };
+        // Grow the header until the last row starts in the mapping and ends in the tail.
+        let bytes = (0..4096)
+            .map(file)
+            .find(|bytes| {
+                let end = bytes.len();
+                end / 4096 * 4096 > end - row_bytes && end % 4096 != 0
+            })
+            .expect("a header length that puts the last row across the end of the mapping");
+        let mut padded = bytes.clone();
+        padded.resize(padded.len().next_multiple_of(4096) + 4096, 0);
+        let in_tail = ModelFile::from_bytes(bytes).unwrap();
+        let in_prefix = ModelFile::from_bytes(padded).unwrap();
+        let (tail, prefix) = (in_tail.tensor("w").unwrap(), in_prefix.tensor("w").unwrap());
+        assert_eq!(tail.contiguous_quantized().unwrap().1, rows - 1);
+        assert_eq!(prefix.contiguous_quantized().unwrap().1, rows);
+        let input: Vec<f32> = (0..columns).map(|_| rng.next_f32()).collect();
+        let mut from_tail = vec![0.0f32; rows];
+        let mut from_prefix = vec![0.0f32; rows];
+        project(&tail, &input, &mut from_tail).unwrap();
+        project(&prefix, &input, &mut from_prefix).unwrap();
+        let mut scalar = vec![0.0f32; rows];
+        matvec::matvec_q4_scalar(&payload, rows, columns, &input, &mut scalar).unwrap();
+        assert_eq!(bits(&from_tail), bits(&scalar));
+        assert_eq!(bits(&from_prefix), bits(&scalar));
+    }
+
+    #[test]
+    fn a_gguf_table_with_a_dtype_the_reader_does_not_map_is_refused() {
+        let mut model_file = ModelFile::gguf_from_bytes(builder().to_bytes()).unwrap();
+        model_file.validate_quantization().unwrap();
+        model_file
+            .header
+            .push("extra.weight", DType::Q4B32, &[1, 32], 0, 18)
+            .unwrap();
+        let error = model_file.validate_quantization().unwrap_err();
+        let shown = error.to_string();
+        assert!(
+            shown.contains("extra.weight") && shown.contains("Q4B32"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_q8_0_model_binds_and_runs_tied_and_untied() {
+        let spec = spec();
+        let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&builder())).unwrap();
+        let config = model_file.gguf_config().unwrap();
+        assert!(config.tie_word_embeddings);
+        let model = Model::new(&model_file, config).unwrap();
+        assert_eq!(model.weight_dtype(), "Q8B32");
+        let mut session = model.session(8).unwrap();
+        for token in [1u32, 2, 3] {
+            session.forward(token).unwrap();
+        }
+        assert_eq!(session.logits().len(), spec.vocab);
+        assert!(session.logits().iter().all(|value| value.is_finite()));
+        let tied = session.logits().to_vec();
+
+        // The output matrix of its own, also `Q8_0`, with the rows of the embedding.
+        let mut file = builder();
+        let embedding = file.tensor("token_embd.weight").unwrap().data.clone();
+        file.tensors.push(GgufTensorOut {
+            name: "output.weight".into(),
+            dims: vec![spec.hidden as u64, spec.vocab as u64],
+            ggml_type: 8,
+            data: embedding,
+        });
+        let model_file = ModelFile::gguf_from_bytes(mapped_bytes(&file)).unwrap();
+        let config = model_file.gguf_config().unwrap();
+        assert!(!config.tie_word_embeddings);
+        let model = Model::new(&model_file, config).unwrap();
+        let mut session = model.session(8).unwrap();
+        for token in [1u32, 2, 3] {
+            session.forward(token).unwrap();
+        }
+        let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(session.logits()), bits(&tied));
+    }
+
+    #[test]
+    fn a_q8_0_block_with_a_scale_that_is_not_finite_is_refused() {
+        let mut file = builder();
+        let tensor = file.tensor("blk.1.ffn_up.weight").unwrap();
+        tensor.data[34..36].copy_from_slice(&0x7c00u16.to_le_bytes());
+        let model_file = ModelFile::gguf_from_bytes(file.to_bytes()).unwrap();
+        let config = model_file.gguf_config().unwrap();
+        let error = Model::new(&model_file, config).err().unwrap();
+        assert!(error.to_string().contains("non-finite scale"), "{error}");
+    }
 }

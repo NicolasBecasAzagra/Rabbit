@@ -13,8 +13,16 @@
 //! `model.gguf`, with the rows of the query and key projections permuted as the
 //! `llama.cpp` converter does, and `--gguf-unpermuted` adds
 //! `model-nopermute.gguf`, the same file without the permutation, which a
-//! reader that rotates adjacent pairs must get wrong. The files the generator
-//! wrote before these flags existed are unchanged, byte for byte.
+//! reader that rotates adjacent pairs must get wrong. `--gguf-q8` writes the
+//! same model with the matrices in `Q8_0`: `model-q8.gguf` and
+//! `model-q8-nopermute.gguf`, whose blocks are those of the quantizer of the
+//! runtime applied to the rows of the file (after the permutation, as the
+//! converter and `llama-quantize` write them), and `model-q8-twin.safetensors`,
+//! the same quantized bytes in the `rabbit-q8b32` format with the rows of the
+//! query and key projections back in the order of the checkpoint (see
+//! [`rabbit_infer::synthetic::safetensors_q8_bytes`]). The widths of the model
+//! must be multiples of the 32 weights of a block. The files the generator wrote
+//! before these flags existed are unchanged, byte for byte.
 //!
 //! This binary is not part of the runtime: it is built on the host by
 //! `make infer-model` and its output is packed into the test initramfs.
@@ -24,8 +32,9 @@
 use std::fs;
 use std::path::PathBuf;
 
+use rabbit_infer::quant;
 use rabbit_infer::synthetic::{
-    self, gguf_builder, safetensors_bytes, Permutation, Spec, Storage, Tensor,
+    self, gguf_builder, safetensors_bytes, safetensors_q8_bytes, Permutation, Spec, Storage, Tensor,
 };
 use rabbit_infer::vocab::token_for_byte;
 
@@ -35,6 +44,7 @@ struct Args {
     interleaved: bool,
     gguf: bool,
     gguf_unpermuted: bool,
+    gguf_q8: bool,
     out: PathBuf,
 }
 
@@ -45,6 +55,7 @@ impl Default for Args {
             interleaved: false,
             gguf: false,
             gguf_unpermuted: false,
+            gguf_q8: false,
             out: PathBuf::from("rabbit-infer-model"),
         }
     }
@@ -79,6 +90,7 @@ fn run() -> Result<(), String> {
             &spec,
             &tensors,
             Permutation::Converter,
+            Storage::F32,
         )?;
     }
     if args.gguf_unpermuted {
@@ -87,7 +99,35 @@ fn run() -> Result<(), String> {
             &spec,
             &tensors,
             Permutation::None,
+            Storage::F32,
         )?;
+    }
+    if args.gguf_q8 {
+        if !spec.hidden.is_multiple_of(quant::BLOCK) || !spec.ffn.is_multiple_of(quant::BLOCK) {
+            return Err(format!(
+                "--gguf-q8 needs a hidden size and an ffn size that are multiples of {}",
+                quant::BLOCK
+            ));
+        }
+        write_gguf(
+            &args.out.join("model-q8.gguf"),
+            &spec,
+            &tensors,
+            Permutation::Converter,
+            Storage::Q8_0,
+        )?;
+        write_gguf(
+            &args.out.join("model-q8-nopermute.gguf"),
+            &spec,
+            &tensors,
+            Permutation::None,
+            Storage::Q8_0,
+        )?;
+        fs::write(
+            args.out.join("model-q8-twin.safetensors"),
+            safetensors_q8_bytes(&spec, &tensors),
+        )
+        .map_err(|error| format!("cannot write the quantized twin: {error}"))?;
     }
 
     let params: usize = tensors
@@ -109,14 +149,15 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Write the GGUF twin of the checkpoint, in `F32`.
+/// Write the GGUF twin of the checkpoint, with the matrices stored as `storage`.
 fn write_gguf(
     path: &PathBuf,
     spec: &Spec,
     tensors: &[Tensor],
     permutation: Permutation,
+    storage: Storage,
 ) -> Result<(), String> {
-    let bytes = gguf_builder(spec, tensors, permutation, Storage::F32).to_bytes();
+    let bytes = gguf_builder(spec, tensors, permutation, storage).to_bytes();
     fs::write(path, bytes).map_err(|error| format!("cannot write gguf: {error}"))
 }
 
@@ -136,6 +177,7 @@ fn parse_args() -> Result<Args, String> {
             "--interleaved" => args.interleaved = true,
             "--gguf" => args.gguf = true,
             "--gguf-unpermuted" => args.gguf_unpermuted = true,
+            "--gguf-q8" => args.gguf_q8 = true,
             "--out" => {
                 args.out = PathBuf::from(
                     iterator
@@ -147,7 +189,7 @@ fn parse_args() -> Result<Args, String> {
                 println!(
                     "usage: rabbit-infer-gen [--hidden N] [--layers N] [--heads N] \
                      [--kv-heads N] [--ffn N] [--vocab N] [--eps F] [--theta F] \
-                     [--interleaved] [--gguf] [--gguf-unpermuted] [--out DIR]"
+                     [--interleaved] [--gguf] [--gguf-unpermuted] [--gguf-q8] [--out DIR]"
                 );
                 std::process::exit(0);
             }

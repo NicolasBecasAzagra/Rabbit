@@ -25,7 +25,14 @@
 //! goes through [`crate::matvec::matvec_f32`], and the attention score of a
 //! head is a sum over the elements of the head, which the permutation visits in
 //! another order. The logits differ by the rounding of those sums, and
-//! [`TOLERANCE`] bounds the difference. The tokens are compared as well, and a
+//! [`TOLERANCE`] bounds the difference.
+//!
+//! The same proof runs for the matrices in `Q8_0`. The twin is then the
+//! `Q8B32` checkpoint with the very bytes of the GGUF file in the rows of the
+//! checkpoint ([`crate::synthetic::safetensors_q8_bytes`]), and both go through
+//! [`crate::matvec::matvec_q8`], so the rows of every projection are the same
+//! numbers. What the permutation still changes is the order of the sum of an
+//! attention score, as above. The tokens are compared as well, and a
 //! step whose margin between the two best logits is not above twice the
 //! difference is `undecided`, which fails the proof: equal tokens would say
 //! nothing there.
@@ -283,12 +290,13 @@ impl Report {
             ));
         }
         lines.push(format!(
-            "GGUF margin min_top2={} prompts={} steps={STEPS}",
-            self.min_margin, self.prompts
+            "GGUF margin format={} min_top2={} prompts={} steps={STEPS}",
+            self.format, self.min_margin, self.prompts
         ));
         for control in &self.controls {
             lines.push(format!(
-                "GGUF negative_control {} detected={} prompts_differing={} max_abs_logit_diff={}",
+                "GGUF negative_control format={} {} detected={} prompts_differing={} max_abs_logit_diff={}",
+                self.format,
                 control.name,
                 control.detected,
                 control.prompts_differing,
@@ -401,7 +409,8 @@ pub fn prove(
 mod tests {
     use super::*;
     use crate::synthetic::{
-        self, gguf_builder, safetensors_bytes, weights, Permutation, Spec, Storage,
+        self, gguf_builder, safetensors_bytes, safetensors_q8_bytes, weights, Permutation, Spec,
+        Storage,
     };
 
     /// A model small enough for a debug build, with grouped query attention.
@@ -437,8 +446,14 @@ mod tests {
     fn files(spec: &Spec, storage: Storage) -> Files {
         spec.validate().unwrap();
         let tensors = weights(spec);
+        // The twin of a `Q8_0` file is the `Q8B32` checkpoint of the same bytes.
+        let twin = if storage == Storage::Q8_0 {
+            safetensors_q8_bytes(spec, &tensors)
+        } else {
+            safetensors_bytes(&tensors)
+        };
         Files {
-            twin: ModelFile::from_bytes(safetensors_bytes(&tensors)).unwrap(),
+            twin: ModelFile::from_bytes(twin).unwrap(),
             twin_config: synthetic::config(spec, false).unwrap(),
             gguf: ModelFile::gguf_from_bytes(
                 gguf_builder(spec, &tensors, Permutation::Converter, storage).to_bytes(),
@@ -451,7 +466,7 @@ mod tests {
         }
     }
 
-    fn prove_files(files: &Files) -> Report {
+    fn prove_files(files: &Files, format: &'static str) -> Report {
         let prompts = prompts(&files.twin_config);
         prove(
             &files.twin,
@@ -459,7 +474,7 @@ mod tests {
             &files.gguf,
             &files.unpermuted,
             &prompts,
-            "f32",
+            format,
         )
         .unwrap()
     }
@@ -470,12 +485,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_twin_decodes_the_same_tokens_and_the_wrong_readings_do_not() {
+    /// The soundness criterion of the proof is the one of each step: no step is
+    /// `undecided`, that is, the margin between the two best logits of the step
+    /// is above twice the difference of that step between the twins. That is
+    /// asserted below through `undecided == 0`.
+    ///
+    /// `margin_factor` is only an extra empirical guard: how many times the
+    /// largest rounding difference of the twin the smallest margin of the whole
+    /// run has to be. The twin carries the same quantized bytes as the file, so
+    /// quantizing does not move the logits of the twin and not those of the
+    /// model; the factor is lower for `Q8_0` because the multi-head `Q8_0` spec
+    /// has a smaller smallest margin than the others. Measured in the guest, the
+    /// smallest margin of the `Q8_0` proof is 9.3e-5 and the difference between
+    /// the twins is about 1e-6, a factor of about 90, against the 10 required.
+    fn check_the_proof(storage: Storage, format: &'static str, margin_factor: f64) {
         for (name, spec) in [("grouped", grouped()), ("multi_head", multi_head())] {
-            let files = files(&spec, Storage::F32);
-            let report = prove_files(&files);
-            show(name, &report);
+            let files = files(&spec, storage);
+            let report = prove_files(&files, format);
+            show(&format!("{format} {name}"), &report);
             assert_eq!(report.prompts, 7);
             for line in &report.twin {
                 assert!(line.tokens_equal, "{name}: tokens differ: {line:?}");
@@ -494,7 +521,7 @@ mod tests {
                 .map(|l| l.max_abs_logit_diff)
                 .fold(0.0, f64::max);
             assert!(
-                f64::from(report.min_margin) > 100.0 * rounding,
+                f64::from(report.min_margin) > margin_factor * rounding,
                 "{name}: margin {} against rounding {rounding}",
                 report.min_margin
             );
@@ -509,6 +536,30 @@ mod tests {
             }
             assert!(report.ok(), "{name}");
         }
+    }
+
+    #[test]
+    fn the_twin_decodes_the_same_tokens_and_the_wrong_readings_do_not() {
+        check_the_proof(Storage::F32, "f32", 100.0);
+    }
+
+    #[test]
+    fn the_q8_0_twin_decodes_the_same_tokens_and_the_wrong_readings_do_not() {
+        check_the_proof(Storage::Q8_0, "q8", 10.0);
+    }
+
+    #[test]
+    fn the_q8_0_files_are_read_as_q8b32_matrices() {
+        let files = files(&grouped(), Storage::Q8_0);
+        for file in [&files.gguf, &files.unpermuted] {
+            let model = Model::new(file, file.gguf_config().unwrap()).unwrap();
+            assert_eq!(model.weight_dtype(), "Q8B32");
+        }
+        let twin = Model::new(&files.twin, &files.twin_config).unwrap();
+        assert_eq!(twin.weight_dtype(), "Q8B32");
+        // Same bytes, same blocks: the GGUF file holds the weights of the twin
+        // at 34 bytes per 32 weights and nothing else but the norms.
+        assert!(files.gguf.file_len().abs_diff(files.twin.file_len()) < 4096);
     }
 
     #[test]
@@ -534,7 +585,7 @@ mod tests {
     fn the_report_fails_when_a_control_is_not_detected_or_the_twins_differ() {
         let spec = grouped();
         let files = files(&spec, Storage::F32);
-        let mut report = prove_files(&files);
+        let mut report = prove_files(&files, "f32");
         assert!(report.ok());
         report.controls[0].detected = false;
         assert!(!report.ok());
@@ -550,7 +601,10 @@ mod tests {
         let lines = report.lines();
         assert_eq!(lines.len(), 5);
         assert!(lines[0].starts_with("GGUF twin format=f32 prompts=7 steps=8 tokens_equal=true"));
-        assert!(lines[3].starts_with("GGUF negative_control split_half_rope detected=true"));
+        assert!(lines[2].starts_with("GGUF margin format=f32 min_top2="));
+        assert!(
+            lines[3].starts_with("GGUF negative_control format=f32 split_half_rope detected=true")
+        );
     }
 
     #[test]

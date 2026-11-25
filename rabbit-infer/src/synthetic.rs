@@ -18,6 +18,16 @@
 //! are exactly representable in `f32`, so the GGUF file in `F32` holds the very
 //! values of the checkpoint.
 //!
+//! The matrices can also be written as `Q8_0` ([`Storage::Q8_0`]): the blocks are
+//! those of [`crate::quant::quantize_block_q8`], applied to the rows of the file,
+//! that is, after the permutation, as `convert_hf_to_gguf.py` followed by
+//! `llama-quantize` would write them. [`safetensors_q8_bytes`] is the twin of such
+//! a file in the `rabbit-q8b32` format: it holds the very bytes of the GGUF file,
+//! with the rows of `q_proj` and `k_proj` put back in the order of the checkpoint.
+//! A block lies inside one row and the permutation moves whole rows, so
+//! permuting the quantized rows or quantizing the permuted rows is the same
+//! operation, and the two files carry exactly the same quantized values.
+//!
 //! A GGUF file is a header, the metadata, the tensor directory, padding to the
 //! alignment (32, the default, so the file does not write `general.alignment`),
 //! and the tensors, each at an offset that is a multiple of the alignment. The
@@ -26,7 +36,9 @@
 
 use crate::config::Config;
 use crate::error::{Error, Result};
-use crate::quant::{f32_to_half, half_to_f32};
+use crate::quant::{
+    f32_to_half, half_to_f32, quantize_block_q8, BLOCK, Q8_BLOCK_BYTES, Q8_FORMAT_NAME, SCALE_NAME,
+};
 
 /// Fixed seed of the synthetic weights.
 pub const SEED: u64 = 0x4d61_6452_7573_7421;
@@ -265,23 +277,40 @@ pub fn config(spec: &Spec, interleaved: bool) -> Result<Config> {
     Config::parse(config_json(spec, interleaved).as_bytes())
 }
 
-/// The `safetensors` file of the checkpoint, in `BF16`.
-pub fn safetensors_bytes(tensors: &[Tensor]) -> Vec<u8> {
+/// One tensor of a `safetensors` file: the name, the `dtype` the header spells,
+/// the shape and the bytes.
+struct Part {
+    name: String,
+    dtype: &'static str,
+    shape: Vec<usize>,
+    payload: Vec<u8>,
+}
+
+/// The `safetensors` file of `parts`, with the `__metadata__` of a quantized
+/// checkpoint when `quantized` is set.
+fn safetensors_file(parts: &[Part], quantized: bool) -> Vec<u8> {
     let mut data = Vec::new();
     let mut header = String::from("{");
-    for (index, tensor) in tensors.iter().enumerate() {
-        if index != 0 {
+    if quantized {
+        header.push_str("\"__metadata__\":{\"format\":\"");
+        header.push_str(Q8_FORMAT_NAME);
+        header.push_str("\",\"block\":\"32\",\"scale\":\"");
+        header.push_str(SCALE_NAME);
+        header.push_str("\"}");
+    }
+    for (index, part) in parts.iter().enumerate() {
+        if index != 0 || quantized {
             header.push(',');
         }
         let start = data.len();
-        for value in &tensor.data {
-            data.extend_from_slice(&value.to_le_bytes());
-        }
+        data.extend_from_slice(&part.payload);
         let end = data.len();
         header.push('"');
-        header.push_str(&tensor.name);
-        header.push_str("\":{\"dtype\":\"BF16\",\"shape\":[");
-        for (position, dimension) in tensor.shape.iter().enumerate() {
+        header.push_str(&part.name);
+        header.push_str("\":{\"dtype\":\"");
+        header.push_str(part.dtype);
+        header.push_str("\",\"shape\":[");
+        for (position, dimension) in part.shape.iter().enumerate() {
             if position != 0 {
                 header.push(',');
             }
@@ -306,6 +335,96 @@ pub fn safetensors_bytes(tensors: &[Tensor]) -> Vec<u8> {
     out.extend_from_slice(header.as_bytes());
     out.extend_from_slice(&data);
     out
+}
+
+fn bf16_bytes(tensor: &Tensor) -> Vec<u8> {
+    tensor
+        .data
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+/// The `safetensors` file of the checkpoint, in `BF16`.
+pub fn safetensors_bytes(tensors: &[Tensor]) -> Vec<u8> {
+    let parts: Vec<Part> = tensors
+        .iter()
+        .map(|tensor| Part {
+            name: tensor.name.clone(),
+            dtype: "BF16",
+            shape: tensor.shape.clone(),
+            payload: bf16_bytes(tensor),
+        })
+        .collect();
+    safetensors_file(&parts, false)
+}
+
+/// The blocks of `Q8_0` of a row major matrix whose rows are `columns` long, as
+/// `quantize_row_q8_0_ref` lays them out and with the quantizer of the runtime.
+///
+/// A row is a whole number of blocks, so the blocks of the matrix are those of
+/// its rows one after the other.
+pub fn quantize_q8_rows(values: &[f32], columns: usize) -> Vec<u8> {
+    assert!(
+        columns != 0 && columns.is_multiple_of(BLOCK) && values.len().is_multiple_of(columns),
+        "rows that are a whole number of blocks"
+    );
+    let mut bytes = vec![0u8; values.len() / BLOCK * Q8_BLOCK_BYTES];
+    let blocks = values.as_chunks::<BLOCK>().0;
+    for (block, out) in blocks
+        .iter()
+        .zip(bytes.as_chunks_mut::<Q8_BLOCK_BYTES>().0.iter_mut())
+    {
+        quantize_block_q8(block, out).expect("the synthetic weights are finite");
+    }
+    bytes
+}
+
+/// The `Q8_0` bytes of a matrix of the checkpoint as the GGUF file holds them:
+/// the rows of `q_proj` and `k_proj` permuted as `permutation` says, then
+/// quantized.
+fn gguf_q8_bytes(spec: &Spec, tensor: &Tensor, permutation: Permutation) -> Vec<u8> {
+    let columns = tensor.shape[1];
+    quantize_q8_rows(&gguf_values(spec, tensor, permutation), columns)
+}
+
+/// The `safetensors` twin of the `Q8_0` GGUF file written with
+/// [`Permutation::Converter`]: the same quantized bytes in the rows of the
+/// checkpoint.
+///
+/// Every matrix is `Q8B32`, which is the block of `Q8_0` byte for byte, and
+/// every norm stays `BF16`. The bytes of `q_proj` and `k_proj` are those of the
+/// GGUF file, permuted back by [`unpermute_rows`], rows of whole blocks, so no
+/// block is quantized twice and the two files hold the same quantized values.
+/// The file is also what `rabbit-infer-quantize` writes for the `BF16`
+/// checkpoint, which quantizes the rows of the checkpoint without permuting:
+/// a test runs `quantize::checkpoint` on the checkpoint and compares the bytes.
+pub fn safetensors_q8_bytes(spec: &Spec, tensors: &[Tensor]) -> Vec<u8> {
+    let parts: Vec<Part> = tensors
+        .iter()
+        .map(|tensor| {
+            if tensor.shape.len() != 2 {
+                return Part {
+                    name: tensor.name.clone(),
+                    dtype: "BF16",
+                    shape: tensor.shape.clone(),
+                    payload: bf16_bytes(tensor),
+                };
+            }
+            let mut payload = gguf_q8_bytes(spec, tensor, Permutation::Converter);
+            if let Some(heads) = permuted_heads(spec, &tensor.name) {
+                let row_bytes = tensor.shape[1] / BLOCK * Q8_BLOCK_BYTES;
+                payload = unpermute_rows(&payload, tensor.shape[0], row_bytes, heads);
+            }
+            Part {
+                name: tensor.name.clone(),
+                dtype: "Q8B32",
+                shape: tensor.shape.clone(),
+                payload,
+            }
+        })
+        .collect();
+    safetensors_file(&parts, true)
 }
 
 /// The permutation of `LlamaModel.permute` in `conversion/llama.py`.
@@ -334,6 +453,23 @@ pub fn permute_rows<T: Copy>(values: &[T], rows: usize, columns: usize, heads: u
                 out.extend_from_slice(&values[source * columns..(source + 1) * columns]);
             }
         }
+    }
+    out
+}
+
+/// The inverse of [`permute_rows`]: the rows of the file put back in the order
+/// of the checkpoint.
+pub fn unpermute_rows<T: Copy>(values: &[T], rows: usize, columns: usize, heads: usize) -> Vec<T> {
+    // `source[i]` is the row of the checkpoint that row `i` of the file holds.
+    let indices: Vec<usize> = (0..rows).collect();
+    let source = permute_rows(&indices, rows, 1, heads);
+    let mut position = vec![0usize; rows];
+    for (file_row, &row) in source.iter().enumerate() {
+        position[row] = file_row;
+    }
+    let mut out = Vec::with_capacity(values.len());
+    for &file_row in &position {
+        out.extend_from_slice(&values[file_row * columns..(file_row + 1) * columns]);
     }
     out
 }
@@ -453,6 +589,9 @@ pub enum Storage {
     /// `F32` that holds the values `F16` would, so that the two files give the
     /// same products bit for bit.
     F32OfF16,
+    /// `Q8_0`, ggml type 8: 34 bytes per 32 weights, a binary16 scale then 32
+    /// signed bytes, quantized with [`quantize_block_q8`] after the permutation.
+    Q8_0,
 }
 
 /// Whether the rows of the query and key projections are permuted.
@@ -493,6 +632,29 @@ fn gguf_name(name: &str) -> String {
     format!("blk.{layer}.{part}.weight")
 }
 
+/// The heads the rows of a tensor are made of when the converter permutes it:
+/// `n_head` for `q_proj` and `n_kv_head` for `k_proj`.
+fn permuted_heads(spec: &Spec, name: &str) -> Option<usize> {
+    if name.ends_with(".self_attn.q_proj.weight") {
+        Some(spec.heads)
+    } else if name.ends_with(".self_attn.k_proj.weight") {
+        Some(spec.kv_heads)
+    } else {
+        None
+    }
+}
+
+/// The values of a tensor in the order of the GGUF file.
+fn gguf_values(spec: &Spec, tensor: &Tensor, permutation: Permutation) -> Vec<f32> {
+    let values = tensor.values();
+    match permuted_heads(spec, &tensor.name) {
+        Some(heads) if permutation == Permutation::Converter && tensor.shape.len() == 2 => {
+            permute_rows(&values, tensor.shape[0], tensor.shape[1], heads)
+        }
+        _ => values,
+    }
+}
+
 /// The GGUF file of the checkpoint `tensors`, as a builder.
 ///
 /// A norm vector is `F32`, as the converter writes every one dimensional
@@ -530,21 +692,16 @@ pub fn gguf_builder(
     meta("llama.vocab_size", Meta::U32(spec.vocab as u32));
 
     for tensor in tensors {
-        let mut values = tensor.values();
+        let mut values = gguf_values(spec, tensor, permutation);
         let is_matrix = tensor.shape.len() == 2;
-        if permutation == Permutation::Converter && is_matrix {
-            if tensor.name.ends_with(".self_attn.q_proj.weight") {
-                values = permute_rows(&values, tensor.shape[0], tensor.shape[1], spec.heads);
-            } else if tensor.name.ends_with(".self_attn.k_proj.weight") {
-                values = permute_rows(&values, tensor.shape[0], tensor.shape[1], spec.kv_heads);
-            }
-        }
         let (ggml_type, data) = if is_matrix && storage == Storage::F16 {
             let bytes = values
                 .iter()
                 .flat_map(|&value| f32_to_half(value).to_le_bytes())
                 .collect();
             (1, bytes)
+        } else if is_matrix && storage == Storage::Q8_0 {
+            (8, quantize_q8_rows(&values, tensor.shape[1]))
         } else {
             if is_matrix && storage == Storage::F32OfF16 {
                 for value in &mut values {
@@ -706,6 +863,205 @@ mod tests {
         assert_eq!(first_row, q.values()[..spec.hidden]);
     }
 
+    /// A model whose widths are multiples of the 32 weights of a block, as `Q8_0`
+    /// needs.
+    fn blocks() -> Spec {
+        Spec {
+            hidden: 64,
+            layers: 2,
+            heads: 4,
+            kv_heads: 2,
+            ffn: 96,
+            vocab: 256,
+            eps: 1e-5,
+            theta: 10_000.0,
+        }
+    }
+
+    #[test]
+    fn unpermuting_the_rows_undoes_the_permutation() {
+        for (rows, columns, heads) in [(8usize, 1usize, 2usize), (12, 5, 3), (16, 34, 4)] {
+            let values: Vec<u32> = (0..(rows * columns) as u32).collect();
+            let permuted = permute_rows(&values, rows, columns, heads);
+            assert_ne!(permuted, values);
+            assert_eq!(unpermute_rows(&permuted, rows, columns, heads), values);
+            assert_eq!(
+                permute_rows(
+                    &unpermute_rows(&values, rows, columns, heads),
+                    rows,
+                    columns,
+                    heads
+                ),
+                values
+            );
+        }
+    }
+
+    /// The bytes of a tensor of a `safetensors` file.
+    fn safetensors_tensor<'a>(bytes: &'a [u8], name: &str) -> (&'static str, &'a [u8]) {
+        use crate::safetensors::{parse, DType};
+        let header_len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+        let data = &bytes[8 + header_len..];
+        let header = parse(&bytes[8..8 + header_len], data.len()).unwrap();
+        let info = header.find(name).unwrap();
+        let dtype = match info.dtype {
+            DType::Q8B32 => "Q8B32",
+            DType::Bf16 => "BF16",
+            _ => "other",
+        };
+        (dtype, &data[info.start..info.end])
+    }
+
+    #[test]
+    fn the_q8_gguf_and_its_twin_hold_the_same_quantized_bytes() {
+        let spec = blocks();
+        spec.validate().unwrap();
+        let tensors = weights(&spec);
+        let gguf_bytes =
+            gguf_builder(&spec, &tensors, Permutation::Converter, Storage::Q8_0).to_bytes();
+        let gguf = Gguf::parse(&gguf_bytes).unwrap();
+        let twin = safetensors_q8_bytes(&spec, &tensors);
+        let mut permuted = 0;
+        for tensor in &tensors {
+            let name = &tensor.name;
+            let info = gguf.tensor(&gguf_name(name)).unwrap();
+            let in_file = gguf.tensor_data(info).unwrap();
+            let (dtype, in_twin) = safetensors_tensor(&twin, name);
+            if tensor.shape.len() == 1 {
+                // A norm stays floating point: F32 in the GGUF file, BF16 in the twin.
+                assert_eq!((info.ggml_type, dtype), (0, "BF16"), "{name}");
+                let widened: Vec<u8> = in_twin
+                    .chunks(2)
+                    .flat_map(|half| [0, 0, half[0], half[1]])
+                    .collect();
+                assert_eq!(in_file, widened, "{name}");
+                continue;
+            }
+            assert_eq!((info.ggml_type, dtype), (8, "Q8B32"), "{name}");
+            let columns = tensor.shape[1];
+            let rows = tensor.shape[0];
+            let row_bytes = columns / BLOCK * Q8_BLOCK_BYTES;
+            assert_eq!(in_file.len(), rows * row_bytes);
+            // What the converter and `llama-quantize` write: quantize the rows
+            // of the file, the permuted ones.
+            let values = tensor.values();
+            match permuted_heads(&spec, name) {
+                Some(heads) => {
+                    permuted += 1;
+                    let rows_of_file = permute_rows(&values, rows, columns, heads);
+                    assert_eq!(in_file, quantize_q8_rows(&rows_of_file, columns), "{name}");
+                    assert_ne!(in_file, in_twin, "{name}");
+                    // The twin is the same bytes with the rows put back, and it
+                    // is also what quantizing the rows of the checkpoint gives.
+                    assert_eq!(
+                        permute_rows(in_twin, rows, row_bytes, heads),
+                        in_file,
+                        "{name}"
+                    );
+                }
+                None => assert_eq!(in_file, in_twin, "{name}"),
+            }
+            assert_eq!(in_twin, quantize_q8_rows(&values, columns), "{name}");
+        }
+        assert_eq!(permuted, 2 * spec.layers);
+        // Without the permutation the file holds the rows of the checkpoint.
+        let plain = gguf_builder(&spec, &tensors, Permutation::None, Storage::Q8_0).to_bytes();
+        let plain = Gguf::parse(&plain).unwrap();
+        let q = plain.tensor("blk.1.attn_q.weight").unwrap();
+        let (_, twin_q) = safetensors_tensor(&twin, "model.layers.1.self_attn.q_proj.weight");
+        assert_eq!(plain.tensor_data(q).unwrap(), twin_q);
+    }
+
+    /// `ggml_compute_fp32_to_fp16` of `ggml-impl.h` (ggml `d9fe7bf`), which
+    /// `GGML_FP32_TO_FP16` is, transcribed.
+    fn ggml_fp32_to_fp16(value: f32) -> u16 {
+        let scale_to_inf = f32::from_bits(0x7780_0000);
+        let scale_to_zero = f32::from_bits(0x0880_0000);
+        let mut base = (value.abs() * scale_to_inf) * scale_to_zero;
+        let bits = value.to_bits();
+        let shl1 = bits.wrapping_add(bits);
+        let sign = bits & 0x8000_0000;
+        let mut bias = shl1 & 0xff00_0000;
+        if bias < 0x7100_0000 {
+            bias = 0x7100_0000;
+        }
+        base += f32::from_bits((bias >> 1).wrapping_add(0x0780_0000));
+        let base = base.to_bits();
+        let nonsign = ((base >> 13) & 0x7c00) + (base & 0x0fff);
+        ((sign >> 16) | if shl1 > 0xff00_0000 { 0x7e00 } else { nonsign }) as u16
+    }
+
+    /// `quantize_row_q8_0_ref` of `ggml-quants.c` (ggml `d9fe7bf`) for one
+    /// block, transcribed: the scale is `amax / 127` and the quants are the
+    /// weights times `1 / d`, with the `d` that is not yet rounded to binary16.
+    fn llama_cpp_q8_0(values: &[f32]) -> [u8; Q8_BLOCK_BYTES] {
+        let mut block = [0u8; Q8_BLOCK_BYTES];
+        let mut amax = 0.0f32;
+        for &value in values {
+            amax = if amax > value.abs() {
+                amax
+            } else {
+                value.abs()
+            };
+        }
+        let d = amax / 127.0;
+        let id = if d != 0.0 { 1.0 / d } else { 0.0 };
+        block[..2].copy_from_slice(&ggml_fp32_to_fp16(d).to_le_bytes());
+        for (slot, &value) in block[2..].iter_mut().zip(values) {
+            *slot = (value * id).round() as i8 as u8;
+        }
+        block
+    }
+
+    #[test]
+    fn the_quantizer_of_llama_cpp_writes_the_same_scale_and_not_always_the_same_quants() {
+        // The conversion of ggml to binary16 is the one of the runtime.
+        let mut rng = Rng::new(7);
+        for _ in 0..200_000 {
+            let value = rng.next_f32() * 2.0f32.powi((rng.next_f32() * 12.0) as i32 - 8);
+            assert_eq!(ggml_fp32_to_fp16(value), f32_to_half(value), "{value}");
+        }
+        let mut differing_blocks = 0;
+        let mut differing_quants = 0;
+        let total = 20_000;
+        for _ in 0..total {
+            let scale = 2.0f32.powi((rng.next_f32() * 6.0) as i32 - 3);
+            let values: Vec<f32> = (0..BLOCK).map(|_| rng.next_f32() * scale).collect();
+            let ours = quantize_q8_rows(&values, BLOCK);
+            let theirs = llama_cpp_q8_0(&values);
+            assert_eq!(ours[..2], theirs[..2], "the same binary16 scale");
+            let wrong = ours[2..]
+                .iter()
+                .zip(&theirs[2..])
+                .filter(|(a, b)| a != b)
+                .count();
+            // The only difference is a quant that rounds the other way.
+            assert!(ours[2..]
+                .iter()
+                .zip(&theirs[2..])
+                .all(|(a, b)| (*a as i8 as i32 - *b as i8 as i32).abs() <= 1));
+            differing_quants += wrong;
+            differing_blocks += usize::from(wrong != 0);
+        }
+        println!(
+            "llama.cpp Q8_0 against quantize_block_q8: {differing_blocks} of {total} blocks \
+             differ, {differing_quants} of {} quants",
+            total * BLOCK
+        );
+        // Not the same function: `llama.cpp` multiplies by the inverse of the
+        // scale before the rounding to binary16 and the runtime after it.
+        assert!(differing_blocks > 0);
+        // A zero block and an exact block are the same in both.
+        assert_eq!(
+            quantize_q8_rows(&[0.0; BLOCK], BLOCK),
+            llama_cpp_q8_0(&[0.0; BLOCK])
+        );
+        assert_eq!(
+            quantize_q8_rows(&[127.0; BLOCK], BLOCK),
+            llama_cpp_q8_0(&[127.0; BLOCK])
+        );
+    }
+
     #[test]
     fn the_safetensors_file_is_the_one_the_generator_always_wrote() {
         let spec = small();
@@ -715,5 +1071,38 @@ mod tests {
         assert!(std::str::from_utf8(&bytes[8..8 + header_len])
             .unwrap()
             .starts_with("{\"model.embed_tokens.weight\":{\"dtype\":\"BF16\""));
+    }
+
+    #[test]
+    fn the_q8_twin_is_what_the_quantizer_of_the_binary_writes_for_the_checkpoint() {
+        let spec = Spec {
+            hidden: 64,
+            layers: 2,
+            heads: 4,
+            kv_heads: 2,
+            ffn: 96,
+            vocab: 256,
+            eps: 1e-5,
+            theta: 10_000.0,
+        };
+        spec.validate().unwrap();
+        let tensors = weights(&spec);
+        let root =
+            std::env::temp_dir().join(format!("rabbit-infer-q8-twin-{}", std::process::id()));
+        let (input, output) = (root.join("in"), root.join("out"));
+        std::fs::create_dir_all(&input).unwrap();
+        std::fs::write(input.join("model.safetensors"), safetensors_bytes(&tensors)).unwrap();
+        let report = crate::quantize::checkpoint(&input, &output, crate::quantize::Width::Eight)
+            .expect("the checkpoint is quantized");
+        let written = std::fs::read(output.join("model.safetensors")).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let twin = safetensors_q8_bytes(&spec, &tensors);
+        assert_eq!(report.bytes, written.len());
+        assert!(
+            written == twin,
+            "the twin differs from the quantizer output (lengths {} and {})",
+            twin.len(),
+            written.len()
+        );
     }
 }

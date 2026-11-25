@@ -292,12 +292,14 @@ matvec-check-initramfs: musl-std
 	rm -rf "$(MATVEC_MODEL)" "$(MATVEC_DIR)/q8" "$(MATVEC_DIR)/q4" "$(MATVEC_STAGE)"
 	$(CARGO) run --release --manifest-path $(INFER_DIR)/Cargo.toml \
 		--target $(HOST_TARGET) --target-dir $(TARGET_DIR)/infer-host \
-		--bin rabbit-infer-gen -- --out $(MATVEC_MODEL) --gguf --gguf-unpermuted
+		--bin rabbit-infer-gen -- --out $(MATVEC_MODEL) --gguf --gguf-unpermuted --gguf-q8
 	$(MAKE) quantize QUANT_BITS=8 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q8
 	$(MAKE) quantize QUANT_BITS=4 QUANT_IN=$(MATVEC_MODEL) QUANT_OUT=$(MATVEC_DIR)/q4
 	mkdir -p $(MATVEC_STAGE)
 	cp $(MATVEC_MODEL)/config.json $(MATVEC_MODEL)/model.safetensors $(MATVEC_STAGE)/
 	cp $(MATVEC_MODEL)/model.gguf $(MATVEC_MODEL)/model-nopermute.gguf $(MATVEC_STAGE)/
+	cp $(MATVEC_MODEL)/model-q8.gguf $(MATVEC_MODEL)/model-q8-nopermute.gguf $(MATVEC_STAGE)/
+	cp $(MATVEC_MODEL)/model-q8-twin.safetensors $(MATVEC_STAGE)/
 	cp $(MATVEC_DIR)/q8/model.safetensors $(MATVEC_STAGE)/model-q8.safetensors
 	cp $(MATVEC_DIR)/q4/model.safetensors $(MATVEC_STAGE)/model-q4.safetensors
 	EXTRA_DIR=$(MATVEC_STAGE) bench/mkinitramfs.sh $(MATVEC_INITRAMFS) $(MATVEC_ELF)
@@ -356,7 +358,12 @@ matvec-check-run:
 # Run it alone on a log with `make matvec-check-gguf-gate MATVEC_LOG=<file>`.
 # Every twin line must hold its tokens, have no undecided step and stay below
 # 1e-5 in the logits, and the smallest margin between the two best logits must
-# be positive.
+# be positive. The proof runs for the matrices in `F32` and in `Q8_0`, and each
+# format must have its own twin lines for 8 and 64 steps, its margin line and
+# both controls detected, and its own `GGUF files` line, which names the files
+# that proof read (the `model-q8` ones for q8), so the lines of one format cannot
+# be relabelled as the other. A control only counts when it also moved the logits
+# by more than 0.01, and not by a hair.
 GGUF_NUMBER := ^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$$
 GGUF_TWIN_AWK := '/^GGUF twin /{ n++; te=""; un=""; df=""; \
 	for (i = 1; i <= NF; i++) { split($$i, kv, "="); \
@@ -369,24 +376,60 @@ GGUF_MARGIN_AWK := '/^GGUF margin /{ n++; mg=""; \
 	for (i = 1; i <= NF; i++) { split($$i, kv, "="); if (kv[1] == "min_top2") mg = kv[2] } \
 	if (mg !~ /$(GGUF_NUMBER)/ || mg + 0 <= 0) { bad = 1; print "bad margin line: " $$0 } } \
 	END { exit (n > 0 && !bad) ? 0 : 1 }'
+GGUF_CONTROL_AWK := '/^GGUF negative_control /{ n++; dt=""; df=""; \
+	for (i = 1; i <= NF; i++) { split($$i, kv, "="); \
+		if (kv[1] == "detected") dt = kv[2]; \
+		if (kv[1] == "max_abs_logit_diff") df = kv[2] } \
+	if (dt != "true" || df !~ /$(GGUF_NUMBER)/ || df + 0 <= 0.01) { bad = 1; print "bad control line: " $$0 } } \
+	END { exit (n > 0 && !bad) ? 0 : 1 }'
+
+GGUF_ORDER_AWK := '/^GGUF files /{ split($$3, kv, "="); current = kv[2]; next } \
+	/^GGUF (twin|margin|negative_control) /{ split($$3, kv, "="); \
+		if (kv[2] != current) { bad = 1; print "line of " kv[2] " under the files of " current ": " $$0 } } \
+	END { exit bad ? 1 : 0 }'
 
 matvec-check-gguf-gate:
-	@for steps in 8 64; do \
-		if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF twin format=f32 prompts=[0-9]+ steps=$$steps tokens_equal=true max_abs_logit_diff=[0-9.e+-]+ undecided=0 bit_exact=(true|false)$$"; then \
-			echo "matvec-check: the GGUF file did not decode the same $$steps tokens as its safetensors twin"; exit 1; \
+	@for format in f32 q8; do \
+		case $$format in \
+			f32) files='twin=/model.safetensors gguf=/model.gguf unpermuted=/model-nopermute.gguf' ;; \
+			*) files='twin=/model-q8-twin.safetensors gguf=/model-q8.gguf unpermuted=/model-q8-nopermute.gguf' ;; \
+		esac; \
+		if [ "$$(tr -d '\r' < $(MATVEC_LOG) | grep -c "^GGUF files format=$$format ")" -ne 1 ] || \
+			! tr -d '\r' < $(MATVEC_LOG) | grep -Fxq "GGUF files format=$$format $$files"; then \
+			echo "matvec-check: the GGUF lines of $$format are not tied to one line naming $$files"; exit 1; \
+		fi; \
+		for steps in 8 64; do \
+			if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF twin format=$$format prompts=[0-9]+ steps=$$steps tokens_equal=true max_abs_logit_diff=[0-9.e+-]+ undecided=0 bit_exact=(true|false)$$"; then \
+				echo "matvec-check: the GGUF file in $$format did not decode the same $$steps tokens as its safetensors twin"; exit 1; \
+			fi; \
+		done; \
+		if [ "$$(tr -d '\r' < $(MATVEC_LOG) | grep -c "^GGUF twin format=$$format ")" -ne 2 ]; then \
+			echo "matvec-check: the GGUF check in $$format has other twin lines than the ones of 8 and 64 steps"; exit 1; \
+		fi; \
+		if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF margin format=$$format min_top2=[0-9.e+-]+ prompts=[0-9]+ steps=[0-9]+$$"; then \
+			echo "matvec-check: the margin line of the GGUF check in $$format is missing"; exit 1; \
+		fi; \
+		for control in split_half_rope no_permutation; do \
+			if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF negative_control format=$$format $$control detected=true "; then \
+				echo "matvec-check: the wrong reading $$control of the GGUF file in $$format was not detected"; exit 1; \
+			fi; \
+		done; \
+		if [ "$$(tr -d '\r' < $(MATVEC_LOG) | grep -c "^GGUF negative_control format=$$format ")" -ne 2 ]; then \
+			echo "matvec-check: the GGUF check in $$format has other control lines than the two wrong readings"; exit 1; \
 		fi; \
 	done; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_ORDER_AWK); then \
+		echo "matvec-check: a GGUF line is not under the files line of its own format"; exit 1; \
+	fi; \
+	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_CONTROL_AWK); then \
+		echo "matvec-check: a negative control of the GGUF check moved the logits by 0.01 or less, or is not a number"; exit 1; \
+	fi; \
 	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_TWIN_AWK); then \
 		echo "matvec-check: a GGUF twin line has other tokens, an undecided step or a logit difference of 1e-5 or more"; exit 1; \
 	fi; \
 	if ! tr -d '\r' < $(MATVEC_LOG) | awk $(GGUF_MARGIN_AWK); then \
 		echo "matvec-check: the smallest margin of the GGUF check is missing or not positive"; exit 1; \
 	fi; \
-	for control in split_half_rope no_permutation; do \
-		if ! tr -d '\r' < $(MATVEC_LOG) | grep -Eq "^GGUF negative_control $$control detected=true "; then \
-			echo "matvec-check: the wrong reading $$control of the GGUF file was not detected"; exit 1; \
-		fi; \
-	done; \
 	if tr -d '\r' < $(MATVEC_LOG) | grep -Eq '^GGUF (FAIL|ERR)|detected=false'; then \
 		echo "matvec-check: the GGUF proof failed"; exit 1; \
 	fi; \
