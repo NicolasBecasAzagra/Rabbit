@@ -204,8 +204,15 @@ const links = [
   }
 
   .policy-head {
-    max-width: min(56rem, calc(100% - 15rem));
+    max-width: 56rem;
     margin-block-end: var(--space-xl);
+  }
+
+  /* Keep clear of the seam ears, which only show from this width up */
+  @media (min-width: 1100px) {
+    .policy-head {
+      max-width: min(56rem, calc(100% - 15rem));
+    }
   }
 
   .policy-title {
