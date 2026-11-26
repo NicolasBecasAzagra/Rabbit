@@ -1,4 +1,6 @@
 ---
+// The benchmark chart: one card per timing, three bars on a linear scale from
+// zero that belongs to that card. (The file keeps its old name.)
 import { benchmarks, meta, benchmarkContext } from '../../data/project';
 import SeamEars from '../SeamEars.astro';
 import { url } from '../../lib/paths';
@@ -112,56 +114,6 @@ const endToEndRows = processed.filter(
 
 const otherRows = processed.filter(({ parsed }) => !parsed.rabbit.isTime);
 
-const opMin = 1e-7; // 100 ns
-const opMax = 1e-1; // 100 ms
-const eeMin = 1; // 1 s
-const eeMax = 1e4; // 1000 s
-
-function logPos(value: number, min: number, max: number, left: number, right: number): number {
-  const logValue = Math.log10(value);
-  const logMin = Math.log10(min);
-  const logMax = Math.log10(max);
-  const t = (logValue - logMin) / (logMax - logMin);
-  return left + t * (right - left);
-}
-
-const opTicks = [1e-7, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1];
-const opTickLabels: Record<number, string> = {
-  [1e-7]: '100 ns',
-  [1e-6]: '1 µs',
-  [1e-5]: '10 µs',
-  [1e-4]: '100 µs',
-  [1e-3]: '1 ms',
-  [1e-2]: '10 ms',
-  [1e-1]: '100 ms',
-};
-
-const eeTicks = [1, 10, 100, 1000, 10000];
-const eeTickLabels: Record<number, string> = {
-  [1]: '1 s',
-  [10]: '10 s',
-  [100]: '100 s',
-  [1000]: '1000 s',
-  [10000]: '10000 s',
-};
-
-const rowLabelX = 290;
-const chartLeft = 320;
-const chartRight = 720;
-const valueColX: Record<SeriesKey, number> = {
-  rabbit: 760,
-  mainline: 880,
-  mainlineNoMitigations: 1020,
-};
-const svgWidth = 1180;
-const opTop = 72;
-const opRowHeight = 88;
-const opBottom = opTop + operationRows.length * opRowHeight + 40;
-const eeTop = opBottom + 48;
-const eeRowHeight = 88;
-const eeBottom = eeTop + endToEndRows.length * eeRowHeight + 40;
-const svgHeight = eeBottom + 24;
-
 const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const timingRows = [...operationRows, ...endToEndRows];
 const timingWord = words[timingRows.length] ?? String(timingRows.length);
@@ -181,30 +133,33 @@ const headline =
     ? `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 and than Linux with mitigations off in all ${comparedWord} compared timings${recordedNote}.`
     : `Under QEMU TCG, an emulator, Rabbit is faster than Linux 7.3.0 in all ${comparedWord} compared timings and than Linux with mitigations off in ${words[fasterThanNoMit] ?? fasterThanNoMit} of ${comparedWord}${recordedNote}.`;
 
-const seriesKeys: SeriesKey[] = ['mainline', 'mainlineNoMitigations', 'rabbit'];
-const compactPanels = [
-  {
-    title: 'Kernel operations (log time, 100 ns – 100 ms)',
-    rows: operationRows,
-    min: opMin,
-    max: opMax,
-    ticks: [1e-7, 1e-5, 1e-3, 1e-1].map((t) => ({ t, label: opTickLabels[t] })),
-    grid: opTicks,
-  },
-  {
-    title: 'End-to-end (log time, 1 s – 10000 s)',
-    rows: endToEndRows,
-    min: eeMin,
-    max: eeMax,
-    ticks: [1, 100, 10000].map((t) => ({ t, label: eeTickLabels[t] })),
-    grid: eeTicks,
-  },
-];
+// Order of the bars in every card.
+const barKeys: SeriesKey[] = ['rabbit', 'mainlineNoMitigations', 'mainline'];
 
-const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux. Operation times span ${operationRows.length} kernel measurements on a logarithmic axis from 100 nanoseconds to 100 milliseconds. End-to-end times span ${endToEndRows.length} measurements from 1 second to 10000 seconds. Memory and throughput comparisons are shown in the table below.`;
+/** Bar lengths of one card, linear from zero: the slowest of the three is 100%. */
+function barsOf(row: Row) {
+  const seconds = barKeys.map((key) => {
+    const p = parseValue(row[key]);
+    return toSeconds(p.value, p.unit);
+  });
+  const max = Math.max(...seconds);
+  return barKeys.map((key, i) => ({ key, percent: (seconds[i] / max) * 100 }));
+}
+
+/** A comparison split into its factor and its words, to set the factor large. */
+function verdict(row: Row, key: BaselineKey) {
+  const text = compare(row, key);
+  const m = text.match(/^([0-9.]+×) (.*)$/);
+  return m ? { factor: m[1], words: m[2] } : { factor: '', words: text };
+}
+
+const groups = [
+  { id: 'bench-operations', title: 'Kernel operations', rows: operationRows },
+  { id: 'bench-end-to-end', title: 'End-to-end', rows: endToEndRows },
+];
 ---
 
-<section id="benchmarks" class="dotplot-section bench-band on-ink" aria-labelledby="benchmarks-chart-title">
+<section id="benchmarks" class="bench-section bench-band on-paper" aria-labelledby="benchmarks-chart-title">
   <SeamEars edge="top" side="right" reach="12rem" />
   <div class="wrapper">
     <header class="section-header">
@@ -215,242 +170,57 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
       </p>
     </header>
 
-    <figure class="dotplot-figure">
-      <figcaption id="dotplot-title" class="sr-only">
-        Benchmark dot plot: Rabbit versus mainline Linux on a logarithmic scale
-      </figcaption>
-      <p id="dotplot-desc" class="sr-only">{ariaDescription}</p>
-
-      <div class="dotplot-scroll">
-        <svg
-          class="dotplot-svg"
-          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          role="img"
-          aria-labelledby="dotplot-title dotplot-desc"
-          preserveAspectRatio="xMinYMin meet"
-        >
-          {/* Operations panel */}
-          <g class="panel">
-            <text class="panel-title" x={chartLeft} y={24}>Kernel operations (log time, 100 ns – 100 ms)</text>
-            <text class="column-header" x={valueColX.rabbit} y={44} text-anchor="start">Rabbit</text>
-            <text class="column-header" x={valueColX.mainline} y={44} text-anchor="start">Linux 7.3.0</text>
-            <text class="column-header" x={valueColX.mainlineNoMitigations} y={44} text-anchor="start">Linux, mitigations off</text>
-
-            {/* Grid lines and ticks */}
-            {opTicks.map((tick) => {
-              const x = logPos(tick, opMin, opMax, chartLeft, chartRight);
-              return (
-                <g class="tick">
-                  <line x1={x} y1={opTop} x2={x} y2={opBottom - 32} stroke="var(--rule)" stroke-width="1" />
-                  <text x={x} y={opBottom - 12} text-anchor="middle">{opTickLabels[tick]}</text>
-                </g>
-              );
-            })}
-            <line x1={chartLeft} y1={opBottom - 32} x2={chartRight} y2={opBottom - 32} stroke="var(--border-strong)" stroke-width="1" />
-
-            {/* Rows */}
-            {operationRows.map(({ row, parsed }, i) => {
-              const y = opTop + 22 + i * opRowHeight;
-              return (
-                <g class="row">
-                  <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  {isRecorded(row) ? (
-                    <a href={url('/docs/benchmarking')}>
-                      <text class="row-ratio row-recorded" x={rowLabelX} y={y + 14} text-anchor="end">{recordedText}</text>
-                    </a>
-                  ) : (
-                    <>
-                      <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
-                      <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
-                    </>
-                  )}
-                  <text class="row-ctx" x={rowLabelX} y={y + (isRecorded(row) ? 32 : 50)} text-anchor="end">{benchmarkContext}</text>
-                  {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
-                    const p = parsed[key];
-                    if (!p.isTime) return null;
-                    const valueSeconds = toSeconds(p.value, p.unit);
-                    const x = logPos(valueSeconds, opMin, opMax, chartLeft, chartRight);
-                    const isOut = x < chartLeft || x > chartRight;
-                    if (isOut) return null;
-                    return (
-                      <g class={`series series-${key}`}>
-                        <line
-                          x1={x}
-                          y1={y - 6}
-                          x2={x}
-                          y2={opBottom - 32}
-                          stroke="var(--border)"
-                          stroke-width="1"
-                          stroke-dasharray="2,2"
-                        />
-                        {key === 'rabbit' && (
-                          <circle cx={x} cy={y - 7} r="4.5" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
-                        )}
-                        {key === 'mainline' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--canvas)" stroke="var(--ink)" stroke-width="2" />
-                        )}
-                        {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3.5} y={y + 7 - 3.5} width="7" height="7" fill="var(--ink-secondary)" stroke="var(--canvas)" stroke-width="1" />
-                        )}
-                        <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })}
-          </g>
-
-          {/* End-to-end panel */}
-          <g class="panel">
-            <text class="panel-title" x={chartLeft} y={opBottom + 24}>End-to-end (log time, 1 s – 10000 s)</text>
-            <text class="column-header" x={valueColX.rabbit} y={opBottom + 44} text-anchor="start">Rabbit</text>
-            <text class="column-header" x={valueColX.mainline} y={opBottom + 44} text-anchor="start">Linux 7.3.0</text>
-            <text class="column-header" x={valueColX.mainlineNoMitigations} y={opBottom + 44} text-anchor="start">Linux, mitigations off</text>
-
-            {eeTicks.map((tick) => {
-              const x = logPos(tick, eeMin, eeMax, chartLeft, chartRight);
-              return (
-                <g class="tick">
-                  <line x1={x} y1={eeTop} x2={x} y2={eeBottom - 32} stroke="var(--rule)" stroke-width="1" />
-                  <text x={x} y={eeBottom - 12} text-anchor="middle">{eeTickLabels[tick]}</text>
-                </g>
-              );
-            })}
-            <line x1={chartLeft} y1={eeBottom - 32} x2={chartRight} y2={eeBottom - 32} stroke="var(--border-strong)" stroke-width="1" />
-
-            {endToEndRows.map(({ row, parsed }, i) => {
-              const y = eeTop + 22 + i * eeRowHeight;
-              return (
-                <g class="row">
-                  <text class="row-label" x={rowLabelX} y={y - 6} text-anchor="end">{row.metric}</text>
-                  {isRecorded(row) ? (
-                    <a href={url('/docs/benchmarking')}>
-                      <text class="row-ratio row-recorded" x={rowLabelX} y={y + 14} text-anchor="end">{recordedText}</text>
-                    </a>
-                  ) : (
-                    <>
-                      <text class="row-ratio" x={rowLabelX} y={y + 14} text-anchor="end">{compare(row, 'mainline')}</text>
-                      <text class="row-ratio" x={rowLabelX} y={y + 32} text-anchor="end">{compare(row, 'mainlineNoMitigations')}</text>
-                    </>
-                  )}
-                  <text class="row-ctx" x={rowLabelX} y={y + (isRecorded(row) ? 32 : 50)} text-anchor="end">{benchmarkContext}</text>
-                  {(['mainline', 'mainlineNoMitigations', 'rabbit'] as SeriesKey[]).map((key) => {
-                    const p = parsed[key];
-                    if (!p.isTime) return null;
-                    const valueSeconds = toSeconds(p.value, p.unit);
-                    const x = logPos(valueSeconds, eeMin, eeMax, chartLeft, chartRight);
-                    const isOut = x < chartLeft || x > chartRight;
-                    if (isOut) return null;
-                    return (
-                      <g class={`series series-${key}`}>
-                        <line
-                          x1={x}
-                          y1={y - 6}
-                          x2={x}
-                          y2={eeBottom - 32}
-                          stroke="var(--border)"
-                          stroke-width="1"
-                          stroke-dasharray="2,2"
-                        />
-                        {key === 'rabbit' && (
-                          <circle cx={x} cy={y - 7} r="4.5" fill="var(--accent)" stroke="var(--canvas)" stroke-width="1.5" />
-                        )}
-                        {key === 'mainline' && (
-                          <circle cx={x} cy={y} r="4" fill="var(--canvas)" stroke="var(--ink)" stroke-width="2" />
-                        )}
-                        {key === 'mainlineNoMitigations' && (
-                          <rect x={x - 3.5} y={y + 7 - 3.5} width="7" height="7" fill="var(--ink-secondary)" stroke="var(--canvas)" stroke-width="1" />
-                        )}
-                        <text class="value-label" x={valueColX[key]} y={y + 4} text-anchor="start">{row[key]}</text>
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })}
-          </g>
-        </svg>
-      </div>
-
-      <div class="compact">
-        {
-          compactPanels.map((panel) => (
-            <div class="cpanel">
-              <p class="cpanel-title">{panel.title}</p>
-              <div class="cruler" aria-hidden="true">
-                {panel.ticks.map(({ t, label }, i) => {
-                  const pct = logPos(t, panel.min, panel.max, 0, 100);
-                  const edge = i === 0 ? 'first' : i === panel.ticks.length - 1 ? 'last' : '';
-                  return <span class={`cruler-tick ${edge}`} style={`left:${pct}%`}>{label}</span>;
-                })}
-              </div>
-              <ul class="crows" role="list">
-                {panel.rows.map(({ row, parsed }) => (
-                  <li class="crow">
-                    <p class="crow-head">
-                      <span class="crow-label">{row.metric}</span>
-                      <span class="crow-ratio">
-                        {isRecorded(row) ? (
-                          <a href={url('/docs/benchmarking')}>{recordedText}</a>
-                        ) : (
-                          <>
-                            {compare(row, 'mainline')}
-                            <br />
-                            {compare(row, 'mainlineNoMitigations')}
-                          </>
-                        )}
-                        <br />
-                        {benchmarkContext}
-                      </span>
-                    </p>
-                    <div class="ctrack" aria-hidden="true">
-                      {panel.grid.map((g) => (
-                        <i class="cgrid" style={`left:${logPos(g, panel.min, panel.max, 0, 100)}%`} />
-                      ))}
-                      {seriesKeys.map((key) => (
-                        <i
-                          class={`m m-${key} cm`}
-                          style={`left:${logPos(toSeconds(parsed[key].value, parsed[key].unit), panel.min, panel.max, 0, 100)}%;top:${key === 'rabbit' ? 25 : key === 'mainline' ? 50 : 75}%`}
-                        />
-                      ))}
-                    </div>
-                    <p class="cvals">
-                      {(['rabbit', 'mainline', 'mainlineNoMitigations'] as SeriesKey[]).map((key) => (
-                        <span class="cv">
-                          <i class={`m m-${key}`} aria-hidden="true" />
-                          <span class="sr-only">{seriesNames[key]}: </span>
-                          <span class="cv-num">{row[key]}</span>
-                        </span>
-                      ))}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+    <div class="bench-chart">
+      {
+        groups.map((group) => (
+          <div class="bench-group">
+            <div class="group-head">
+              <h3 id={group.id} class="group-title">{group.title}</h3>
             </div>
-          ))
-        }
-      </div>
+            <ul class="cards" role="list" aria-labelledby={group.id}>
+              {group.rows.map(({ row }) => {
+                const headlineVerdict = verdict(row, 'mainlineNoMitigations');
+                return (
+                  <li class="bench-card">
+                    <h4 class="card-title">{row.metric}</h4>
+                    {isRecorded(row) ? (
+                      <p class="card-recorded">
+                        <a href={url('/docs/benchmarking')}>{recordedText}</a>
+                      </p>
+                    ) : (
+                      <div class="card-verdict">
+                        <p class="verdict-main">
+                          {headlineVerdict.factor && <span class="verdict-factor">{headlineVerdict.factor}</span>}{' '}
+                          <span class="verdict-words">{headlineVerdict.words}</span>
+                        </p>
+                        <p class="verdict-other">{compare(row, 'mainline')}</p>
+                      </div>
+                    )}
+                    <ul class="bars" role="list">
+                      {barsOf(row).map(({ key, percent }) => (
+                        <li class={`bar-row bar-${key}`}>
+                          <span class="bar-name">{seriesNames[key]}<span class="sr-only">: </span></span>
+                          <span class="bar-value">{row[key]}</span>
+                          {!isRecorded(row) && (
+                            <span class="bar-track" aria-hidden="true">
+                              <span class="bar-fill" style={`width:${percent.toFixed(3)}%`} />
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p class="card-context">{benchmarkContext} · lower is better</p>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))
+      }
 
-      <div class="legend">
-        <span class="legend-item">
-          <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4" fill="var(--accent)" /></svg>
-          Rabbit
-        </span>
-        <span class="legend-item">
-          <svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="3.5" fill="none" stroke="var(--ink-secondary)" stroke-width="1.5" /></svg>
-          Linux 7.3.0
-        </span>
-        <span class="legend-item">
-          <svg width="12" height="12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" fill="var(--ink-secondary)" /></svg>
-          Linux, mitigations off
-        </span>
-        <span class="legend-item legend-context">{benchmarkContext}</span>
-      </div>
-
-      <p class="dotplot-note">
-        Logarithmic scale: zero is not representable. The position of each mark encodes the order
-        of magnitude, not the absolute difference.
+      <p class="bench-note">
+        Each card has its own linear scale that starts at zero. Compare bar lengths within a card,
+        not between cards.
       </p>
 
       <details class="raw-table" open={openTable}>
@@ -508,7 +278,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
           </table>
         </div>
       </details>
-    </figure>
+    </div>
 
     <p class="section-footer">
       <a href={`${meta.repo}/blob/main/REPORT.md`}>Read the full report</a>
@@ -518,7 +288,7 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
 </section>
 
 <style>
-  .dotplot-section {
+  .bench-section {
     position: relative;
     isolation: isolate;
     padding-block: var(--space-3xl);
@@ -533,86 +303,144 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     margin-block-end: var(--space-md);
   }
 
-  .dotplot-figure {
-    margin: 0;
+  .bench-group + .bench-group {
+    margin-block-start: var(--space-xl);
   }
 
-  .dotplot-scroll {
-    overflow-x: auto;
+  .group-head {
     padding-block-end: var(--space-sm);
+    border-block-end: 1px solid var(--ink);
+    margin-block-end: var(--space-md);
   }
 
-  .dotplot-scroll:focus-visible {
-    outline-offset: 2px;
+  .group-title {
+    font-size: var(--text-lg);
   }
 
-  .tick line {
-    stroke: rgba(255, 255, 255, 0.3);
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: var(--space-md);
+    list-style: none;
+    padding: 0;
   }
 
-  .series line {
-    stroke: rgba(255, 255, 255, 0.32);
+  .bench-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--space-md);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    background: var(--canvas);
   }
 
-  .dotplot-svg {
-    width: 100%;
-    height: auto;
-    font-family: var(--font-body);
+  .card-title {
+    font-size: var(--text-md);
+    letter-spacing: -0.01em;
   }
 
-  .dotplot-svg text {
-    font-size: 13px;
-    fill: var(--ink-secondary);
+  .card-verdict,
+  .card-recorded {
+    margin-block: var(--space-sm) var(--space-md);
   }
 
-  .panel-title {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: var(--font-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    fill: var(--ink);
-  }
-
-  .column-header {
-    font-family: var(--font-body);
-    font-size: 13px;
-    font-weight: var(--font-medium);
-    fill: var(--ink-secondary);
-  }
-
-  .row-label {
-    font-family: var(--font-body);
-    font-size: 14px;
-    fill: var(--ink);
-  }
-
-  .row-recorded {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-
-  .row-ctx {
-    font-family: var(--font-body);
-    font-size: 13px;
-    fill: var(--ink-secondary);
-  }
-
-  .row-ratio {
-    font-family: var(--font-body);
-    font-size: 13px;
-    fill: var(--ink-secondary);
-  }
-
-  .value-label {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    fill: var(--ink-secondary);
+  .verdict-factor {
+    display: block;
+    font-size: var(--text-xl);
+    font-weight: 700;
+    line-height: var(--leading-snug);
+    letter-spacing: -0.03em;
+    color: var(--accent);
     font-variant-numeric: tabular-nums;
   }
 
-  .series-rabbit .value-label {
-    fill: var(--accent);
+  .verdict-words {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--ink);
+  }
+
+  .verdict-other,
+  .card-recorded {
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .verdict-other {
+    margin-block-start: var(--space-xs);
+  }
+
+  /* Pushed to the foot so the bars line up across a row of cards */
+  .bars {
+    display: grid;
+    gap: var(--space);
+    list-style: none;
+    padding: 0;
+    margin-block-start: auto;
+  }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: var(--space-xs) var(--space-sm);
+    font-size: var(--text-sm);
+    color: var(--ink-secondary);
+  }
+
+  .bar-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  /* The left edge of the track is zero */
+  .bar-track {
+    grid-column: 1 / -1;
+    display: block;
+    height: 0.875rem;
+    border-inline-start: 1px solid var(--rule);
+  }
+
+  /* The 2px floor keeps a very short bar visible; the label has the exact value */
+  .bar-fill {
+    display: block;
+    height: 100%;
+    min-width: 2px;
+    border: 1px solid var(--muted);
+    background: var(--surface-2);
+  }
+
+  .bar-rabbit .bar-name,
+  .bar-rabbit .bar-value {
+    font-weight: var(--font-semibold);
+    color: var(--accent);
+  }
+
+  .bar-rabbit .bar-fill {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .card-context {
+    margin-block-start: var(--space);
+    padding-block-start: var(--space-sm);
+    border-block-start: 1px solid var(--hairline);
+    font-size: var(--text-caption);
+    color: var(--ink-secondary);
+  }
+
+  @media (forced-colors: active) {
+    .bar-fill {
+      border-color: CanvasText;
+    }
+
+    .bar-rabbit .bar-fill {
+      background: CanvasText;
+    }
   }
 
   .other-comparisons {
@@ -687,32 +515,8 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     font-size: var(--text-caption);
   }
 
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-md);
+  .bench-note {
     margin-block-start: var(--space-md);
-    font-family: var(--font-body);
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
-  }
-
-  .legend-context {
-    margin-inline-start: auto;
-    font-family: var(--font-mono);
-    font-size: var(--text-caption);
-    color: var(--ink-secondary);
-  }
-
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-xs);
-  }
-
-  .dotplot-note {
-    margin-block-start: var(--space-sm);
-    font-family: var(--font-body);
     font-size: var(--text-sm);
     color: var(--ink-secondary);
   }
@@ -802,147 +606,6 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     font-weight: var(--font-medium);
   }
 
-  /* The compact chart: one row per timing, on the same log scale */
-  .compact {
-    display: none;
-  }
-
-  .m {
-    display: inline-block;
-    flex: none;
-    width: 12px;
-    height: 12px;
-  }
-
-  .m-rabbit {
-    border-radius: 50%;
-    background: var(--ink);
-  }
-
-  .m-mainline {
-    border-radius: 50%;
-    border: 1.5px solid var(--ink-secondary);
-  }
-
-  .m-mainlineNoMitigations {
-    background: var(--ink-secondary);
-    transform: scale(0.8);
-  }
-
-  .cpanel + .cpanel {
-    margin-block-start: var(--space-xl);
-  }
-
-  .cpanel-title {
-    font-family: var(--font-mono);
-    font-size: var(--text-caption);
-    font-weight: var(--font-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink);
-  }
-
-  .cruler {
-    position: relative;
-    height: 1.5rem;
-    margin-block-start: var(--space-sm);
-    margin-inline: 0.5rem;
-  }
-
-  .cruler-tick {
-    position: absolute;
-    inset-block-start: 0;
-    transform: translateX(-50%);
-    font-size: var(--text-caption);
-    line-height: 1.5rem;
-    white-space: nowrap;
-    color: var(--ink-secondary);
-  }
-
-  .cruler-tick.first {
-    transform: translateX(-0.5rem);
-  }
-
-  .cruler-tick.last {
-    transform: translateX(calc(-100% + 0.5rem));
-  }
-
-  .crows {
-    list-style: none;
-    padding: 0;
-  }
-
-  .crow {
-    padding-block: var(--space-sm) var(--space);
-    border-block-start: 1px solid var(--hairline);
-  }
-
-  .crow-head {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 0 var(--space-md);
-  }
-
-  .crow-label {
-    font-size: var(--text-md);
-    font-weight: var(--font-medium);
-    color: var(--ink);
-  }
-
-  .crow-ratio {
-    text-align: end;
-    font-size: var(--text-sm);
-    color: var(--ink-secondary);
-  }
-
-  .ctrack {
-    position: relative;
-    height: 2.25rem;
-    margin: var(--space-xs) 0.5rem;
-    border-block: 1px solid rgba(255, 255, 255, 0.3);
-  }
-
-  .cgrid {
-    position: absolute;
-    inset-block: 0;
-    width: 1px;
-    background: rgba(255, 255, 255, 0.3);
-  }
-
-  .cm {
-    position: absolute;
-    margin-block-start: -6px;
-    margin-inline-start: -6px;
-  }
-
-  .cvals {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-xs) var(--space-md);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    font-variant-numeric: tabular-nums;
-    color: var(--ink);
-  }
-
-  .cv {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  @media (max-width: 1220px) {
-    .dotplot-scroll {
-      display: none;
-    }
-
-    .compact {
-      display: block;
-      max-width: 48rem;
-    }
-  }
-
   @media (max-width: 760px) {
     .other-row {
       grid-template-columns: 1fr;
@@ -953,30 +616,3 @@ const ariaDescription = `Benchmark comparison between Rabbit and mainline Linux.
     }
   }
 </style>
-
-<script>
-  const figure = document.querySelector('.dotplot-figure');
-  if (figure && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    const svg = figure.querySelector('.dotplot-svg');
-    if (svg) {
-      svg.classList.add('js-animate');
-      const rows = svg.querySelectorAll('.row');
-      rows.forEach((row) => (row as HTMLElement).style.opacity = '0');
-      const observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              rows.forEach((row, i) => {
-                (row as HTMLElement).style.transition = `opacity 350ms ease ${i * 40}ms`;
-                (row as HTMLElement).style.opacity = '1';
-              });
-              observer.disconnect();
-            }
-          });
-        },
-        { threshold: 0.2 }
-      );
-      observer.observe(svg);
-    }
-  }
-</script>

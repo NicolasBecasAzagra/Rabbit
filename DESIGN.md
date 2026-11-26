@@ -125,7 +125,7 @@ White, brown and black, like a rabbit, with warm neutrals derived from the brown
 - Hairline is brown at 18% on white (faintest border 9%) and white at 16% on brown and black (faintest 7%).
 
 ### Named Rules
-**The Slab Rule.** A section is `.on-paper`, `.on-ink` (brown) or `.on-black` (footer only), never a tint between. White is the default: the hero, the aim and the policy are white; brown marks the navigation, the benchmarks, the layer names and the run section. Two white slabs in a row are separated by a hairline. A slab resets the whole palette in scope, accent and aliases included, so components read the variables and never a literal colour.
+**The Slab Rule.** A section is `.on-paper`, `.on-ink` (brown) or `.on-black` (footer only), never a tint between. White is the default: the hero, the aim and the policy are white; brown marks the navigation, the layer names and the run section; the benchmarks are white, so the bars read as dark on light. Two white slabs in a row are separated by a hairline. A slab resets the whole palette in scope, accent and aliases included, so components read the variables and never a literal colour.
 
 **The One Accent Rule.** Brown is the only hue. On white it marks actions and highlighted values; otherwise emphasis is weight, size, underline thickness or a marker.
 
@@ -186,6 +186,9 @@ Three squares, one system. **Solid** is measured or refused. **Hollow** (1.5px o
 ### Navigation
 Sticky 64px bar on a brown slab with a hairline bottom edge, white text, underlined current link.
 
+### Benchmark cards
+One card per timing in an auto-fill grid (columns at least 20rem wide), grouped under an ink rule. A card has the case, the factor against Linux with mitigations off (the stricter baseline) set large, the factor against Linux 7.3.0 under it, three bars (Rabbit, Linux with mitigations off, Linux 7.3.0) and "QEMU TCG, an emulator · lower is better". Each card has its own linear scale from zero, with a 2px minimum bar. The Rabbit bar is solid accent with a semibold accent label; the Linux bars are raised surface with a muted outline. Every bar carries its name and exact value. A loss or a tie is worded as one; a recorded row has no factor and no bars, only its values. White background, hairline border, 10px radius, no shadow.
+
 ### Aim and verdict ledgers (signature)
 A top rule in ink, rows separated by hairlines, marker + claim + detail + underlined evidence link. Row hover is a Soft Surface wash and a thicker evidence underline. The verdict ledger has four columns (case, Rabbit verdict, Linux verdict, evidence) and a legend of the three squares.
 
@@ -202,6 +205,6 @@ The hero ears bleed from the hero; the seam ears mark chapters at a slab seam ab
 
 ### Don't:
 - **Don't** add a second hue, a shadow or a gradient to the chrome.
-- **Don't** use a card grid under a slogan, or big-number metric blocks.
+- **Don't** use a card grid under a slogan, or big-number metric blocks. The one exception is the benchmark chart, where the large factor always sits with its baseline in words, its three bars and its context.
 - **Don't** use mono for prose or headings.
 - **Don't** use circles or colour for state.
