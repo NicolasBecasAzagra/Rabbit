@@ -32,7 +32,7 @@ The site is an Astro project in website/, deployed to GitHub Pages from main on 
 
 ## Brand Commitments
 
-- Strictly black and white, like a rabbit; no accent colour. The word Rabbit and two ears as negative space are the mark.
+- White first, brown second, black third, like a rabbit; brown is the only hue. The word Rabbit and two ears as negative space are the mark.
 - Honesty rules, binding for all site work: no invented numbers; the context "QEMU TCG, an emulator" stays next to benchmark figures; ENOSYS answers are called unavailable, never protection; never claim to be the first or the only one, and cite prior art (Governed MCP arXiv 2604.16870, Agate at the AgenticOS workshop of SOSP 2026, Before the Tool Call arXiv 2603.20953).
 - Only real data and logs: the boot log, tables and charts come from files of the repository, never illustrative.
 
@@ -54,4 +54,4 @@ The site is an Astro project in website/, deployed to GitHub Pages from main on 
 
 ## Accessibility & Inclusion
 
-WCAG AA contrast on black and on white, visible keyboard focus, state never carried by colour alone (fill, outline and hatch), and every animation resolved to its final state under prefers-reduced-motion.
+WCAG AA contrast on white, brown and black, visible keyboard focus, state never carried by colour alone (fill, outline and hatch), and every animation resolved to its final state under prefers-reduced-motion.

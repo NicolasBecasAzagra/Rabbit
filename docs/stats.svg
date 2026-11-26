@@ -2,8 +2,8 @@
   <title>Rabbit benchmark highlights</title>
   <desc>Selected measurements from the benchmark table: 376 ns for a system call, 12.9 s to boot to the first result, 0.45 tokens per second, 857 MB resident memory with the model, 821 seconds for an agent loop, and 6.83 ms per MiB to map and touch memory. All measured under QEMU TCG, an emulator, on one host.</desc>
   <style>
-    svg { --ink:#000; --paper:#fff; --surface:#f2f2f2; --graphite:#404040; --muted:#6b6b6b; --hair:rgba(0,0,0,0.14); }
-    @media (prefers-color-scheme: dark) { svg { --ink:#fff; --paper:#000; --surface:#171717; --graphite:#e5e5e5; --muted:#8f8f8f; --hair:rgba(255,255,255,0.16); } }
+    svg { --ink:#000; --paper:#fff; --surface:#f7f2ed; --graphite:#4a3b32; --muted:#75655a; --hair:rgba(111,69,40,0.18); }
+    @media (prefers-color-scheme: dark) { svg { --ink:#fff; --paper:#000; --surface:#1c1511; --graphite:#ede4dc; --muted:#a8968a; --hair:rgba(255,255,255,0.16); } }
     .bg { fill: var(--paper); }
     .border { fill: none; stroke: var(--hair); stroke-width: 1; }
     .sans { font-family: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }

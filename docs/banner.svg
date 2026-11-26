@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img">
   <title>Rabbit — an operating system for local AI agents</title>
-  <desc>The Rabbit mark, a black rounded square with two tall ears cut out of it as negative space, next to the word Rabbit and the tagline: an operating system for local AI agents, written in Rust from the kernel up. Black and white only.</desc>
+  <desc>The Rabbit mark, a black rounded square with two tall ears cut out of it as negative space, next to the word Rabbit and the tagline: an operating system for local AI agents, written in Rust from the kernel up.</desc>
   <style>
-    svg { --ink:#000; --paper:#fff; --surface:#f2f2f2; --graphite:#404040; --muted:#6b6b6b; --hair:rgba(0,0,0,0.14); }
-    @media (prefers-color-scheme: dark) { svg { --ink:#fff; --paper:#000; --surface:#171717; --graphite:#e5e5e5; --muted:#8f8f8f; --hair:rgba(255,255,255,0.16); } }
+    svg { --ink:#000; --paper:#fff; --surface:#f7f2ed; --graphite:#4a3b32; --muted:#75655a; --hair:rgba(111,69,40,0.18); }
+    @media (prefers-color-scheme: dark) { svg { --ink:#fff; --paper:#000; --surface:#1c1511; --graphite:#ede4dc; --muted:#a8968a; --hair:rgba(255,255,255,0.16); } }
     .bg { fill: var(--paper); }
     .border { fill: none; stroke: var(--hair); stroke-width: 1; }
     .sans { font-family: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }

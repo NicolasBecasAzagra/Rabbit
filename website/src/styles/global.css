@@ -1,4 +1,4 @@
-/* Rabbit visual system: strictly black and white, no accent colour */
+/* Rabbit visual system: white first, brown second, black third */
 /* Inter for prose; JetBrains Mono for code, data and technical labels only. */
 
 @font-face {
@@ -46,27 +46,27 @@
 }
 
 :root {
-  /* The palette is strictly black and white: #000 ink, #FFF paper and the
-     greys #0A0A0A, #171717, #404040, #6B6B6B, #8F8F8F, #E5E5E5, #F2F2F2,
-     written as literals below so the contrast check can read them. */
+  /* White is the canvas, brown is the accent and the brown slab, black is the
+     text and the footer. Colours are written as literals below so the contrast
+     check can read them. */
 
   /* Semantic pair on white: --ink is text, --paper is the canvas */
   --ink: #000000;
   --paper: #FFFFFF;
   --canvas: #FFFFFF;
-  --surface: #F2F2F2;
-  --surface-2: #F2F2F2;
-  --ink-secondary: #404040;
-  --muted: #6B6B6B;
-  --hairline: rgba(0, 0, 0, 0.14);
-  --rule: rgba(0, 0, 0, 0.14);
-  --border-subtle: rgba(0, 0, 0, 0.07);
+  --surface: #F7F2ED;
+  --surface-2: #EFE7E0;
+  --ink-secondary: #4A3B32;
+  --muted: #75655A;
+  --hairline: rgba(111, 69, 40, 0.18);
+  --rule: rgba(111, 69, 40, 0.18);
+  --border-subtle: rgba(111, 69, 40, 0.09);
   --ink-inverse: #FFFFFF;
 
-  /* No accent colour: the old accent names alias to ink */
-  --accent: #000000;
-  --accent-hover: #404040;
-  --accent-soft: #F2F2F2;
+  /* Brown accent: actions, links of emphasis and highlighted values */
+  --accent: #6F4528;
+  --accent-hover: #52321C;
+  --accent-soft: #F7F2ED;
   --on-accent: #FFFFFF;
 
   /* Legacy aliases so existing component styles keep working */
@@ -145,82 +145,117 @@
     --ink: #FFFFFF;
     --paper: #000000;
     --canvas: #000000;
-    --surface: #0A0A0A;
-    --surface-2: #171717;
-    --ink-secondary: #E5E5E5;
-    --muted: #8F8F8F;
+    --surface: #0F0B08;
+    --surface-2: #1C1511;
+    --ink-secondary: #EDE4DC;
+    --muted: #A8968A;
     --hairline: rgba(255, 255, 255, 0.16);
     --rule: rgba(255, 255, 255, 0.16);
     --border-subtle: rgba(255, 255, 255, 0.07);
     --ink-inverse: #000000;
 
-    --accent: #FFFFFF;
-    --accent-hover: #E5E5E5;
-    --accent-soft: #171717;
+    --accent: #C99A73;
+    --accent-hover: #DDB896;
+    --accent-soft: #1C1511;
     --on-accent: #000000;
 
     --shadow-float: 0 24px 48px rgba(0, 0, 0, 0.45);
   }
 }
 
-/* Sections forced black whatever the system theme: set the semantic pair to
-   its dark values inside the scope. */
+/* Slabs force their palette whatever the system theme: each one sets the
+   whole semantic pair inside its scope. */
+
+/* The brown slab */
 .on-ink {
   --ink: #FFFFFF;
-  --paper: #000000;
-  --canvas: #000000;
-  --surface: #0A0A0A;
-  --surface-2: #171717;
-  --ink-secondary: #E5E5E5;
-  --muted: #8F8F8F;
+  --paper: #52321C;
+  --canvas: #52321C;
+  --surface: #482B17;
+  --surface-2: #5E3B22;
+  --ink-secondary: #EDE4DC;
+  --muted: #D6C3B4;
   --hairline: rgba(255, 255, 255, 0.16);
   --rule: rgba(255, 255, 255, 0.16);
-  --ink-inverse: #000000;
-  --accent: #FFFFFF;
-  --accent-hover: #E5E5E5;
-  --bg: #000000;
-  --bg-elevated: #0A0A0A;
-  --bg-sunk: #171717;
-  --paper-elevated: #0A0A0A;
-  --paper-sunk: #171717;
-  --surface-glass: #0A0A0A;
-  --text: #FFFFFF;
-  --text-secondary: #E5E5E5;
-  --text-tertiary: #8F8F8F;
-  --text-inverse: #000000;
-  --border: rgba(255, 255, 255, 0.16);
-  --border-strong: rgba(255, 255, 255, 0.16);
   --border-subtle: rgba(255, 255, 255, 0.07);
-  --ink-tertiary: #8F8F8F;
-  --accent-hover: #E5E5E5;
-  --accent-soft: #171717;
-  --accent-on-dark: #FFFFFF;
-  --accent-on-dark-hover: #E5E5E5;
-  --on-accent: #000000;
-  background: #000000;
-  color: #FFFFFF;
+  --ink-inverse: #52321C;
+  --accent: #FFFFFF;
+  --accent-hover: #EDE4DC;
+  --accent-soft: #5E3B22;
+  --on-accent: #52321C;
+  background: var(--canvas);
+  color: var(--ink);
   color-scheme: dark;
 }
 
-/* The white slab, forced whatever the system theme: the light values of
-   :root, so a section can alternate with .on-ink at any time. */
+/* The black slab, for the footer */
+.on-black {
+  --ink: #FFFFFF;
+  --paper: #000000;
+  --canvas: #000000;
+  --surface: #0F0B08;
+  --surface-2: #1C1511;
+  --ink-secondary: #EDE4DC;
+  --muted: #A8968A;
+  --hairline: rgba(255, 255, 255, 0.16);
+  --rule: rgba(255, 255, 255, 0.16);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --ink-inverse: #000000;
+  --accent: #C99A73;
+  --accent-hover: #DDB896;
+  --accent-soft: #1C1511;
+  --on-accent: #000000;
+  background: var(--canvas);
+  color: var(--ink);
+  color-scheme: dark;
+}
+
+/* The white slab: the light values of :root */
 .on-paper {
   --ink: #000000;
   --paper: #FFFFFF;
   --canvas: #FFFFFF;
-  --surface: #F2F2F2;
-  --surface-2: #F2F2F2;
-  --ink-secondary: #404040;
-  --muted: #6B6B6B;
-  --hairline: rgba(0, 0, 0, 0.14);
-  --rule: rgba(0, 0, 0, 0.14);
+  --surface: #F7F2ED;
+  --surface-2: #EFE7E0;
+  --ink-secondary: #4A3B32;
+  --muted: #75655A;
+  --hairline: rgba(111, 69, 40, 0.18);
+  --rule: rgba(111, 69, 40, 0.18);
+  --border-subtle: rgba(111, 69, 40, 0.09);
   --ink-inverse: #FFFFFF;
-  --text: #000000;
-  --text-secondary: #404040;
-  --text-tertiary: #6B6B6B;
-  background: #FFFFFF;
-  color: #000000;
+  --accent: #6F4528;
+  --accent-hover: #52321C;
+  --accent-soft: #F7F2ED;
+  --on-accent: #FFFFFF;
+  background: var(--canvas);
+  color: var(--ink);
   color-scheme: light;
+}
+
+/* Aliases resolve where they are declared, so each slab declares them again */
+.on-ink,
+.on-black,
+.on-paper {
+  --bg: var(--canvas);
+  --bg-elevated: var(--surface);
+  --bg-sunk: var(--surface-2);
+  --paper-elevated: var(--surface);
+  --paper-sunk: var(--surface-2);
+  --surface-glass: var(--surface);
+  --text: var(--ink);
+  --text-secondary: var(--ink-secondary);
+  --text-tertiary: var(--muted);
+  --text-inverse: var(--ink-inverse);
+  --border: var(--hairline);
+  --border-strong: var(--rule);
+  --ink-tertiary: var(--muted);
+  --accent-on-dark: var(--accent);
+  --accent-on-dark-hover: var(--accent-hover);
+}
+
+/* Two white slabs in a row still need a seam */
+:where(.on-paper + .on-paper) {
+  border-block-start: 1px solid var(--rule);
 }
 
 * {
@@ -452,14 +487,14 @@ h1, h2, h3, h4, h5, h6 {
   text-decoration: none;
   text-underline-offset: 0;
   border: 1px solid transparent;
-  background: var(--ink);
-  color: var(--ink-inverse);
+  background: var(--accent);
+  color: var(--on-accent);
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .button:hover {
-  background: var(--ink-secondary);
-  color: var(--ink-inverse);
+  background: var(--accent-hover);
+  color: var(--on-accent);
 }
 
 .button-secondary {
@@ -476,11 +511,11 @@ h1, h2, h3, h4, h5, h6 {
 
 @media (prefers-color-scheme: dark) {
   .button {
-    background: var(--ink);
-    color: var(--ink-inverse);
+    background: var(--accent);
+    color: var(--on-accent);
   }
   .button:hover {
-    background: var(--ink-secondary);
+    background: var(--accent-hover);
   }
   .button-secondary {
     background: transparent;

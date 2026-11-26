@@ -4,8 +4,8 @@
   "description": "A Linux-ABI-compatible operating system kernel written in Rust.",
   "start_url": "/Rabbit/",
   "display": "standalone",
-  "background_color": "#f7f5f0",
-  "theme_color": "#f7f5f0",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
   "icons": [
     {
       "src": "/Rabbit/favicon.svg",
